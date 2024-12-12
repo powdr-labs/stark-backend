@@ -1,0 +1,35 @@
+name: Lint Workspace
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on:
+      - runs-on=${{ github.run_id }}
+      - runner=8cpu-linux-x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Run fmt
+        run: |
+          cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: |
+          # list of features generated using:
+          # echo -e "\033[1;32mAll unique features across workspace:\033[0m" && cargo metadata --format-version=1 --no-deps | jq -r '.packages[].features | to_entries[] | .key' | sort -u | sed 's/^/• /'
+          cargo clippy --all-targets --all --tests --features "default mimalloc nightly-features parallel" -- -D warnings
+          cargo clippy --all-targets --all --tests --no-default-features --features "jemalloc jemalloc-prof" -- -D warnings

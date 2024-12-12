@@ -19,12 +19,4 @@ rustc-*
 .vscode/
 .zed/
 
-# Bench metrics
-.bench_metrics/
 __pycache__/
-
-# KZG trusted setup
-**/params
-
-# Javascript
-**/node_modules/
