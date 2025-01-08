@@ -3,16 +3,18 @@ use std::cmp::min;
 use itertools::Itertools;
 use p3_commit::PolynomialSpace;
 use p3_field::{FieldAlgebra, FieldExtensionAlgebra, PackedValue};
-use p3_matrix::{dense::RowMajorMatrixView, stack::VerticalPair, Matrix};
+use p3_matrix::{dense::RowMajorMatrix, Matrix};
 use p3_maybe_rayon::prelude::*;
 use p3_util::log2_strict_usize;
 use tracing::instrument;
 
+use super::evaluator::{ProverConstraintEvaluator, ViewPair};
 use crate::{
-    air_builders::{prover::ProverConstraintFolder, symbolic::SymbolicConstraints},
+    air_builders::symbolic::{
+        dag::{SymbolicExpressionDag, SymbolicExpressionNode},
+        symbolic_variable::Entry,
+    },
     config::{Domain, PackedChallenge, PackedVal, StarkGenericConfig, Val},
-    interaction::RapPhaseSeqKind,
-    rap::{PartitionedBaseAir, Rap},
 };
 
 // Starting reference: p3_uni_stark::prover::quotient_values
@@ -26,28 +28,22 @@ use crate::{
     level = "trace",
     skip_all
 )]
-pub fn compute_single_rap_quotient_values<'a, SC, R, Mat>(
-    rap: &'a R,
-    symbolic_constraints: &SymbolicConstraints<Val<SC>>,
+pub fn compute_single_rap_quotient_values<'a, SC>(
+    constraints: &SymbolicExpressionDag<Val<SC>>,
     trace_domain: Domain<SC>,
     quotient_domain: Domain<SC>,
-    preprocessed_trace_on_quotient_domain: Mat,
-    partitioned_main_lde_on_quotient_domain: Vec<Mat>,
-    after_challenge_lde_on_quotient_domain: Vec<Mat>,
+    preprocessed_trace_on_quotient_domain: RowMajorMatrix<Val<SC>>,
+    partitioned_main_lde_on_quotient_domain: Vec<RowMajorMatrix<Val<SC>>>,
+    after_challenge_lde_on_quotient_domain: Vec<RowMajorMatrix<Val<SC>>>,
     // For each challenge round, the challenges drawn
     challenges: &[Vec<PackedChallenge<SC>>],
     alpha: SC::Challenge,
     public_values: &'a [Val<SC>],
     // Values exposed to verifier after challenge round i
     exposed_values_after_challenge: &'a [&'a [PackedChallenge<SC>]],
-    rap_phase_seq_kind: RapPhaseSeqKind,
-    interaction_chunk_size: usize,
 ) -> Vec<SC::Challenge>
 where
-    // TODO: avoid ?Sized to prevent dynamic dispatching because `eval` is called many many times
-    R: for<'b> Rap<ProverConstraintFolder<'b, SC>> + PartitionedBaseAir<Val<SC>> + Sync + ?Sized,
     SC: StarkGenericConfig,
-    Mat: Matrix<Val<SC>> + Sync,
 {
     let quotient_size = quotient_domain.size();
     let preprocessed_width = preprocessed_trace_on_quotient_domain.width();
@@ -60,8 +56,11 @@ where
 
     let mut alpha_powers = alpha
         .powers()
-        .take(symbolic_constraints.constraints.len())
+        .take(constraints.constraint_idx.len())
+        .map(PackedChallenge::<SC>::from_f)
         .collect_vec();
+    // We want alpha powers to have highest power first, because of how accumulator "folding" works
+    // So this will be alpha^{num_constraints - 1}, ..., alpha^0
     alpha_powers.reverse();
 
     // assert!(quotient_size >= PackedVal::<SC>::WIDTH);
@@ -74,6 +73,35 @@ where
         sels.inv_zeroifier.push(Val::<SC>::default());
     }
 
+    // Scan constraints to see if we need `next` row and also check index bounds
+    // so we don't need to check them per row.
+    let mut rotation = 0;
+    for node in &constraints.nodes {
+        if let SymbolicExpressionNode::Variable(var) = node {
+            match var.entry {
+                Entry::Preprocessed { offset } => {
+                    rotation = rotation.max(offset);
+                    assert!(var.index < preprocessed_width);
+                }
+                Entry::Main { part_index, offset } => {
+                    rotation = rotation.max(offset);
+                    assert!(var.index < partitioned_main_lde_on_quotient_domain[part_index].width);
+                }
+                Entry::Permutation { offset } => {
+                    rotation = rotation.max(offset);
+                    let ext_width = after_challenge_lde_on_quotient_domain
+                        .first()
+                        .expect("Challenge phase not supported")
+                        .width
+                        / ext_degree;
+                    assert!(var.index < ext_width);
+                }
+                _ => {}
+            }
+        }
+    }
+    let needs_next = rotation > 0;
+
     (0..quotient_size)
         .into_par_iter()
         .step_by(PackedVal::<SC>::WIDTH)
@@ -81,38 +109,56 @@ where
             let wrap = |i| i % quotient_size;
             let i_range = i_start..i_start + PackedVal::<SC>::WIDTH;
 
+            let [row_idx_local, row_idx_next] = [0, next_step].map(|shift| {
+                (0..PackedVal::<SC>::WIDTH)
+                    .map(|offset| wrap(i_start + offset + shift))
+                    .collect::<Vec<_>>()
+            });
+            let row_idx_local = Some(row_idx_local);
+            let row_idx_next = needs_next.then_some(row_idx_next);
+
             let is_first_row = *PackedVal::<SC>::from_slice(&sels.is_first_row[i_range.clone()]);
             let is_last_row = *PackedVal::<SC>::from_slice(&sels.is_last_row[i_range.clone()]);
             let is_transition = *PackedVal::<SC>::from_slice(&sels.is_transition[i_range.clone()]);
             let inv_zeroifier = *PackedVal::<SC>::from_slice(&sels.inv_zeroifier[i_range.clone()]);
 
-            let [preprocessed_local, preprocessed_next] = [0, 1].map(|step_idx| {
-                (0..preprocessed_width)
-                    .map(|col| {
-                        PackedVal::<SC>::from_fn(|offset| {
-                            Matrix::get(
-                                &preprocessed_trace_on_quotient_domain,
-                                wrap(i_start + offset + step_idx * next_step),
-                                col,
-                            )
-                        })
+            // Vertically pack rows of each matrix,
+            // skipping `next` if above scan showed no constraints need it:
+
+            let [preprocessed_local, preprocessed_next] =
+                [&row_idx_local, &row_idx_next].map(|wrapped_idx| {
+                    wrapped_idx.as_ref().map(|wrapped_idx| {
+                        (0..preprocessed_width)
+                            .map(|col| {
+                                PackedVal::<SC>::from_fn(|offset| {
+                                    *mat_get_unchecked(
+                                        &preprocessed_trace_on_quotient_domain,
+                                        wrapped_idx[offset],
+                                        col,
+                                    )
+                                })
+                            })
+                            .collect_vec()
                     })
-                    .collect_vec()
-            });
+                });
+            let preprocessed_pair = ViewPair::new(preprocessed_local.unwrap(), preprocessed_next);
 
             let partitioned_main_pairs = partitioned_main_lde_on_quotient_domain
                 .iter()
                 .map(|lde| {
                     let width = lde.width();
-                    [0, 1].map(|step_idx| {
-                        (0..width)
-                            .map(|col| {
-                                PackedVal::<SC>::from_fn(|offset| {
-                                    lde.get(wrap(i_start + offset + step_idx * next_step), col)
+                    let [local, next] = [&row_idx_local, &row_idx_next].map(|wrapped_idx| {
+                        wrapped_idx.as_ref().map(|wrapped_idx| {
+                            (0..width)
+                                .map(|col| {
+                                    PackedVal::<SC>::from_fn(|offset| {
+                                        *mat_get_unchecked(lde, wrapped_idx[offset], col)
+                                    })
                                 })
-                            })
-                            .collect_vec()
-                    })
+                                .collect_vec()
+                        })
+                    });
+                    ViewPair::new(local.unwrap(), next)
                 })
                 .collect_vec();
 
@@ -121,66 +167,38 @@ where
                 .map(|lde| {
                     // Width in base field with extension field elements flattened
                     let base_width = lde.width();
-                    [0, 1].map(|step_idx| {
-                        (0..base_width)
-                            .step_by(ext_degree)
-                            .map(|col| {
-                                PackedChallenge::<SC>::from_base_fn(|i| {
-                                    PackedVal::<SC>::from_fn(|offset| {
-                                        lde.get(
-                                            wrap(i_start + offset + step_idx * next_step),
-                                            col + i,
-                                        )
+                    let [local, next] = [&row_idx_local, &row_idx_next].map(|wrapped_idx| {
+                        wrapped_idx.as_ref().map(|wrapped_idx| {
+                            (0..base_width)
+                                .step_by(ext_degree)
+                                .map(|col| {
+                                    PackedChallenge::<SC>::from_base_fn(|i| {
+                                        PackedVal::<SC>::from_fn(|offset| {
+                                            *mat_get_unchecked(lde, wrapped_idx[offset], col + i)
+                                        })
                                     })
                                 })
-                            })
-                            .collect_vec()
-                    })
+                                .collect_vec()
+                        })
+                    });
+                    ViewPair::new(local.unwrap(), next)
                 })
                 .collect_vec();
 
-            let accumulator = PackedChallenge::<SC>::ZERO;
-            let mut folder = ProverConstraintFolder {
-                preprocessed: VerticalPair::new(
-                    RowMajorMatrixView::new_row(&preprocessed_local),
-                    RowMajorMatrixView::new_row(&preprocessed_next),
-                ),
-                partitioned_main: partitioned_main_pairs
-                    .iter()
-                    .map(|[local, next]| {
-                        VerticalPair::new(
-                            RowMajorMatrixView::new_row(local),
-                            RowMajorMatrixView::new_row(next),
-                        )
-                    })
-                    .collect(),
-                after_challenge: after_challenge_pairs
-                    .iter()
-                    .map(|[local, next]| {
-                        VerticalPair::new(
-                            RowMajorMatrixView::new_row(local),
-                            RowMajorMatrixView::new_row(next),
-                        )
-                    })
-                    .collect(),
+            let evaluator: ProverConstraintEvaluator<SC> = ProverConstraintEvaluator {
+                preprocessed: preprocessed_pair,
+                partitioned_main: partitioned_main_pairs,
+                after_challenge: after_challenge_pairs,
                 challenges,
                 is_first_row,
                 is_last_row,
                 is_transition,
-                alpha_powers: &alpha_powers,
-                accumulator,
                 public_values,
                 exposed_values_after_challenge,
-                interactions: vec![],
-                interaction_chunk_size,
-                rap_phase_seq_kind,
-                has_common_main: rap.common_main_width() > 0,
-                constraint_index: 0,
             };
-            rap.eval(&mut folder);
-
+            let accumulator = evaluator.accumulate(constraints, &alpha_powers);
             // quotient(x) = constraints(x) / Z_H(x)
-            let quotient = folder.accumulator * inv_zeroifier;
+            let quotient: PackedChallenge<SC> = accumulator * inv_zeroifier;
 
             // "Transpose" D packed base coefficients into WIDTH scalar extension coefficients.
             let width = min(PackedVal::<SC>::WIDTH, quotient_size);
@@ -192,4 +210,8 @@ where
             })
         })
         .collect()
+}
+
+fn mat_get_unchecked<T>(mat: &RowMajorMatrix<T>, r: usize, c: usize) -> &T {
+    unsafe { mat.values.get_unchecked(r * mat.width + c) }
 }
