@@ -4,9 +4,10 @@ use itertools::Itertools;
 use openvm_stark_backend::{
     p3_field::FieldAlgebra,
     prover::{
+        hal::TraceCommitter,
         types::{AirProofInput, AirProofRawInput, ProofInput},
-        USE_DEBUG_BUILDER,
     },
+    utils::disable_debug_builder,
     verifier::VerificationError,
 };
 use openvm_stark_sdk::{config::baby_bear_poseidon2::default_engine, engine::StarkEngine};
@@ -30,7 +31,10 @@ fn prove_and_verify_sum_air(x: Vec<Val>, ys: Vec<Vec<Val>>) -> Result<(), Verifi
 
     let x_trace = RowMajorMatrix::new(x, 1);
     let y_width = ys[0].len();
-    let y_trace = RowMajorMatrix::new(ys.into_iter().flatten().collect_vec(), y_width);
+    let y_trace = Arc::new(RowMajorMatrix::new(
+        ys.into_iter().flatten().collect_vec(),
+        y_width,
+    ));
 
     let air = Arc::new(SumAir(y_width));
 
@@ -41,21 +45,19 @@ fn prove_and_verify_sum_air(x: Vec<Val>, ys: Vec<Vec<Val>>) -> Result<(), Verifi
 
     let prover = engine.prover();
     // Demonstrate y is cached
-    let y_data = prover.committer().commit(vec![y_trace.clone()]);
+    let (y_com, y_data) = prover.device.commit(&[y_trace.clone()]);
     // Load x normally
     let air_proof_input = AirProofInput {
-        air,
-        cached_mains_pdata: vec![y_data],
+        cached_mains_pdata: vec![(y_com, y_data.data)],
         raw: AirProofRawInput {
-            cached_mains: vec![Arc::new(y_trace)],
+            cached_mains: vec![y_trace],
             common_main: Some(x_trace),
             public_values: vec![],
         },
     };
     let proof_input = ProofInput::new(vec![(air_id, air_proof_input)]);
 
-    let mut challenger = engine.new_challenger();
-    let proof = prover.prove(&mut challenger, &pk, proof_input);
+    let proof = engine.prove(&pk, proof_input);
 
     // Verify the proof:
     // Start from clean challenger
@@ -86,9 +88,7 @@ fn test_partitioned_sum_air_happy_neg() {
         .map(|row| row.iter().fold(Val::ZERO, |sum, x| sum + *x))
         .collect();
     x[0] = Val::ZERO;
-    USE_DEBUG_BUILDER.with(|debug| {
-        *debug.lock().unwrap() = false;
-    });
+    disable_debug_builder();
     assert_eq!(
         prove_and_verify_sum_air(x, ys),
         Err(VerificationError::OodEvaluationMismatch)

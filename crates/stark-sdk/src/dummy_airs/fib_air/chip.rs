@@ -43,7 +43,6 @@ where
         let b = common_main.get(0, 1);
         let last_val = common_main.get(self.n - 1, 1);
         AirProofInput {
-            air: self.air(),
             cached_mains_pdata: vec![],
             raw: AirProofRawInput {
                 cached_mains: vec![],

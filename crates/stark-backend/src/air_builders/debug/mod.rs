@@ -1,20 +1,79 @@
+use std::sync::{Arc, Mutex};
+
+use itertools::{izip, Itertools};
 use p3_air::{
     AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
 };
 use p3_field::FieldAlgebra;
 use p3_matrix::{dense::RowMajorMatrixView, stack::VerticalPair};
 
-use super::{PartitionedAirBuilder, ViewPair};
+use super::{symbolic::SymbolicConstraints, PartitionedAirBuilder, ViewPair};
 use crate::{
     config::{StarkGenericConfig, Val},
     interaction::{
         rap::InteractionPhaseAirBuilder, Interaction, InteractionBuilder, InteractionType,
         RapPhaseSeqKind,
     },
-    rap::PermutationAirBuilderWithExposedValues,
+    keygen::types::StarkProvingKey,
+    rap::{AnyRap, PermutationAirBuilderWithExposedValues},
 };
 
-pub mod check_constraints;
+mod check_constraints;
+
+use check_constraints::*;
+
+thread_local! {
+   pub static USE_DEBUG_BUILDER: Arc<Mutex<bool>> = Arc::new(Mutex::new(true));
+}
+
+/// The debugging will check the main AIR constraints and then separately check LogUp constraints by
+/// checking the actual multiset equalities. Currently it will not debug check any after challenge phase
+/// constraints for implementation simplicity.
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+pub fn debug_constraints_and_interactions<SC: StarkGenericConfig>(
+    airs: &[Arc<dyn AnyRap<SC>>],
+    pk: &[StarkProvingKey<SC>],
+    main_views_per_air: &[Vec<RowMajorMatrixView<'_, Val<SC>>>],
+    public_values_per_air: &[Vec<Val<SC>>],
+) {
+    USE_DEBUG_BUILDER.with(|debug| {
+        if *debug.lock().unwrap() {
+            let preprocessed = izip!(airs, pk, main_views_per_air, public_values_per_air,)
+                .map(|(rap, pk, main, public_values)| {
+                    let preprocessed_trace = pk
+                        .preprocessed_data
+                        .as_ref()
+                        .map(|data| data.trace.as_view());
+                    tracing::debug!("Checking constraints for {}", rap.name());
+                    check_constraints(
+                        rap.as_ref(),
+                        &rap.name(),
+                        &preprocessed_trace,
+                        main,
+                        public_values,
+                    );
+                    preprocessed_trace
+                })
+                .collect_vec();
+
+            let (air_names, interactions): (Vec<_>, Vec<_>) = pk
+                .iter()
+                .map(|pk| {
+                    let sym_constraints = SymbolicConstraints::from(&pk.vk.symbolic_constraints);
+                    (pk.air_name.clone(), sym_constraints.interactions)
+                })
+                .unzip();
+            check_logup(
+                &air_names,
+                &interactions,
+                &preprocessed,
+                main_views_per_air,
+                public_values_per_air,
+            );
+        }
+    });
+}
 
 /// An `AirBuilder` which asserts that each constraint is zero, allowing any failed constraints to
 /// be detected early.

@@ -1,3 +1,4 @@
+//! Helper methods for testing use
 use std::sync::Arc;
 
 use itertools::izip;
@@ -6,14 +7,12 @@ use p3_matrix::{dense::RowMajorMatrix, Matrix};
 use crate::{
     config::{StarkGenericConfig, Val},
     prover::types::{AirProofInput, AirProofRawInput},
-    rap::AnyRap,
 };
 
 /// Test helper trait for AirProofInput
 /// Don't use this trait in production code
 pub trait AirProofInputTestHelper<SC: StarkGenericConfig> {
     fn cached_traces_no_pis(
-        air: Arc<dyn AnyRap<SC>>,
         cached_traces: Vec<RowMajorMatrix<Val<SC>>>,
         common_trace: RowMajorMatrix<Val<SC>>,
     ) -> Self;
@@ -21,12 +20,10 @@ pub trait AirProofInputTestHelper<SC: StarkGenericConfig> {
 
 impl<SC: StarkGenericConfig> AirProofInputTestHelper<SC> for AirProofInput<SC> {
     fn cached_traces_no_pis(
-        air: Arc<dyn AnyRap<SC>>,
         cached_traces: Vec<RowMajorMatrix<Val<SC>>>,
         common_trace: RowMajorMatrix<Val<SC>>,
     ) -> Self {
         Self {
-            air,
             cached_mains_pdata: vec![],
             raw: AirProofRawInput {
                 cached_mains: cached_traces.into_iter().map(Arc::new).collect(),
@@ -37,13 +34,8 @@ impl<SC: StarkGenericConfig> AirProofInputTestHelper<SC> for AirProofInput<SC> {
     }
 }
 impl<SC: StarkGenericConfig> AirProofInput<SC> {
-    pub fn simple(
-        air: Arc<dyn AnyRap<SC>>,
-        trace: RowMajorMatrix<Val<SC>>,
-        public_values: Vec<Val<SC>>,
-    ) -> Self {
+    pub fn simple(trace: RowMajorMatrix<Val<SC>>, public_values: Vec<Val<SC>>) -> Self {
         Self {
-            air,
             cached_mains_pdata: vec![],
             raw: AirProofRawInput {
                 cached_mains: vec![],
@@ -52,26 +44,23 @@ impl<SC: StarkGenericConfig> AirProofInput<SC> {
             },
         }
     }
-    pub fn simple_no_pis(air: Arc<dyn AnyRap<SC>>, trace: RowMajorMatrix<Val<SC>>) -> Self {
-        Self::simple(air, trace, vec![])
+    pub fn simple_no_pis(trace: RowMajorMatrix<Val<SC>>) -> Self {
+        Self::simple(trace, vec![])
     }
 
     pub fn multiple_simple(
-        airs: Vec<Arc<dyn AnyRap<SC>>>,
         traces: Vec<RowMajorMatrix<Val<SC>>>,
         public_values: Vec<Vec<Val<SC>>>,
     ) -> Vec<Self> {
-        izip!(airs, traces, public_values)
-            .map(|(air, trace, pis)| AirProofInput::simple(air, trace, pis))
+        izip!(traces, public_values)
+            .map(|(trace, pis)| AirProofInput::simple(trace, pis))
             .collect()
     }
 
-    pub fn multiple_simple_no_pis(
-        airs: Vec<Arc<dyn AnyRap<SC>>>,
-        traces: Vec<RowMajorMatrix<Val<SC>>>,
-    ) -> Vec<Self> {
-        izip!(airs, traces)
-            .map(|(air, trace)| AirProofInput::simple_no_pis(air, trace))
+    pub fn multiple_simple_no_pis(traces: Vec<RowMajorMatrix<Val<SC>>>) -> Vec<Self> {
+        traces
+            .into_iter()
+            .map(AirProofInput::simple_no_pis)
             .collect()
     }
     /// Return the height of the main trace.
