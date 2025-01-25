@@ -3,15 +3,16 @@ use std::sync::Arc;
 use itertools::{izip, multiunzip, Itertools};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::FieldAlgebra;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{dense::RowMajorMatrix, Matrix};
 use p3_util::log2_strict_usize;
 use tracing::instrument;
 
 use self::single::compute_single_rap_quotient_values;
-use super::{PcsData, RapMatrixView};
+use super::PcsData;
 use crate::{
     air_builders::symbolic::SymbolicExpressionDag,
     config::{Com, Domain, PackedChallenge, StarkGenericConfig, Val},
+    prover::types::RapView,
 };
 
 mod evaluator;
@@ -31,22 +32,21 @@ impl<'pcs, SC: StarkGenericConfig> QuotientCommitter<'pcs, SC> {
     /// on the quotient domains of each RAP.
     ///
     /// ## Assumptions
-    /// - `raps`, `traces`, `quotient_degrees` are all the same length and in the same order.
-    /// - `quotient_degrees` is the factor to **multiply** the trace degree by to get the degree
-    ///   of the quotient polynomial. This should be determined from the constraint degree
-    ///   of the RAP.
+    /// - `constraints`, `extended_views`, `quotient_degrees` have equal lengths and the length equals number of RAPs.
+    /// - `quotient_degrees` is the factor to **multiply** the trace degree by to get the degree of the quotient polynomial. This should be determined from the constraint degree of the RAP.
+    /// - `extended_views` is a view of the trace polynomials evaluated on the quotient domain, with rows bit reversed to account for the fact that the quotient domain is different for each RAP.
     #[instrument(name = "compute quotient values", level = "info", skip_all)]
-    pub fn quotient_values<'a>(
+    pub fn quotient_values(
         &self,
         constraints: &[&SymbolicExpressionDag<Val<SC>>],
-        lde_views: Vec<RapMatrixView<SC>>,
+        extended_views: Vec<RapView<impl Matrix<Val<SC>>, Val<SC>, SC::Challenge>>,
         quotient_degrees: &[u8],
     ) -> QuotientData<SC> {
-        assert_eq!(constraints.len(), lde_views.len());
+        assert_eq!(constraints.len(), extended_views.len());
         assert_eq!(constraints.len(), quotient_degrees.len());
-        let inner = izip!(constraints, lde_views, quotient_degrees)
-            .map(|(constraints, rap_ldes, &quotient_degree)| {
-                self.single_rap_quotient_values(constraints, rap_ldes, quotient_degree)
+        let inner = izip!(constraints, extended_views, quotient_degrees)
+            .map(|(constraints, extended_view, &quotient_degree)| {
+                self.single_rap_quotient_values(constraints, extended_view, quotient_degree)
             })
             .collect();
         QuotientData { inner }
@@ -55,27 +55,21 @@ impl<'pcs, SC: StarkGenericConfig> QuotientCommitter<'pcs, SC> {
     pub(super) fn single_rap_quotient_values(
         &self,
         constraints: &SymbolicExpressionDag<Val<SC>>,
-        ldes: RapMatrixView<SC>,
+        view: RapView<impl Matrix<Val<SC>>, Val<SC>, SC::Challenge>,
         quotient_degree: u8,
     ) -> SingleQuotientData<SC> {
-        let log_trace_height = ldes.pair.log_trace_height;
+        let log_trace_height = view.pair.log_trace_height;
         let trace_domain = self
             .pcs
             .natural_domain_for_degree(1usize << log_trace_height);
         let quotient_domain =
             trace_domain.create_disjoint_domain(trace_domain.size() * quotient_degree as usize);
-        // Empty matrix if no preprocessed trace
-        let preprocessed_lde_on_quotient_domain = ldes
-            .pair
-            .preprocessed
-            .unwrap_or(Arc::new(RowMajorMatrix::new(vec![], 0)));
-        let partitioned_main_lde_on_quotient_domain: Vec<_> = ldes.pair.partitioned_main;
 
         let (after_challenge_lde_on_quotient_domain, challenges, exposed_values_after_challenge): (
             Vec<_>,
             Vec<_>,
             Vec<_>,
-        ) = multiunzip(ldes.per_phase.into_iter().map(|view| {
+        ) = multiunzip(view.per_phase.into_iter().map(|view| {
             (
                 view.inner
                     .expect("gap in challenge phase not supported yet"),
@@ -90,16 +84,16 @@ impl<'pcs, SC: StarkGenericConfig> QuotientCommitter<'pcs, SC> {
             )
         }));
 
-        let quotient_values = compute_single_rap_quotient_values::<SC>(
+        let quotient_values = compute_single_rap_quotient_values::<SC, _>(
             constraints,
             trace_domain,
             quotient_domain,
-            preprocessed_lde_on_quotient_domain,
-            partitioned_main_lde_on_quotient_domain,
+            view.pair.preprocessed,
+            view.pair.partitioned_main,
             after_challenge_lde_on_quotient_domain,
             &challenges,
             self.alpha,
-            &ldes.pair.public_values,
+            &view.pair.public_values,
             &exposed_values_after_challenge,
         );
         SingleQuotientData {

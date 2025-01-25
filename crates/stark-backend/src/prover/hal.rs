@@ -10,10 +10,10 @@ use p3_matrix::dense::RowMajorMatrix;
 use serde::{de::DeserializeOwned, Serialize};
 
 use super::types::{
-    DeviceMultiStarkProvingKey, DeviceStarkProvingKey, PairView, ProverDataAfterRapPhases, RapView,
+    DeviceMultiStarkProvingKey, DeviceStarkProvingKey, PairView, ProverDataAfterRapPhases,
+    SingleCommitPreimage,
 };
 use crate::{
-    air_builders::symbolic::SymbolicExpressionDag,
     config::{Com, StarkGenericConfig, Val},
     keygen::types::MultiStarkProvingKey,
 };
@@ -90,33 +90,17 @@ pub trait RapPartialProver<PB: ProverBackend> {
 
 /// Only needed in proof systems that use quotient polynomials.
 pub trait QuotientCommitter<PB: ProverBackend> {
-    /// Given PCS prover data for a commitment and an index of a matrix in
-    /// the commitment, return a view of the matrix evaluated
-    /// on the quotient domain. In practice this will be the LDE matrix
-    /// evaluated on the LDE domain which contains the quotient domain as a
-    /// subgroup.
-    fn get_extended_matrix(
-        &self,
-        pcs_data: &PB::PcsData,
-        matrix_idx: usize,
-        quotient_degree: u8,
-    ) -> Option<PB::Matrix>;
-
-    /// Evaluate the quotient polynomial on the quotient domain and then commit to it.
-    /// The `extended_views` are extensions of the respective trace matrices
-    /// to evaluations on the quotient domain (or an even larger domain).
+    /// Given a view of the PCS data from all phases of proving,
+    /// first get the trace polynomials evaluated on the quotient domains.
+    /// Then compute the quotient polynomial evaluated on the quotient domain
+    /// and commit to it.
     ///
-    /// The lengths of `quotient_degrees`, `constraints`, `ldes`, and `public_values` must be equal
-    /// and zip together to correspond to a list of RAPs.
+    /// The lengths of
+    /// - `pk_views`: proving key per AIR
+    /// - `public_values`: public values per AIR
+    /// - `cached_views_per_air`: committed trace views per AIR (if any)
     ///
-    /// Currently we assume that the quotient domain is a subgroup of the LDE domain so that the
-    /// quotient polynomial evaluation can be done on the LDE domain. This avoids a separate
-    /// cosetDFT step.
-    ///
-    /// For each RAP, `quotient_degree` is the number of quotient chunks that were committed.
-    /// So `quotient_degree = quotient_domain_size / trace_domain_size`.
-    ///
-    /// The `constraints` contains the serializable symbolic constraints of each RAP across all challenge phases.
+    /// must be equal, and all equal to the number of AIRs.
     ///
     /// Quotient polynomials for multiple RAP matrices are committed together into a single commitment.
     /// The quotient polynomials can be committed together even if the corresponding trace matrices
@@ -124,9 +108,11 @@ pub trait QuotientCommitter<PB: ProverBackend> {
     fn eval_and_commit_quotient(
         &self,
         challenger: &mut PB::Challenger,
-        constraints: &[&SymbolicExpressionDag<PB::Val>],
-        extended_views: Vec<RapView<PB::Matrix, PB::Val, PB::Challenge>>,
-        quotient_degrees: &[u8],
+        pk_views: &[DeviceStarkProvingKey<PB>],
+        public_values: &[Vec<PB::Val>],
+        cached_views_per_air: &[Vec<SingleCommitPreimage<&PB::Matrix, &PB::PcsData>>],
+        common_main_pcs_data: &PB::PcsData,
+        prover_data_after: &ProverDataAfterRapPhases<PB>,
     ) -> (PB::Commitment, PB::PcsData);
 }
 
