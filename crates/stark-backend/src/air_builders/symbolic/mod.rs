@@ -17,8 +17,8 @@ use self::{
 use super::PartitionedAirBuilder;
 use crate::{
     interaction::{
-        rap::InteractionPhaseAirBuilder, Interaction, InteractionBuilder, InteractionType,
-        RapPhaseSeqKind, SymbolicInteraction,
+        fri_log_up::find_interaction_chunks, rap::InteractionPhaseAirBuilder, Interaction,
+        InteractionBuilder, InteractionType, RapPhaseSeqKind, SymbolicInteraction,
     },
     keygen::types::{StarkVerifyingParams, TraceWidth},
     rap::{BaseAirWithPublicValues, PermutationAirBuilderWithExposedValues, Rap},
@@ -100,7 +100,7 @@ pub fn get_symbolic_builder<F, R>(
     num_challenges_to_sample: &[usize],
     num_exposed_values_after_challenge: &[usize],
     rap_phase_seq_kind: RapPhaseSeqKind,
-    interaction_chunk_size: usize,
+    max_constraint_degree: usize,
 ) -> SymbolicRapBuilder<F>
 where
     F: Field,
@@ -112,7 +112,7 @@ where
         num_challenges_to_sample,
         num_exposed_values_after_challenge,
         rap_phase_seq_kind,
-        interaction_chunk_size,
+        max_constraint_degree,
     );
     Rap::eval(rap, &mut builder);
     builder
@@ -129,22 +129,24 @@ pub struct SymbolicRapBuilder<F> {
     exposed_values_after_challenge: Vec<Vec<SymbolicVariable<F>>>,
     constraints: Vec<SymbolicExpression<F>>,
     interactions: Vec<SymbolicInteraction<F>>,
-    interaction_chunk_size: usize,
+    max_constraint_degree: usize,
     rap_phase_seq_kind: RapPhaseSeqKind,
     trace_width: TraceWidth,
+
+    /// Caching for FRI logup to avoid recomputation during keygen
+    interaction_partitions: Option<Vec<Vec<usize>>>,
 }
 
 impl<F: Field> SymbolicRapBuilder<F> {
     /// - `num_challenges_to_sample`: for each challenge phase, how many challenges to sample
     /// - `num_exposed_values_after_challenge`: in each challenge phase, how many values to expose to verifier
     pub(crate) fn new(
-        // FIXME: width.after_challenge is incorrect. It cannot be determined when the function is called.
         width: &TraceWidth,
         num_public_values: usize,
         num_challenges_to_sample: &[usize],
         num_exposed_values_after_challenge: &[usize],
         rap_phase_seq_kind: RapPhaseSeqKind,
-        interaction_chunk_size: usize,
+        max_constraint_degree: usize,
     ) -> Self {
         let preprocessed_width = width.preprocessed.unwrap_or(0);
         let prep_values = [0, 1]
@@ -185,9 +187,10 @@ impl<F: Field> SymbolicRapBuilder<F> {
             exposed_values_after_challenge,
             constraints: vec![],
             interactions: vec![],
-            interaction_chunk_size,
+            max_constraint_degree,
             rap_phase_seq_kind,
             trace_width: width.clone(),
+            interaction_partitions: None,
         }
     }
 
@@ -400,8 +403,15 @@ impl<F: Field> InteractionPhaseAirBuilder for SymbolicRapBuilder<F> {
             assert!(self.challenges.is_empty());
             assert!(self.exposed_values_after_challenge.is_empty());
 
-            let perm_width = num_interactions.div_ceil(self.interaction_chunk_size) + 1;
-            self.after_challenge = Self::new_after_challenge(&[perm_width]);
+            if self.rap_phase_seq_kind == RapPhaseSeqKind::FriLogUp {
+                let interaction_partitions =
+                    find_interaction_chunks(&self.interactions, self.max_constraint_degree)
+                        .interaction_partitions();
+                let num_chunks = interaction_partitions.len();
+                self.interaction_partitions.replace(interaction_partitions);
+                let perm_width = num_chunks + 1;
+                self.after_challenge = Self::new_after_challenge(&[perm_width]);
+            }
 
             let phases_shapes = self.rap_phase_seq_kind.shape();
             let phase_shape = phases_shapes.first().unwrap();
@@ -412,12 +422,16 @@ impl<F: Field> InteractionPhaseAirBuilder for SymbolicRapBuilder<F> {
         }
     }
 
-    fn interaction_chunk_size(&self) -> usize {
-        self.interaction_chunk_size
+    fn max_constraint_degree(&self) -> usize {
+        self.max_constraint_degree
     }
 
     fn rap_phase_seq_kind(&self) -> RapPhaseSeqKind {
         self.rap_phase_seq_kind
+    }
+
+    fn symbolic_interactions(&self) -> Vec<SymbolicInteraction<F>> {
+        self.interactions.clone()
     }
 }
 

@@ -20,7 +20,7 @@ use super::{
 use crate::{
     air_builders::symbolic::SymbolicConstraints,
     config::{
-        Com, PcsProof, PcsProverData, RapPhaseSeqPartialProof, RapPhaseSeqProvingKey,
+        Com, PcsProof, PcsProverData, RapPartialProvingKey, RapPhaseSeqPartialProof,
         StarkGenericConfig, Val,
     },
     interaction::RapPhaseSeq,
@@ -65,7 +65,7 @@ impl<SC: StarkGenericConfig> ProverBackend for CpuBackend<SC> {
     type Challenger = SC::Challenger;
     type Matrix = Arc<RowMajorMatrix<Val<SC>>>;
     type PcsData = PcsData<SC>;
-    type RapPartialProvingKey = RapPhaseSeqProvingKey<SC>;
+    type RapPartialProvingKey = RapPartialProvingKey<SC>;
 }
 
 #[derive(Derivative)]
@@ -161,8 +161,8 @@ impl<SC: StarkGenericConfig> hal::RapPartialProver<CpuBackend<SC>> for CpuDevice
             .rap_phase_seq()
             .partially_prove(
                 challenger,
-                &rap_pk_per_air,
                 &constraints_per_air.iter().collect_vec(),
+                &rap_pk_per_air,
                 &trace_views,
             )
             .map_or((None, None), |(p, d)| (Some(p), Some(d)));
@@ -438,7 +438,7 @@ where
                     air_name: &pk.air_name,
                     vk: &pk.vk,
                     preprocessed_data,
-                    rap_partial_pk: pk.rap_phase_seq_pk.clone(),
+                    rap_partial_pk: pk.rap_partial_pk.clone(),
                 }
             })
             .collect();

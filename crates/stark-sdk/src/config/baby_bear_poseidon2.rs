@@ -2,7 +2,7 @@ use std::any::type_name;
 
 use openvm_stark_backend::{
     config::StarkConfig,
-    interaction::stark_log_up::StarkLogUpPhase,
+    interaction::fri_log_up::FriLogUpPhase,
     p3_challenger::DuplexChallenger,
     p3_commit::ExtensionMmcs,
     p3_field::{extension::BinomialExtensionField, Field, FieldAlgebra},
@@ -48,7 +48,7 @@ type ChallengeMmcs<P> = ExtensionMmcs<Val, Challenge, ValMmcs<P>>;
 pub type Challenger<P> = DuplexChallenger<Val, P, WIDTH, RATE>;
 type Dft = Radix2DitParallel<Val>;
 type Pcs<P> = TwoAdicFriPcs<Val, Dft, ValMmcs<P>, ChallengeMmcs<P>>;
-type RapPhase<P> = StarkLogUpPhase<Val, Challenge, Challenger<P>>;
+type RapPhase<P> = FriLogUpPhase<Val, Challenge, Challenger<P>>;
 
 pub type BabyBearPermutationConfig<P> = StarkConfig<Pcs<P>, RapPhase<P>, Challenge, Challenger<P>>;
 pub type BabyBearPoseidon2Config = BabyBearPermutationConfig<Perm>;
@@ -65,6 +65,7 @@ where
     pub fri_params: FriParameters,
     pub config: BabyBearPermutationConfig<P>,
     pub perm: P,
+    pub max_constraint_degree: usize,
 }
 
 impl<P> StarkEngine<BabyBearPermutationConfig<P>> for BabyBearPermutationEngine<P>
@@ -75,6 +76,10 @@ where
 {
     fn config(&self) -> &BabyBearPermutationConfig<P> {
         &self.config
+    }
+
+    fn max_constraint_degree(&self) -> Option<usize> {
+        Some(self.max_constraint_degree)
     }
 
     fn new_challenger(&self) -> Challenger<P> {
@@ -141,6 +146,7 @@ where
         config,
         perm,
         fri_params,
+        max_constraint_degree: fri_params.max_constraint_degree(),
     }
 }
 
@@ -163,7 +169,7 @@ where
         mmcs: challenge_mmcs,
     };
     let pcs = Pcs::new(dft, val_mmcs, fri_config);
-    let rap_phase = StarkLogUpPhase::new();
+    let rap_phase = FriLogUpPhase::new();
     BabyBearPermutationConfig::new(pcs, rap_phase)
 }
 

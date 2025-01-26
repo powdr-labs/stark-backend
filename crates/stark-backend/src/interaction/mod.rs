@@ -7,14 +7,14 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
     air_builders::symbolic::{symbolic_expression::SymbolicExpression, SymbolicConstraints},
-    interaction::stark_log_up::{STARK_LU_NUM_CHALLENGES, STARK_LU_NUM_EXPOSED_VALUES},
+    interaction::fri_log_up::{STARK_LU_NUM_CHALLENGES, STARK_LU_NUM_EXPOSED_VALUES},
     prover::types::PairView,
 };
 
 /// Interaction debugging tools
 pub mod debug;
+pub mod fri_log_up;
 pub mod rap;
-pub mod stark_log_up;
 pub mod trace;
 mod utils;
 
@@ -108,30 +108,25 @@ pub struct RapPhaseShape {
 }
 
 /// Supported challenge phases in a RAP.
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RapPhaseSeqKind {
-    GkrLogUp,
-    /// Up to one phase with prover/verifier given by [[stark_log_up::StarkLogUpPhase]] and
-    /// constraints given by [[stark_log_up::eval_stark_log_up_phase]].
-    StarkLogUp,
+    // GkrLogUp,
+    /// Up to one phase with prover/verifier given by [[fri_log_up::FriLogUpPhase]] and
+    /// constraints given by [[fri_log_up::eval_fri_log_up_phase]].
+    FriLogUp,
 }
 
 impl RapPhaseSeqKind {
     pub fn shape(&self) -> Vec<RapPhaseShape> {
         match self {
-            RapPhaseSeqKind::StarkLogUp => vec![RapPhaseShape {
+            RapPhaseSeqKind::FriLogUp => vec![RapPhaseShape {
                 num_challenges: STARK_LU_NUM_CHALLENGES,
                 num_exposed_values: STARK_LU_NUM_EXPOSED_VALUES,
                 extra_opening_rots: vec![],
             }],
-            RapPhaseSeqKind::GkrLogUp => todo!(),
         }
     }
-}
-
-pub trait HasInteractionChunkSize {
-    fn interaction_chunk_size(&self) -> usize;
 }
 
 /// Defines a particular protocol for the "after challenge" phase in a RAP.
@@ -140,7 +135,8 @@ pub trait HasInteractionChunkSize {
 /// as well as via some "eval" method that is determined by `RapPhaseId`.
 pub trait RapPhaseSeq<F, Challenge, Challenger> {
     type PartialProof: Clone + Serialize + DeserializeOwned;
-    type ProvingKey: Clone + Serialize + DeserializeOwned + HasInteractionChunkSize;
+    /// Preprocessed data necessary for the RAP partial proving
+    type PartialProvingKey: Clone + Serialize + DeserializeOwned;
     type Error: Debug;
 
     const ID: RapPhaseSeqKind;
@@ -148,8 +144,9 @@ pub trait RapPhaseSeq<F, Challenge, Challenger> {
     /// The protocol parameters for the challenge phases may depend on the AIR constraints.
     fn generate_pk_per_air(
         &self,
-        symbolic_constraints_per_air: Vec<SymbolicConstraints<F>>,
-    ) -> Vec<Self::ProvingKey>;
+        symbolic_constraints_per_air: &[SymbolicConstraints<F>],
+        max_constraint_degree: usize,
+    ) -> Vec<Self::PartialProvingKey>;
 
     /// Partially prove the challenge phases,
     ///
@@ -162,8 +159,8 @@ pub trait RapPhaseSeq<F, Challenge, Challenger> {
     fn partially_prove(
         &self,
         challenger: &mut Challenger,
-        params_per_air: &[&Self::ProvingKey],
         constraints_per_air: &[&SymbolicConstraints<F>],
+        params_per_air: &[&Self::PartialProvingKey],
         trace_view_per_air: &[PairTraceView<F>],
     ) -> Option<(Self::PartialProof, RapPhaseProverData<Challenge>)>;
 

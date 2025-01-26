@@ -1,6 +1,6 @@
 use openvm_stark_backend::{
     config::StarkConfig,
-    interaction::stark_log_up::StarkLogUpPhase,
+    interaction::fri_log_up::FriLogUpPhase,
     p3_challenger::{HashChallenger, SerializingChallenger32},
     p3_commit::ExtensionMmcs,
     p3_field::extension::BinomialExtensionField,
@@ -29,7 +29,7 @@ type Challenger<H> = SerializingChallenger32<Val, HashChallenger<u8, H, 32>>;
 
 type Pcs<H> = TwoAdicFriPcs<Val, Dft, ValMmcs<H>, ChallengeMmcs<H>>;
 
-type RapPhase<H> = StarkLogUpPhase<Val, Challenge, Challenger<H>>;
+type RapPhase<H> = FriLogUpPhase<Val, Challenge, Challenger<H>>;
 
 pub type BabyBearByteHashConfig<H> = StarkConfig<Pcs<H>, RapPhase<H>, Challenge, Challenger<H>>;
 
@@ -40,6 +40,7 @@ where
     pub fri_params: FriParameters,
     pub config: BabyBearByteHashConfig<H>,
     pub byte_hash: H,
+    pub max_constraint_degree: usize,
 }
 
 impl<H> StarkEngine<BabyBearByteHashConfig<H>> for BabyBearByteHashEngine<H>
@@ -48,6 +49,10 @@ where
 {
     fn config(&self) -> &BabyBearByteHashConfig<H> {
         &self.config
+    }
+
+    fn max_constraint_degree(&self) -> Option<usize> {
+        Some(self.max_constraint_degree)
     }
 
     fn new_challenger(&self) -> Challenger<H> {
@@ -76,6 +81,7 @@ where
         config,
         byte_hash,
         fri_params,
+        max_constraint_degree: fri_params.max_constraint_degree(),
     }
 }
 
@@ -99,7 +105,7 @@ where
         mmcs: challenge_mmcs,
     };
     let pcs = Pcs::new(dft, val_mmcs, fri_config);
-    let rap_phase = StarkLogUpPhase::new();
+    let rap_phase = FriLogUpPhase::new();
     BabyBearByteHashConfig::new(pcs, rap_phase)
 }
 
