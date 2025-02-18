@@ -1,6 +1,6 @@
 use std::{iter, marker::PhantomData};
 
-use itertools::{izip, multiunzip, Itertools};
+use itertools::{izip, Itertools};
 use p3_challenger::CanObserve;
 use p3_field::FieldAlgebra;
 use p3_util::log2_strict_usize;
@@ -8,14 +8,18 @@ use tracing::instrument;
 
 use super::{
     hal::{ProverBackend, ProverDevice},
-    types::{DeviceMultiStarkProvingKey, HalProof, ProvingContext, SingleCommitPreimage},
+    types::{DeviceMultiStarkProvingKey, HalProof, ProvingContext},
     Prover,
 };
 use crate::{
     config::{Com, StarkGenericConfig, Val},
     keygen::view::MultiStarkVerifyingKeyView,
     proof::{AirProofData, Commitments},
-    prover::{hal::MatrixDimensions, metrics::trace_metrics, types::PairView},
+    prover::{
+        hal::MatrixDimensions,
+        metrics::trace_metrics,
+        types::{PairView, SingleCommitPreimage},
+    },
     utils::metrics_span,
 };
 
@@ -80,24 +84,26 @@ where
         let start = std::time::Instant::now();
         assert!(mpk.validate(&ctx), "Invalid proof input");
 
-        let (air_ids, air_ctxs): (Vec<_>, Vec<_>) = ctx.into_iter().unzip();
-        let num_air = air_ids.len();
+        let num_air = ctx.per_air.len();
         #[allow(clippy::type_complexity)]
         let (cached_commits_per_air, cached_views_per_air, common_main_per_air, pvs_per_air): (
             Vec<Vec<PB::Commitment>>,
             Vec<Vec<SingleCommitPreimage<&'a PB::Matrix, &'a PB::PcsData>>>,
             Vec<Option<PB::Matrix>>,
             Vec<Vec<PB::Val>>,
-        ) = multiunzip(air_ctxs.into_iter().map(|ctx| {
-            let (cached_commits, cached_views): (Vec<_>, Vec<_>) =
-                ctx.cached_mains.into_iter().unzip();
-            (
-                cached_commits,
-                cached_views,
-                ctx.common_main,
-                ctx.public_values,
-            )
-        }));
+        ) = ctx
+            .into_iter()
+            .map(|(_, ctx)| {
+                let (cached_commits, cached_views): (Vec<_>, Vec<_>) =
+                    ctx.cached_mains.into_iter().unzip();
+                (
+                    cached_commits,
+                    cached_views,
+                    ctx.common_main,
+                    ctx.public_values,
+                )
+            })
+            .multiunzip();
 
         // ==================== All trace commitments that do not require challenges ====================
         // Commit all common main traces in a commitment. Traces inside are ordered by AIR id.
