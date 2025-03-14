@@ -11,17 +11,19 @@ pub(crate) struct MultiStarkVerifyingKeyView<'a, Val, Com> {
     /// Trace height constraints are *not* filtered by AIR. When computing the dot product, this
     /// will be indexed into by air_id.
     pub trace_height_constraints: &'a [LinearConstraint],
+    pub pre_hash: Com,
 }
 
 impl<SC: StarkGenericConfig> MultiStarkVerifyingKey<SC> {
     /// Returns a view with all airs.
     pub(crate) fn full_view(&self) -> MultiStarkVerifyingKeyView<Val<SC>, Com<SC>> {
-        self.view(&(0..self.per_air.len()).collect_vec())
+        self.view(&(0..self.inner.per_air.len()).collect_vec())
     }
     pub(crate) fn view(&self, air_ids: &[usize]) -> MultiStarkVerifyingKeyView<Val<SC>, Com<SC>> {
         MultiStarkVerifyingKeyView {
-            per_air: air_ids.iter().map(|&id| &self.per_air[id]).collect(),
-            trace_height_constraints: &self.trace_height_constraints,
+            per_air: air_ids.iter().map(|&id| &self.inner.per_air[id]).collect(),
+            trace_height_constraints: &self.inner.trace_height_constraints,
+            pre_hash: self.pre_hash.clone(),
         }
     }
 }
