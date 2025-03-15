@@ -66,7 +66,11 @@ impl DummyInteractionAir {
     }
 }
 
-impl<F: Field> BaseAirWithPublicValues<F> for DummyInteractionAir {}
+impl<F: Field> BaseAirWithPublicValues<F> for DummyInteractionAir {
+    fn columns(&self) -> Vec<String> {
+        vec![]
+    }
+}
 impl<F: Field> PartitionedBaseAir<F> for DummyInteractionAir {
     fn cached_main_widths(&self) -> Vec<usize> {
         if self.partition {

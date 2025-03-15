@@ -19,6 +19,10 @@ impl<F> BaseAirWithPublicValues<F> for FibonacciAir {
     fn num_public_values(&self) -> usize {
         3
     }
+
+    fn columns(&self) -> Vec<String> {
+        vec!["left".to_string(), "right".to_string()]
+    }
 }
 
 impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {

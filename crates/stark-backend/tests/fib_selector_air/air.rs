@@ -45,6 +45,10 @@ impl<F: Field> BaseAirWithPublicValues<F> for FibonacciSelectorAir {
     fn num_public_values(&self) -> usize {
         3
     }
+
+    fn columns(&self) -> Vec<String> {
+        vec!["sel".to_string()]
+    }
 }
 
 impl<AB: AirBuilderWithPublicValues + PairBuilder + InteractionBuilder> Air<AB>

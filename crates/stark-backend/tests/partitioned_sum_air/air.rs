@@ -14,7 +14,15 @@ use p3_matrix::Matrix;
 /// Inner value is width of y-submatrix
 pub struct SumAir(pub usize);
 
-impl<F> BaseAirWithPublicValues<F> for SumAir {}
+impl<F> BaseAirWithPublicValues<F> for SumAir {
+    fn columns(&self) -> Vec<String> {
+        let mut result = vec!["x".to_string()];
+        for i in 0..self.0 {
+            result.push(format!("y_{}", i));
+        }
+        result
+    }
+}
 impl<F> PartitionedBaseAir<F> for SumAir {
     fn cached_main_widths(&self) -> Vec<usize> {
         vec![self.0]

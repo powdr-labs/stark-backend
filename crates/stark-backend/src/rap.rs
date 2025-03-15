@@ -19,6 +19,8 @@ pub trait BaseAirWithPublicValues<F>: BaseAir<F> {
     fn num_public_values(&self) -> usize {
         0
     }
+
+    fn columns(&self) -> Vec<String>;
 }
 
 /// An AIR with 1 or more main trace partitions.
