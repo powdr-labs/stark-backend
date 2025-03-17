@@ -13,6 +13,10 @@ impl<F> BaseAir<F> for FibonacciAir {
     fn width(&self) -> usize {
         NUM_FIBONACCI_COLS
     }
+
+    fn columns(&self) -> Vec<String> {
+        vec!["left".to_string(), "right".to_string()]
+    }
 }
 
 impl<F> BaseAirWithPublicValues<F> for FibonacciAir {

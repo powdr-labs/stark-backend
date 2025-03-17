@@ -39,6 +39,10 @@ impl<F: Field> BaseAir<F> for FibonacciSelectorAir {
         let sels = self.sels.iter().map(|&s| F::from_bool(s)).collect();
         Some(RowMajorMatrix::new_col(sels))
     }
+
+    fn columns(&self) -> Vec<String> {
+        todo!()
+    }
 }
 
 impl<F: Field> BaseAirWithPublicValues<F> for FibonacciSelectorAir {

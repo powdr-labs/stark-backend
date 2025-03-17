@@ -95,6 +95,10 @@ impl<F: Field> BaseAir<F> for DummyInteractionAir {
     fn preprocessed_trace(&self) -> Option<RowMajorMatrix<F>> {
         None
     }
+
+    fn columns(&self) -> Vec<String> {
+        todo!()
+    }
 }
 
 impl<AB: InteractionBuilder + PartitionedAirBuilder> Air<AB> for DummyInteractionAir {
