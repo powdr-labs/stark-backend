@@ -410,6 +410,9 @@ impl<F: Field> InteractionPhaseAirBuilder for SymbolicRapBuilder<F> {
             }
 
             let phases_shapes = self.rap_phase_seq_kind.shape();
+            if phases_shapes.is_empty() {
+                return;
+            }
             let phase_shape = phases_shapes.first().unwrap();
 
             self.challenges = Self::new_challenges(&[phase_shape.num_challenges]);
