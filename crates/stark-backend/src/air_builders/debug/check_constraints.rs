@@ -1,5 +1,4 @@
 use itertools::izip;
-use p3_air::BaseAir;
 use p3_field::{Field, FieldAlgebra};
 use p3_matrix::{dense::RowMajorMatrixView, stack::VerticalPair, Matrix};
 use p3_maybe_rayon::prelude::*;
@@ -11,7 +10,7 @@ use crate::{
         debug::{generate_logical_interactions, LogicalInteractions},
         InteractionType, RapPhaseSeqKind, SymbolicInteraction,
     },
-    rap::{PartitionedBaseAir, Rap},
+    rap::{AirBuilder, BaseAir, PartitionedBaseAir, Rap},
 };
 
 /// Check that all constraints vanish on the subgroup.

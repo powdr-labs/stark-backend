@@ -1,9 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use itertools::{izip, Itertools};
-use p3_air::{
-    AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
-};
 use p3_field::FieldAlgebra;
 use p3_matrix::{dense::RowMajorMatrixView, stack::VerticalPair};
 
@@ -15,7 +12,10 @@ use crate::{
         RapPhaseSeqKind, SymbolicInteraction,
     },
     keygen::types::StarkProvingKey,
-    rap::{AnyRap, PermutationAirBuilderWithExposedValues},
+    rap::{
+        AirBuilder, AirBuilderWithPublicValues, AnyRap, ExtensionBuilder, PairBuilder,
+        PermutationAirBuilder, PermutationAirBuilderWithExposedValues,
+    },
 };
 
 mod check_constraints;

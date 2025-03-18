@@ -1,12 +1,10 @@
 //! An AIR with specified interactions can be augmented into a RAP.
 //! This module auto-converts any [Air] implemented on an [InteractionBuilder] into a [Rap].
 
-use p3_air::{Air, AirBuilder};
-
 use super::{InteractionBuilder, RapPhaseSeqKind, SymbolicInteraction};
 use crate::{
     interaction::fri_log_up::eval_fri_log_up_phase,
-    rap::{PermutationAirBuilderWithExposedValues, Rap},
+    rap::{Air, AirBuilder, PermutationAirBuilderWithExposedValues, Rap},
 };
 
 /// Used internally to select RAP phase evaluation function.

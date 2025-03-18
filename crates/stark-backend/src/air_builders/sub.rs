@@ -5,8 +5,9 @@ use std::{
     ops::{Deref, Range},
 };
 
-use p3_air::{AirBuilder, BaseAir};
 use p3_matrix::Matrix;
+
+use crate::rap::{AirBuilder, BaseAir};
 
 /// A submatrix of a matrix.  The matrix will contain a subset of the columns of `self.inner`.
 pub struct SubMatrixRowSlices<M: Matrix<T>, T: Send + Sync> {

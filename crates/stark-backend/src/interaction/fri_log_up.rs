@@ -1,7 +1,6 @@
 use std::{array, borrow::Borrow, cmp::max, iter::zip, marker::PhantomData, mem};
 
 use itertools::Itertools;
-use p3_air::ExtensionBuilder;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_field::{ExtensionField, Field, FieldAlgebra};
 use p3_matrix::{dense::RowMajorMatrix, Matrix};
@@ -19,7 +18,7 @@ use crate::{
         RapPhaseVerifierData,
     },
     parizip,
-    rap::PermutationAirBuilderWithExposedValues,
+    rap::{ExtensionBuilder, PermutationAirBuilderWithExposedValues},
     utils::metrics_span,
 };
 

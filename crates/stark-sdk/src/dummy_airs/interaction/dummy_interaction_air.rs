@@ -12,7 +12,6 @@ use openvm_stark_backend::{
     air_builders::PartitionedAirBuilder,
     config::{StarkGenericConfig, Val},
     interaction::{InteractionBuilder, InteractionType},
-    p3_air::{Air, BaseAir},
     p3_field::{Field, FieldAlgebra},
     p3_matrix::{dense::RowMajorMatrix, Matrix},
     prover::{
@@ -20,7 +19,7 @@ use openvm_stark_backend::{
         hal::TraceCommitter,
         types::{AirProofInput, AirProofRawInput, CommittedTraceData},
     },
-    rap::{AnyRap, BaseAirWithPublicValues, PartitionedBaseAir},
+    rap::{Air, AnyRap, BaseAir, BaseAirWithPublicValues, PartitionedBaseAir},
     Chip, ChipUsageGetter,
 };
 

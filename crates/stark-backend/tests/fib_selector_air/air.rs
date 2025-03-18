@@ -3,10 +3,12 @@ use std::borrow::Borrow;
 use openvm_stark_backend::{
     interaction::InteractionBuilder,
     p3_field::{Field, FieldAlgebra},
-    rap::{BaseAirWithPublicValues, PartitionedBaseAir},
+    rap::{
+        Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, BaseAirWithPublicValues, PairBuilder,
+        PartitionedBaseAir,
+    },
 };
 use openvm_stark_sdk::dummy_airs::fib_air::columns::{FibonacciCols, NUM_FIBONACCI_COLS};
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PairBuilder};
 use p3_matrix::{dense::RowMajorMatrix, Matrix};
 
 use super::columns::FibonacciSelectorCols;

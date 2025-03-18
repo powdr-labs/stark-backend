@@ -1,6 +1,5 @@
 use std::fmt::Debug;
 
-use p3_air::AirBuilder;
 use p3_challenger::CanObserve;
 use p3_matrix::dense::RowMajorMatrix;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -9,6 +8,7 @@ use crate::{
     air_builders::symbolic::{symbolic_expression::SymbolicExpression, SymbolicConstraints},
     interaction::fri_log_up::{STARK_LU_NUM_CHALLENGES, STARK_LU_NUM_EXPOSED_VALUES},
     prover::types::PairView,
+    rap::AirBuilder,
 };
 
 /// Interaction debugging tools

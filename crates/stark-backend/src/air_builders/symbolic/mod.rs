@@ -1,9 +1,6 @@
 // Copied from uni-stark/src/symbolic_builder.rs to allow A: ?Sized
 
 use itertools::Itertools;
-use p3_air::{
-    AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
-};
 use p3_field::Field;
 use p3_matrix::{dense::RowMajorMatrix, Matrix};
 use p3_util::log2_ceil_usize;
@@ -21,7 +18,10 @@ use crate::{
         InteractionBuilder, InteractionType, RapPhaseSeqKind, SymbolicInteraction,
     },
     keygen::types::{StarkVerifyingParams, TraceWidth},
-    rap::{BaseAirWithPublicValues, PermutationAirBuilderWithExposedValues, Rap},
+    rap::{
+        AirBuilder, AirBuilderWithPublicValues, BaseAirWithPublicValues, ExtensionBuilder,
+        PairBuilder, PermutationAirBuilder, PermutationAirBuilderWithExposedValues, Rap,
+    },
 };
 
 mod dag;

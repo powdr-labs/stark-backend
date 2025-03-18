@@ -1,5 +1,6 @@
-use p3_air::AirBuilder;
 use p3_matrix::{dense::RowMajorMatrixView, stack::VerticalPair};
+
+use crate::rap::AirBuilder;
 
 pub mod debug;
 pub mod sub;

@@ -6,9 +6,8 @@
 use openvm_stark_backend::{
     air_builders::PartitionedAirBuilder,
     p3_field::FieldAlgebra,
-    rap::{BaseAirWithPublicValues, PartitionedBaseAir},
+    rap::{Air, BaseAir, BaseAirWithPublicValues, PartitionedBaseAir},
 };
-use p3_air::{Air, BaseAir};
 use p3_matrix::Matrix;
 
 /// Inner value is width of y-submatrix
