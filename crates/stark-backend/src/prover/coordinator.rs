@@ -87,6 +87,8 @@ where
         self.challenger.observe(mpk.vk_pre_hash.clone());
 
         let num_air = ctx.per_air.len();
+        self.challenger
+            .observe(Val::<SC>::from_canonical_usize(num_air));
         info!(num_air);
         #[allow(clippy::type_complexity)]
         let (cached_commits_per_air, cached_views_per_air, common_main_per_air, pvs_per_air): (
@@ -96,7 +98,8 @@ where
             Vec<Vec<PB::Val>>,
         ) = ctx
             .into_iter()
-            .map(|(_, ctx)| {
+            .map(|(air_id, ctx)| {
+                self.challenger.observe(Val::<SC>::from_canonical_usize(air_id));
                 let (cached_commits, cached_views): (Vec<_>, Vec<_>) =
                     ctx.cached_mains.into_iter().unzip();
                 (
