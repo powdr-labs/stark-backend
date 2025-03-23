@@ -27,6 +27,10 @@ impl<F> BaseAir<F> for SumAir {
     fn width(&self) -> usize {
         self.0 + 1
     }
+
+    fn columns(&self) -> Option<Vec<String>> {
+        todo!()
+    }
 }
 
 impl<AB: PartitionedAirBuilder> Air<AB> for SumAir {

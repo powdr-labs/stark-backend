@@ -88,6 +88,10 @@ impl<F: Field> BaseAir<F> for DummyInteractionAir {
         1 + self.field_width
     }
 
+    fn columns(&self) -> Option<Vec<String>> {
+        todo!()
+    }
+
     fn preprocessed_trace(&self) -> Option<RowMajorMatrix<F>> {
         None
     }
