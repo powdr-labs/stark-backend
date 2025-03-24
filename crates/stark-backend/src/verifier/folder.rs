@@ -63,6 +63,7 @@ where
             .constraint_idx
             .iter()
             .map(|idx| exprs[*idx].clone())
+            .rev()
             .scan(F::ONE.into(), |state: &mut Expr, next_elem| {
                 let r = next_elem * state.clone();
                 *state *= self.alpha;
