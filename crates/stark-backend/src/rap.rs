@@ -78,6 +78,20 @@ Rap<SymbolicRapBuilder<Val<SC>>> // for keygen to extract fixed data about the R
     fn as_any(&self) -> &dyn Any;
     /// Name for display purposes
     fn name(&self) -> String;
+
+    fn columns(&self) -> Option<Vec<String>> {
+        None
+    }
+}
+
+/// Trait for AIRs that can provide column names
+pub trait ColumnsAir<F>: BaseAir<F> {
+    /// If available, returns the names of columns used in this AIR.
+    /// If the result is `Some(names)`, `names.len() == air.width()` should always
+    /// be true
+    fn columns(&self) -> Option<Vec<String>> {
+        None
+    }
 }
 
 impl<SC, T> AnyRap<SC> for T
@@ -97,6 +111,14 @@ where
 
     fn name(&self) -> String {
         get_air_name(self)
+    }
+
+    fn columns(&self) -> Option<Vec<String>> {
+        if let Some(columns_air) = (self as &dyn Any).downcast_ref::<&dyn ColumnsAir<Val<SC>>>() {
+            columns_air.columns()
+        } else {
+            None
+        }
     }
 }
 

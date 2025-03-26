@@ -35,10 +35,6 @@ impl<F: Field> BaseAir<F> for FibonacciSelectorAir {
         NUM_FIBONACCI_COLS
     }
 
-    fn columns(&self) -> Option<Vec<String>> {
-        todo!()
-    }
-
     fn preprocessed_trace(&self) -> Option<RowMajorMatrix<F>> {
         let sels = self.sels.iter().map(|&s| F::from_bool(s)).collect();
         Some(RowMajorMatrix::new_col(sels))
