@@ -47,7 +47,7 @@ pub struct DummyInteractionAir {
 
 impl<F: Field> ColumnsAir<F> for DummyInteractionAir {
     fn columns(&self) -> Option<Vec<String>> {
-        todo!()
+        None
     }
 }
 
