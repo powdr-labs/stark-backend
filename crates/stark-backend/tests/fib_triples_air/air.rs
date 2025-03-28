@@ -17,7 +17,7 @@ impl<F> BaseAir<F> for FibonacciAir {
 
 impl<F> ColumnsAir<F> for FibonacciAir {
     fn columns(&self) -> Option<Vec<String>> {
-        todo!()
+        None
     }
 }
 

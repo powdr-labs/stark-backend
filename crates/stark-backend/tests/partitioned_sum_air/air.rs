@@ -31,7 +31,7 @@ impl<F> BaseAir<F> for SumAir {
 
 impl<F> ColumnsAir<F> for SumAir {
     fn columns(&self) -> Option<Vec<String>> {
-        todo!()
+        None
     }
 }
 

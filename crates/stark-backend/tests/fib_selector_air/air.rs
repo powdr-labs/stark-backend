@@ -43,7 +43,7 @@ impl<F: Field> BaseAir<F> for FibonacciSelectorAir {
 
 impl<F: Field> ColumnsAir<F> for FibonacciSelectorAir {
     fn columns(&self) -> Option<Vec<String>> {
-        todo!()
+        None
     }
 }
 
