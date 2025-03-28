@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 
-use openvm_stark_backend::rap::{BaseAirWithPublicValues, PartitionedBaseAir};
+use openvm_stark_backend::rap::{BaseAirWithPublicValues, ColumnsAir, PartitionedBaseAir};
 use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
 use p3_matrix::Matrix;
 
@@ -12,6 +12,12 @@ impl<F> PartitionedBaseAir<F> for FibonacciAir {}
 impl<F> BaseAir<F> for FibonacciAir {
     fn width(&self) -> usize {
         NUM_FIBONACCI_COLS
+    }
+}
+
+impl<F> ColumnsAir<F> for FibonacciAir {
+    fn columns(&self) -> Option<Vec<String>> {
+        todo!()
     }
 }
 

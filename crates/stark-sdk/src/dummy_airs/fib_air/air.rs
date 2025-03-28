@@ -3,7 +3,7 @@ use std::borrow::Borrow;
 use openvm_stark_backend::{
     p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir},
     p3_matrix::Matrix,
-    rap::{BaseAirWithPublicValues, PartitionedBaseAir},
+    rap::{BaseAirWithPublicValues, ColumnsAir, PartitionedBaseAir},
 };
 
 use super::columns::{FibonacciCols, NUM_FIBONACCI_COLS};
@@ -21,6 +21,12 @@ impl<F> BaseAir<F> for FibonacciAir {
 impl<F> BaseAirWithPublicValues<F> for FibonacciAir {
     fn num_public_values(&self) -> usize {
         3
+    }
+}
+
+impl<F> ColumnsAir<F> for FibonacciAir {
+    fn columns(&self) -> Option<Vec<String>> {
+        todo!()
     }
 }
 
