@@ -41,7 +41,7 @@ impl<F: Field> BaseAir<F> for FibonacciSelectorAir {
     }
 }
 
-impl<F> ColumnsAir<F> for FibonacciSelectorAir {}
+impl<F: Field> ColumnsAir<F> for FibonacciSelectorAir {}
 
 impl<F: Field> BaseAirWithPublicValues<F> for FibonacciSelectorAir {
     fn num_public_values(&self) -> usize {

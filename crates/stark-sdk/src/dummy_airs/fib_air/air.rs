@@ -24,11 +24,7 @@ impl<F> BaseAirWithPublicValues<F> for FibonacciAir {
     }
 }
 
-impl<F> ColumnsAir<F> for FibonacciAir {
-    fn columns(&self) -> Option<Vec<String>> {
-        None
-    }
-}
+impl<F> ColumnsAir<F> for FibonacciAir {}
 
 impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
     fn eval(&self, builder: &mut AB) {
