@@ -15,11 +15,7 @@ impl<F> BaseAir<F> for FibonacciAir {
     }
 }
 
-impl<F> ColumnsAir<F> for FibonacciAir {
-    fn columns(&self) -> Option<Vec<String>> {
-        None
-    }
-}
+impl<F> ColumnsAir<F> for FibonacciAir {}
 
 impl<F> BaseAirWithPublicValues<F> for FibonacciAir {
     fn num_public_values(&self) -> usize {

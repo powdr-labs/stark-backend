@@ -44,11 +44,7 @@ pub struct DummyInteractionAir {
     pub partition: bool,
 }
 
-impl<F: Field> ColumnsAir<F> for DummyInteractionAir {
-    fn columns(&self) -> Option<Vec<String>> {
-        None
-    }
-}
+impl<F: Field> ColumnsAir<F> for DummyInteractionAir {}
 
 impl DummyInteractionAir {
     pub fn new(field_width: usize, is_send: bool, bus_index: usize) -> Self {
