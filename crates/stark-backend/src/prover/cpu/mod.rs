@@ -1,11 +1,11 @@
-use std::{iter::zip, marker::PhantomData, ops::Deref, sync::Arc};
+use std::{iter::zip, marker::PhantomData, mem::ManuallyDrop, ops::Deref, sync::Arc};
 
 use derivative::Derivative;
 use itertools::{izip, zip_eq, Itertools};
 use opener::OpeningProver;
 use p3_challenger::FieldChallenger;
 use p3_commit::{Pcs, PolynomialSpace};
-use p3_field::FieldExtensionAlgebra;
+use p3_field::{ExtensionField, Field, FieldExtensionAlgebra};
 use p3_matrix::{dense::RowMajorMatrix, Matrix};
 use p3_util::log2_strict_usize;
 use quotient::QuotientCommitter;
@@ -13,7 +13,7 @@ use quotient::QuotientCommitter;
 use super::{
     hal::{self, DeviceDataTransporter, MatrixDimensions, ProverBackend, ProverDevice},
     types::{
-        DeviceMultiStarkProvingKey, DeviceStarkProvingKey, PairView, ProverDataAfterRapPhases,
+        AirView, DeviceMultiStarkProvingKey, DeviceStarkProvingKey, ProverDataAfterRapPhases,
         RapView, SingleCommitPreimage,
     },
 };
@@ -26,7 +26,10 @@ use crate::{
     interaction::RapPhaseSeq,
     keygen::types::MultiStarkProvingKey,
     proof::OpeningProof,
-    prover::{hal::TraceCommitter, types::RapSinglePhaseView},
+    prover::{
+        hal::TraceCommitter,
+        types::{PairView, RapSinglePhaseView},
+    },
     utils::metrics_span,
 };
 
@@ -35,23 +38,31 @@ pub mod opener;
 /// Computation of DEEP quotient polynomial and commitment
 pub mod quotient;
 
-/// Proves multiple chips with interactions together.
-/// This prover implementation is specialized for Interactive AIRs.
-pub struct MultiTraceStarkProver<'c, SC: StarkGenericConfig> {
-    pub config: &'c SC,
-}
-
 /// CPU backend using Plonky3 traits.
+///
+/// # Safety
+/// For performance optimization of extension field operations, we assumes that `SC::Challenge` is
+/// an extension field of `F = Val<SC>` that is `repr(C)` or `repr(transparent)` with
+/// internal memory layout `[F; SC::Challenge::D]`.
+/// This ensures `SC::Challenge` and `F` have the same alignment and
+/// `size_of::<SC::Challenge>() == size_of::<F>() * SC::Challenge::D`.
+/// We assume that `<SC::Challenge as ExtensionField<F>::as_base_slice` is the same as
+/// transmuting `SC::Challenge` to `[F; SC::Challenge::D]`.
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""), Copy(bound = ""), Default(bound = ""))]
 pub struct CpuBackend<SC> {
     phantom: PhantomData<SC>,
 }
 
+/// # Safety
+/// See [`CpuBackend`].
 #[derive(Derivative, derive_new::new)]
 #[derivative(Clone(bound = ""), Copy(bound = ""))]
 pub struct CpuDevice<'a, SC> {
     config: &'a SC,
+    /// When committing a matrix, the matrix is cloned into newly allocated memory.
+    /// The size of the newly allocated memory will be `matrix.size() << log_blowup_factor`.
+    log_blowup_factor: usize,
 }
 
 impl<SC: StarkGenericConfig> ProverBackend for CpuBackend<SC> {
@@ -68,7 +79,7 @@ impl<SC: StarkGenericConfig> ProverBackend for CpuBackend<SC> {
     type RapPartialProvingKey = RapPartialProvingKey<SC>;
 }
 
-#[derive(Derivative)]
+#[derive(Derivative, derive_new::new)]
 #[derivative(Clone(bound = ""))]
 pub struct PcsData<SC: StarkGenericConfig> {
     /// The preimage of a single commitment.
@@ -103,6 +114,7 @@ impl<SC: StarkGenericConfig> ProverDevice<CpuBackend<SC>> for CpuDevice<'_, SC> 
 
 impl<SC: StarkGenericConfig> TraceCommitter<CpuBackend<SC>> for CpuDevice<'_, SC> {
     fn commit(&self, traces: &[Arc<RowMajorMatrix<Val<SC>>>]) -> (Com<SC>, PcsData<SC>) {
+        let log_blowup_factor = self.log_blowup_factor;
         let pcs = self.pcs();
         let (log_trace_heights, traces_with_domains): (Vec<_>, Vec<_>) = traces
             .iter()
@@ -111,7 +123,33 @@ impl<SC: StarkGenericConfig> TraceCommitter<CpuBackend<SC>> for CpuDevice<'_, SC
                 let log_height: u8 = log2_strict_usize(height).try_into().unwrap();
                 // Recomputing the domain is lightweight
                 let domain = pcs.natural_domain_for_degree(height);
-                (log_height, (domain, matrix.as_ref().clone()))
+                // pcs.commit takes the trace matrix and in the case of FRI, does in-place cosetDFT
+                // which requires resizing to a larger buffer size. Since we are cloning anyways,
+                // we should just allocate the larger size to avoid memory-reallocation
+                // ref: https://github.com/Plonky3/Plonky3/blob/8c8bbb4c17bd2b7ef2404338ab8f9036d5f08337/dft/src/traits.rs#L116
+                let trace_slice = &matrix.as_ref().values;
+                let new_buffer_size = trace_slice
+                    .len()
+                    .checked_shl(log_blowup_factor.try_into().unwrap())
+                    .unwrap();
+                let mut new_buffer = Vec::with_capacity(new_buffer_size);
+                // SAFETY:
+                // - `trace_slice` is allocated for `trace_slice.len() * size_of::<F>` bytes, obviously
+                // - we just allocated `new_buffer` for at least `trace_slice.len() * size_of::<F>` bytes above (more if there's blowup)
+                // - both are slices of &[F] so alignment is guaranteed
+                // - `new_buffer` is newly allocated so non-overlapping with `trace_slice`
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        trace_slice.as_ptr(),
+                        new_buffer.as_mut_ptr(),
+                        trace_slice.len(),
+                    );
+                    new_buffer.set_len(trace_slice.len());
+                }
+                (
+                    log_height,
+                    (domain, RowMajorMatrix::new(new_buffer, matrix.width)),
+                )
             })
             .unzip();
         let (commit, data) = pcs.commit(traces_with_domains);
@@ -126,11 +164,11 @@ impl<SC: StarkGenericConfig> TraceCommitter<CpuBackend<SC>> for CpuDevice<'_, SC
 }
 
 impl<SC: StarkGenericConfig> hal::RapPartialProver<CpuBackend<SC>> for CpuDevice<'_, SC> {
-    fn partially_prove<'a>(
+    fn partially_prove(
         &self,
         challenger: &mut SC::Challenger,
-        mpk: &DeviceMultiStarkProvingKey<'a, CpuBackend<SC>>,
-        trace_views: Vec<PairView<&'a Arc<RowMajorMatrix<Val<SC>>>, Val<SC>>>,
+        mpk: &DeviceMultiStarkProvingKey<CpuBackend<SC>>,
+        trace_views: Vec<AirView<Arc<RowMajorMatrix<Val<SC>>>, Val<SC>>>,
     ) -> (
         Option<RapPhaseSeqPartialProof<SC>>,
         ProverDataAfterRapPhases<CpuBackend<SC>>,
@@ -149,13 +187,13 @@ impl<SC: StarkGenericConfig> hal::RapPartialProver<CpuBackend<SC>> for CpuDevice
             })
             .unzip();
 
-        let trace_views = trace_views
-            .iter()
-            .map(|v| PairView {
-                log_trace_height: v.log_trace_height,
-                preprocessed: v.preprocessed.as_ref().map(|p| p.as_ref()),
-                partitioned_main: v.partitioned_main.iter().map(|m| m.as_ref()).collect(),
-                public_values: v.public_values.clone(),
+        let trace_views = zip(&mpk.per_air, trace_views)
+            .map(|(pk, v)| PairView {
+                log_trace_height: log2_strict_usize(v.partitioned_main.first().unwrap().height())
+                    as u8,
+                preprocessed: pk.preprocessed_data.as_ref().map(|p| p.trace.clone()), // Arc::clone for now
+                partitioned_main: v.partitioned_main,
+                public_values: v.public_values,
             })
             .collect_vec();
         let (rap_phase_seq_proof, rap_phase_seq_data) = self
@@ -165,7 +203,7 @@ impl<SC: StarkGenericConfig> hal::RapPartialProver<CpuBackend<SC>> for CpuDevice
                 challenger,
                 &constraints_per_air.iter().collect_vec(),
                 &rap_pk_per_air,
-                &trace_views,
+                trace_views,
             )
             .map_or((None, None), |(p, d)| (Some(p), Some(d)));
 
@@ -208,16 +246,23 @@ impl<SC: StarkGenericConfig> hal::RapPartialProver<CpuBackend<SC>> for CpuDevice
         // One shared commit for all permutation traces
         let committed_pcs_data_per_phase: Vec<(Com<SC>, PcsData<SC>)> =
             metrics_span("perm_trace_commit_time_ms", || {
-                let flattened_traces: Vec<_> = perm_trace_per_air
+                let (log_trace_heights, flattened_traces): (Vec<_>, Vec<_>) = perm_trace_per_air
                     .into_iter()
-                    .flat_map(|perm_trace| {
-                        perm_trace.map(|trace| Arc::new(trace.flatten_to_base()))
+                    .flatten()
+                    .map(|perm_trace| {
+                        // SAFETY: `Challenge` is assumed to be extension field of `F`
+                        // with memory layout `[F; Challenge::D]`
+                        let trace = unsafe { transmute_to_base(perm_trace) };
+                        let height = trace.height();
+                        let log_height: u8 = log2_strict_usize(height).try_into().unwrap();
+                        let domain = self.pcs().natural_domain_for_degree(height);
+                        (log_height, (domain, trace))
                     })
                     .collect();
                 // Only commit if there are permutation traces
                 if !flattened_traces.is_empty() {
-                    let (commit, data) = self.commit(&flattened_traces);
-                    Some((commit, data))
+                    let (commit, data) = self.pcs().commit(flattened_traces);
+                    Some((commit, PcsData::new(Arc::new(data), log_trace_heights)))
                 } else {
                     None
                 }
@@ -238,9 +283,7 @@ impl<SC: StarkGenericConfig> hal::QuotientCommitter<CpuBackend<SC>> for CpuDevic
         challenger: &mut SC::Challenger,
         pk_views: &[DeviceStarkProvingKey<CpuBackend<SC>>],
         public_values: &[Vec<Val<SC>>],
-        cached_views_per_air: &[Vec<
-            SingleCommitPreimage<&Arc<RowMajorMatrix<Val<SC>>>, &PcsData<SC>>,
-        >],
+        cached_pcs_datas_per_air: &[Vec<PcsData<SC>>],
         common_main_pcs_data: &PcsData<SC>,
         prover_data_after: &ProverDataAfterRapPhases<CpuBackend<SC>>,
     ) -> (Com<SC>, PcsData<SC>) {
@@ -250,14 +293,14 @@ impl<SC: StarkGenericConfig> hal::QuotientCommitter<CpuBackend<SC>> for CpuDevic
         tracing::debug!("alpha: {alpha:?}");
         // Prepare extended views:
         let mut common_main_idx = 0;
-        let extended_views = izip!(pk_views, cached_views_per_air, public_values)
+        let extended_views = izip!(pk_views, cached_pcs_datas_per_air, public_values)
             .enumerate()
-            .map(|(i, (pk, cached_views, pvs))| {
+            .map(|(i, (pk, cached_pcs_datas, pvs))| {
                 let quotient_degree = pk.vk.quotient_degree;
                 let log_trace_height = if pk.vk.has_common_main() {
                     common_main_pcs_data.log_trace_heights[common_main_idx]
                 } else {
-                    log2_strict_usize(cached_views[0].trace.height()) as u8
+                    cached_pcs_datas[0].log_trace_heights[0]
                 };
                 let trace_domain = pcs.natural_domain_for_degree(1usize << log_trace_height);
                 let quotient_domain = trace_domain
@@ -270,15 +313,10 @@ impl<SC: StarkGenericConfig> hal::QuotientCommitter<CpuBackend<SC>> for CpuDevic
                         quotient_domain,
                     )
                 });
-                let mut partitioned_main: Vec<_> = cached_views
+                // Each cached pcs data is commitment of a single matrix, so matrix_idx=0
+                let mut partitioned_main: Vec<_> = cached_pcs_datas
                     .iter()
-                    .map(|cv| {
-                        pcs.get_evaluations_on_domain(
-                            &cv.data.data,
-                            cv.matrix_idx as usize,
-                            quotient_domain,
-                        )
-                    })
+                    .map(|cv| pcs.get_evaluations_on_domain(&cv.data, 0, quotient_domain))
                     .collect();
                 if pk.vk.has_common_main() {
                     partitioned_main.push(pcs.get_evaluations_on_domain(
@@ -288,12 +326,6 @@ impl<SC: StarkGenericConfig> hal::QuotientCommitter<CpuBackend<SC>> for CpuDevic
                     ));
                     common_main_idx += 1;
                 }
-                let pair = PairView {
-                    log_trace_height,
-                    preprocessed,
-                    partitioned_main,
-                    public_values: pvs.to_vec(),
-                };
                 let mut per_phase = zip(
                     &prover_data_after.committed_pcs_data_per_phase,
                     &prover_data_after.rap_views_per_phase,
@@ -322,7 +354,13 @@ impl<SC: StarkGenericConfig> hal::QuotientCommitter<CpuBackend<SC>> for CpuDevic
                     .map(|v| v.unwrap_or_default())
                     .collect();
 
-                RapView { pair, per_phase }
+                RapView {
+                    log_trace_height,
+                    preprocessed,
+                    partitioned_main,
+                    public_values: pvs.to_vec(),
+                    per_phase,
+                }
             })
             .collect_vec();
 
@@ -335,7 +373,7 @@ impl<SC: StarkGenericConfig> hal::QuotientCommitter<CpuBackend<SC>> for CpuDevic
                 )
             })
             .unzip();
-        let qc = QuotientCommitter::new(self.pcs(), alpha);
+        let qc = QuotientCommitter::new(self.pcs(), alpha, self.log_blowup_factor);
         let quotient_values = metrics_span("quotient_poly_compute_time_ms", || {
             qc.quotient_values(&constraints, extended_views, &quotient_degrees)
         });
@@ -353,11 +391,11 @@ impl<SC: StarkGenericConfig> hal::OpeningProver<CpuBackend<SC>> for CpuDevice<'_
         challenger: &mut SC::Challenger,
         // For each preprocessed trace commitment, the prover data and
         // the log height of the matrix, in order
-        preprocessed: Vec<&PcsData<SC>>,
+        preprocessed: Vec<PcsData<SC>>,
         // For each main trace commitment, the prover data and
         // the log height of each matrix, in order
         // Note: this is all one challenge phase.
-        main: Vec<&PcsData<SC>>,
+        main: Vec<PcsData<SC>>,
         // `after_phase[i]` has shared commitment prover data for all matrices in phase `i + 1`.
         after_phase: Vec<PcsData<SC>>,
         // Quotient poly commitment prover data
@@ -460,4 +498,30 @@ where
     fn transport_pcs_data_to_device(&self, data: &PcsData<SC>) -> PcsData<SC> {
         data.clone()
     }
+}
+
+// TODO[jpw]: Avoid using this after switching to new plonky3 commit with <https://github.com/Plonky3/Plonky3/pull/796>
+/// # Safety
+/// Assumes that `EF` is `repr(C)` or `repr(transparent)` with internal memory layout `[F; EF::D]`.
+/// This ensures `EF` and `F` have the same alignment and `size_of::<EF>() == size_of::<F>() * EF::D`.
+/// We assume that `EF::as_base_slice` is the same as transmuting `EF` to `[F; EF::D]`.
+unsafe fn transmute_to_base<F: Field, EF: ExtensionField<F>>(
+    ext_matrix: RowMajorMatrix<EF>,
+) -> RowMajorMatrix<F> {
+    debug_assert_eq!(align_of::<EF>(), align_of::<F>());
+    debug_assert_eq!(size_of::<EF>(), size_of::<F>() * EF::D);
+    let width = ext_matrix.width * EF::D;
+    // Prevent ptr from deallocating
+    let mut values = ManuallyDrop::new(ext_matrix.values);
+    let mut len = values.len();
+    let mut cap = values.capacity();
+    let ptr = values.as_mut_ptr();
+    len *= EF::D;
+    cap *= EF::D;
+    // SAFETY:
+    // - We know that `ptr` is from `Vec` so it is allocated by global allocator,
+    // - Based on assumptions, `EF` and `F` have the same alignment
+    // - Based on memory layout assumptions, length and capacity is correct
+    let base_values = Vec::from_raw_parts(ptr as *mut F, len, cap);
+    RowMajorMatrix::new(base_values, width)
 }

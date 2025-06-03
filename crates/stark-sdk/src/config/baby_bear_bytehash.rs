@@ -4,6 +4,10 @@ use openvm_stark_backend::{
     p3_challenger::{HashChallenger, SerializingChallenger32},
     p3_commit::ExtensionMmcs,
     p3_field::extension::BinomialExtensionField,
+    prover::{
+        cpu::{CpuBackend, CpuDevice},
+        MultiTraceStarkProver,
+    },
 };
 use p3_baby_bear::BabyBear;
 use p3_dft::Radix2DitParallel;
@@ -54,6 +58,17 @@ where
 {
     fn config(&self) -> &BabyBearByteHashConfig<H> {
         &self.config
+    }
+
+    fn prover<'a>(&'a self) -> MultiTraceStarkProver<'a, BabyBearByteHashConfig<H>>
+    where
+        Self: 'a,
+    {
+        MultiTraceStarkProver::new(
+            CpuBackend::default(),
+            CpuDevice::new(self.config(), self.fri_params.log_blowup),
+            self.new_challenger(),
+        )
     }
 
     fn max_constraint_degree(&self) -> Option<usize> {
@@ -115,7 +130,7 @@ where
         mmcs: challenge_mmcs,
     };
     let pcs = Pcs::new(dft, val_mmcs, fri_config);
-    let rap_phase = FriLogUpPhase::new(log_up_params);
+    let rap_phase = FriLogUpPhase::new(log_up_params, fri_params.log_blowup);
     BabyBearByteHashConfig::new(pcs, rap_phase)
 }
 
