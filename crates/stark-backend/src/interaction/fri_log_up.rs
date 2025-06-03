@@ -18,18 +18,22 @@ use crate::{
     },
     parizip,
     rap::PermutationAirBuilderWithExposedValues,
-    utils::metrics_span,
+    utils::{metrics_span, parallelize_chunks},
 };
 
 pub struct FriLogUpPhase<F, Challenge, Challenger> {
     log_up_params: LogUpSecurityParameters,
+    /// When the perm trace is created, the matrix will be allocated with `capacity = trace_length << extra_capacity_bits`.
+    /// This is to avoid resizing for the coset LDE.
+    extra_capacity_bits: usize,
     _marker: PhantomData<(F, Challenge, Challenger)>,
 }
 
 impl<F, Challenge, Challenger> FriLogUpPhase<F, Challenge, Challenger> {
-    pub fn new(log_up_params: LogUpSecurityParameters) -> Self {
+    pub fn new(log_up_params: LogUpSecurityParameters, extra_capacity_bits: usize) -> Self {
         Self {
             log_up_params,
+            extra_capacity_bits,
             _marker: PhantomData,
         }
     }
@@ -93,12 +97,13 @@ where
             .collect()
     }
 
+    /// This consumes `trace_view_per_air`, dropping it after the permutation trace is created.
     fn partially_prove(
         &self,
         challenger: &mut Challenger,
         constraints_per_air: &[&SymbolicConstraints<F>],
         params_per_air: &[&FriLogUpProvingKey],
-        trace_view_per_air: &[PairTraceView<F>],
+        trace_view_per_air: Vec<PairTraceView<F>>,
     ) -> Option<(Self::PartialProof, RapPhaseProverData<Challenge>)> {
         let has_any_interactions = constraints_per_air
             .iter()
@@ -119,6 +124,7 @@ where
                 constraints_per_air,
                 params_per_air,
                 trace_view_per_air,
+                self.extra_capacity_bits,
             )
         });
         let cumulative_sum_per_air = Self::extract_cumulative_sums(&after_challenge_trace_per_air);
@@ -240,11 +246,14 @@ where
     Challenger: FieldChallenger<F>,
 {
     /// Returns a list of optional tuples of (permutation trace,cumulative sum) for each AIR.
+    ///
+    /// This consumes `trace_view_per_air`, dropping it after the permutation trace is created.
     fn generate_after_challenge_traces_per_air(
         challenges: &[Challenge; STARK_LU_NUM_CHALLENGES],
         constraints_per_air: &[&SymbolicConstraints<F>],
         params_per_air: &[&FriLogUpProvingKey],
-        trace_view_per_air: &[PairTraceView<F>],
+        trace_view_per_air: Vec<PairTraceView<F>>,
+        extra_capacity_bits: usize,
     ) -> Vec<Option<RowMajorMatrix<Challenge>>> {
         parizip!(constraints_per_air, trace_view_per_air, params_per_air)
             .map(|(constraints, trace_view, params)| {
@@ -253,6 +262,7 @@ where
                     trace_view,
                     challenges,
                     &params.interaction_partitions,
+                    extra_capacity_bits,
                 )
             })
             .collect::<Vec<_>>()
@@ -287,9 +297,10 @@ where
     /// - If `partitioned_main` is empty.
     pub fn generate_after_challenge_trace(
         all_interactions: &[SymbolicInteraction<F>],
-        trace_view: &PairTraceView<F>,
+        trace_view: PairTraceView<F>,
         permutation_randomness: &[Challenge; STARK_LU_NUM_CHALLENGES],
         interaction_partitions: &[Vec<usize>],
+        extra_capacity_bits: usize,
     ) -> Option<RowMajorMatrix<Challenge>>
     where
         F: Field,
@@ -326,7 +337,10 @@ where
         // on the fly. If we introduce a more advanced chunking algorithm, then we will need to
         // cache the chunking information in the proving key.
         let perm_width = interaction_partitions.len() + 1;
-        let mut perm_values = Challenge::zero_vec(height * perm_width);
+        // We allocate extra_capacity_bits now as it will be needed by the coset_lde later in pcs.commit
+        let perm_trace_len = height * perm_width;
+        let mut perm_values = Challenge::zero_vec(perm_trace_len << extra_capacity_bits);
+        perm_values.truncate(perm_trace_len);
         debug_assert!(
             trace_view
                 .partitioned_main
@@ -334,14 +348,6 @@ where
                 .all(|m| m.height() == height),
             "All main trace parts must have same height"
         );
-
-        // To optimize memory and parallelism, we split the trace rows into chunks
-        // based on the number of cpu threads available, and then do all
-        // computations necessary for that chunk within a single thread.
-        #[cfg(feature = "parallel")]
-        let num_threads = rayon::current_num_threads();
-        #[cfg(not(feature = "parallel"))]
-        let num_threads = 1;
 
         let preprocessed = trace_view.preprocessed.as_ref().map(|m| m.as_view());
         let partitioned_main = trace_view
@@ -356,65 +362,64 @@ where
             height,
             local_index,
         };
-        let height_per_thread = height.div_ceil(num_threads);
-        perm_values
-            .par_chunks_mut(height_per_thread * perm_width)
-            .enumerate()
-            .for_each(|(thread_idx, perm_values)| {
-                // perm_values is now local_height x perm_width row-major matrix
-                let num_rows = perm_values.len() / perm_width;
-                // the interaction chunking requires more memory because we must
-                // allocate separate memory for the denominators and reciprocals
-                let mut denoms = Challenge::zero_vec(num_rows * num_interactions);
-                let row_offset = thread_idx * height_per_thread;
-                // compute the denominators to be inverted:
-                for (n, denom_row) in denoms.chunks_exact_mut(num_interactions).enumerate() {
-                    let evaluator = evaluator(row_offset + n);
-                    for (denom, interaction) in denom_row.iter_mut().zip(all_interactions.iter()) {
-                        debug_assert!(interaction.message.len() <= betas.len());
-                        let b = F::from_canonical_u32(interaction.bus_index as u32 + 1);
-                        let mut fields = interaction.message.iter();
-                        *denom = alpha
-                            + evaluator
-                                .eval_expr(fields.next().expect("fields should not be empty"));
-                        for (expr, &beta) in fields.zip(betas.iter().skip(1)) {
-                            *denom += beta * evaluator.eval_expr(expr);
-                        }
-                        *denom += betas[interaction.message.len()] * b;
+        parallelize_chunks(&mut perm_values, perm_width, |perm_values, idx| {
+            debug_assert_eq!(perm_values.len() % perm_width, 0);
+            debug_assert_eq!(idx % perm_width, 0);
+            // perm_values is now local_height x perm_width row-major matrix
+            let num_rows = perm_values.len() / perm_width;
+            // the interaction chunking requires more memory because we must
+            // allocate separate memory for the denominators and reciprocals
+            let mut denoms = Challenge::zero_vec(num_rows * num_interactions);
+            let row_offset = idx / perm_width;
+            // compute the denominators to be inverted:
+            for (n, denom_row) in denoms.chunks_exact_mut(num_interactions).enumerate() {
+                let evaluator = evaluator(row_offset + n);
+                for (denom, interaction) in denom_row.iter_mut().zip(all_interactions.iter()) {
+                    debug_assert!(interaction.message.len() <= betas.len());
+                    let b = F::from_canonical_u32(interaction.bus_index as u32 + 1);
+                    let mut fields = interaction.message.iter();
+                    *denom = alpha
+                        + evaluator.eval_expr(fields.next().expect("fields should not be empty"));
+                    for (expr, &beta) in fields.zip(betas.iter().skip(1)) {
+                        *denom += beta * evaluator.eval_expr(expr);
                     }
+                    *denom += betas[interaction.message.len()] * b;
                 }
+            }
 
-                // Zero should be vanishingly unlikely if alpha, beta are properly pseudo-randomized
-                // The logup reciprocals should never be zero, so trace generation should panic if
-                // trying to divide by zero.
-                let reciprocals = p3_field::batch_multiplicative_inverse(&denoms);
-                drop(denoms);
-                // For loop over rows in same thread:
-                // This block should already be in a single thread, but rayon is able
-                // to do more magic sometimes
-                perm_values
-                    .par_chunks_exact_mut(perm_width)
-                    .zip(reciprocals.par_chunks_exact(num_interactions))
-                    .enumerate()
-                    .for_each(|(n, (perm_row, reciprocals))| {
-                        debug_assert_eq!(perm_row.len(), perm_width);
-                        debug_assert_eq!(reciprocals.len(), num_interactions);
+            // Zero should be vanishingly unlikely if alpha, beta are properly pseudo-randomized
+            // The logup reciprocals should never be zero, so trace generation should panic if
+            // trying to divide by zero.
+            let reciprocals = p3_field::batch_multiplicative_inverse(&denoms);
+            drop(denoms);
+            // For loop over rows in same thread:
+            // This block should already be in a single thread, but rayon is able
+            // to do more magic sometimes
+            perm_values
+                .par_chunks_exact_mut(perm_width)
+                .zip(reciprocals.par_chunks_exact(num_interactions))
+                .enumerate()
+                .for_each(|(n, (perm_row, reciprocals))| {
+                    debug_assert_eq!(perm_row.len(), perm_width);
+                    debug_assert_eq!(reciprocals.len(), num_interactions);
 
-                        let evaluator = evaluator(row_offset + n);
-                        let mut row_sum = Challenge::ZERO;
-                        for (part, perm_val) in zip(interaction_partitions, perm_row.iter_mut()) {
-                            for &interaction_idx in part {
-                                let interaction = &all_interactions[interaction_idx];
-                                let interaction_val = reciprocals[interaction_idx]
-                                    * evaluator.eval_expr(&interaction.count);
-                                *perm_val += interaction_val;
-                            }
-                            row_sum += *perm_val;
+                    let evaluator = evaluator(row_offset + n);
+                    let mut row_sum = Challenge::ZERO;
+                    for (part, perm_val) in zip(interaction_partitions, perm_row.iter_mut()) {
+                        for &interaction_idx in part {
+                            let interaction = &all_interactions[interaction_idx];
+                            let interaction_val = reciprocals[interaction_idx]
+                                * evaluator.eval_expr(&interaction.count);
+                            *perm_val += interaction_val;
                         }
+                        row_sum += *perm_val;
+                    }
 
-                        perm_row[perm_width - 1] = row_sum;
-                    });
-            });
+                    perm_row[perm_width - 1] = row_sum;
+                });
+        });
+        // We can drop preprocessed and main trace now that we have created perm trace
+        drop(trace_view);
 
         // At this point, the trace matrix is complete except that the last column
         // has the row sum but not the partial sum

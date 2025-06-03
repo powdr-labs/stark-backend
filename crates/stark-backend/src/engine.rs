@@ -1,4 +1,4 @@
-use std::{iter::zip, sync::Arc};
+use std::{iter::zip, marker::PhantomData, sync::Arc};
 
 use itertools::{zip_eq, Itertools};
 use p3_matrix::Matrix;
@@ -13,7 +13,7 @@ use crate::{
     },
     proof::Proof,
     prover::{
-        cpu::{CpuBackend, CpuDevice, PcsData},
+        cpu::PcsData,
         hal::{DeviceDataTransporter, TraceCommitter},
         types::{
             AirProofInput, AirProvingContext, ProofInput, ProvingContext, SingleCommitPreimage,
@@ -57,14 +57,7 @@ pub trait StarkEngine<SC: StarkGenericConfig> {
 
     fn prover<'a>(&'a self) -> MultiTraceStarkProver<'a, SC>
     where
-        Self: 'a,
-    {
-        MultiTraceStarkProver::new(
-            CpuBackend::<SC>::default(),
-            CpuDevice::new(self.config()),
-            self.new_challenger(),
-        )
-    }
+        Self: 'a;
 
     fn verifier(&self) -> MultiTraceStarkVerifier<SC> {
         MultiTraceStarkVerifier::new(self.config())
@@ -135,16 +128,16 @@ pub trait StarkEngine<SC: StarkGenericConfig> {
                 }
             })
             .collect_vec();
-        let ctx_per_air = zip(proof_input.per_air, &cached_mains_per_air)
+        let ctx_per_air = zip(proof_input.per_air, cached_mains_per_air)
             .map(|((air_id, input), cached_mains)| {
                 let cached_mains = cached_mains
-                    .iter()
+                    .into_iter()
                     .map(|(com, preimage)| {
                         (
                             com.clone(),
                             SingleCommitPreimage {
-                                trace: &preimage.trace,
-                                data: &preimage.data,
+                                trace: preimage.trace,
+                                data: preimage.data,
                                 matrix_idx: preimage.matrix_idx,
                             },
                         )
@@ -154,6 +147,7 @@ pub trait StarkEngine<SC: StarkGenericConfig> {
                     cached_mains,
                     common_main: input.raw.common_main.map(Arc::new),
                     public_values: input.raw.public_values,
+                    cached_lifetime: PhantomData,
                 };
                 (air_id, air_ctx)
             })
@@ -162,7 +156,7 @@ pub trait StarkEngine<SC: StarkGenericConfig> {
             per_air: ctx_per_air,
         };
         let mpk_view = backend.transport_pk_to_device(mpk, air_ids);
-        let proof = Prover::prove(&mut prover, &mpk_view, ctx);
+        let proof = Prover::prove(&mut prover, mpk_view, ctx);
         proof.into()
     }
 

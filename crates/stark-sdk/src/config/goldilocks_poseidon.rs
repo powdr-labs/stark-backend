@@ -6,6 +6,10 @@ use openvm_stark_backend::{
     p3_challenger::DuplexChallenger,
     p3_commit::ExtensionMmcs,
     p3_field::{extension::BinomialExtensionField, Field},
+    prover::{
+        cpu::{CpuBackend, CpuDevice},
+        MultiTraceStarkProver,
+    },
 };
 use p3_dft::Radix2DitParallel;
 use p3_fri::{FriConfig, TwoAdicFriPcs};
@@ -71,6 +75,17 @@ where
 {
     fn config(&self) -> &GoldilocksPermutationConfig<P> {
         &self.config
+    }
+
+    fn prover<'a>(&'a self) -> MultiTraceStarkProver<'a, GoldilocksPermutationConfig<P>>
+    where
+        Self: 'a,
+    {
+        MultiTraceStarkProver::new(
+            CpuBackend::default(),
+            CpuDevice::new(self.config(), self.security_params.fri_params.log_blowup),
+            self.new_challenger(),
+        )
     }
 
     fn max_constraint_degree(&self) -> Option<usize> {
@@ -169,7 +184,7 @@ where
         mmcs: challenge_mmcs,
     };
     let pcs = Pcs::new(dft, val_mmcs, fri_config);
-    let rap_phase = RapPhase::new(log_up_params);
+    let rap_phase = FriLogUpPhase::new(log_up_params, fri_params.log_blowup);
     GoldilocksPermutationConfig::new(pcs, rap_phase)
 }
 
