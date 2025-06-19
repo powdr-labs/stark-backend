@@ -45,6 +45,36 @@ pub fn run_with_metric_collection<R>(
     res
 }
 
+/// Same as `run_with_metric_collection`, but doesn't depend on an ENV var.
+pub fn run_with_metric_collection_to_file<R>(
+    level: tracing::Level,
+    file: std::fs::File,
+    f: impl FnOnce() -> R,
+) -> R {
+    // Set up tracing:
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(format!("{},p3_=warn", level)));
+    // Plonky3 logging is more verbose, so we set default to debug.
+    let subscriber = Registry::default()
+        .with(env_filter)
+        .with(ForestLayer::default())
+        .with(MetricsLayer::new());
+    // Prepare tracing.
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+
+    // Prepare metrics.
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let recorder = TracingContextLayer::all().layer(recorder);
+    // Install the registry as the global recorder
+    metrics::set_global_recorder(recorder).unwrap();
+    let res = f();
+
+    serde_json::to_writer_pretty(&file, &serialize_metric_snapshot(snapshotter.snapshot()))
+        .unwrap();
+    res
+}
+
 /// Run a function with metric exporter enabled. The metrics will be served on the port specified
 /// by an environment variable which name is `metrics_port_envar`.
 #[cfg(feature = "prometheus")]
