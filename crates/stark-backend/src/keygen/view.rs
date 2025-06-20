@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use p3_field::{ExtensionField, Field};
 
 use crate::{
     config::{Com, StarkGenericConfig, Val},
@@ -6,7 +7,7 @@ use crate::{
 };
 
 #[derive(Clone, derive_new::new)]
-pub(crate) struct MultiStarkVerifyingKeyView<'a, Val, Com> {
+pub struct MultiStarkVerifyingKeyView<'a, Val, Com> {
     pub per_air: Vec<&'a StarkVerifyingKey<Val, Com>>,
     /// Trace height constraints are *not* filtered by AIR. When computing the dot product, this
     /// will be indexed into by air_id.
@@ -74,5 +75,30 @@ impl<Val, Com: Clone> MultiStarkVerifyingKeyView<'_, Val, Com> {
             .copied()
             .max()
             .unwrap_or_else(|| panic!("No challenges used in challenge phase {phase_idx}"))
+    }
+
+    /// Returns the total width for each AIR.
+    pub fn total_widths<E>(&self) -> Vec<usize>
+    where
+        Val: Field,
+        E: ExtensionField<Val>,
+    {
+        self.per_air
+            .iter()
+            .map(|vk| {
+                vk.params.width.preprocessed.unwrap_or(0)
+                    + vk.params.width.cached_mains.iter().sum::<usize>()
+                    + vk.params.width.common_main
+                    + vk.params.width.after_challenge.iter().sum::<usize>() * E::D
+            })
+            .collect()
+    }
+
+    /// Returns the number of interactions for each AIR.
+    pub fn num_interactions(&self) -> Vec<usize> {
+        self.per_air
+            .iter()
+            .map(|vk| vk.symbolic_constraints.interactions.len())
+            .collect()
     }
 }
