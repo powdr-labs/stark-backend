@@ -10,7 +10,7 @@ use crate::{
 };
 
 /// Used internally to select RAP phase evaluation function.
-pub(crate) trait InteractionPhaseAirBuilder: InteractionBuilder {
+pub trait InteractionPhaseAirBuilder: InteractionBuilder {
     fn finalize_interactions(&mut self);
     /// The symbolic interactions **must** correspond to the `InteractionBuilder::all_interactions` function.
     fn symbolic_interactions(&self) -> Vec<SymbolicInteraction<<Self as AirBuilder>::F>>;
