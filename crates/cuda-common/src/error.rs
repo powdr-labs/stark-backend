@@ -58,6 +58,12 @@ impl CudaError {
             Err(Self::new(code))
         }
     }
+
+    /// Returns `true` if the error is cudaErrorMemoryAllocation
+    #[inline]
+    pub fn is_out_of_memory(&self) -> bool {
+        self.code == 2
+    }
 }
 
 #[inline]
@@ -78,6 +84,17 @@ pub enum MemoryError {
 
     #[error("Failed to acquire memory manager lock")]
     LockError,
+
+    #[error("Invalid memory size: {size}")]
+    InvalidMemorySize { size: usize },
+
+    #[error(
+        "Out of memory in pool (size requested: {requested} bytes, available: {available} bytes)"
+    )]
+    OutOfMemory { requested: usize, available: usize },
+
+    #[error("Invalid pointer: pointer not found in allocation table")]
+    InvalidPointer,
 }
 
 #[derive(Error, Debug)]

@@ -8,9 +8,8 @@
 #include "fp.h"
 #include "fpext.h"
 #include "launcher.cuh"
-#ifdef DEBUG
+#ifdef CUDA_DEBUG
 #include <cstdio>
-
 
 // Helper function to print decoded information
 __host__ __device__ void print_decoded_rule(uint32_t rule_idx, Rule encoded, DecodedRule rule) {
@@ -32,10 +31,6 @@ __host__ __device__ void print_decoded_rule(uint32_t rule_idx, Rule encoded, Dec
         rule.y.part,
         rule.y.offset,
         rule.y.index
-    );
-
-    printf(
-        "    Z Entry - Type: %d, offset: %d, index: %d\n", rule.z.type, rule.z.offset, rule.z.index
     );
 }
 
@@ -131,27 +126,27 @@ __device__ __forceinline__ FpExt evaluate_source(
 }
 
 // In this kernel we have interemediates stored in global memory.
-template<bool GLOBAL>
+template <bool GLOBAL>
 __global__ void cukernel_quotient(
     // output
-    FpExt * __restrict__ d_quotient_values,
+    FpExt *__restrict__ d_quotient_values,
     // LDEs
-    const Fp * __restrict__ d_preprocessed, // preprocessed LDE over Fp
-    const uint64_t * __restrict__ d_main,   // array of partitioned main LDEs over Fp
-    const Fp * __restrict__ d_permutation,  // permutation LDE over FpExt (see comments below)
+    const Fp *__restrict__ d_preprocessed, // preprocessed LDE over Fp
+    const uint64_t *__restrict__ d_main,   // array of partitioned main LDEs over Fp
+    const Fp *__restrict__ d_permutation,  // permutation LDE over FpExt (see comments below)
     // public values, challenges, ...
-    const FpExt * __restrict__ d_exposed,
-    const Fp * __restrict__ d_public,
-    const Fp * __restrict__ d_first,
-    const Fp * __restrict__ d_last,
-    const Fp * __restrict__ d_transition,
-    const Fp * __restrict__ d_inv_zeroifier,
-    const FpExt * __restrict__ d_challenge,
-    const FpExt * __restrict__ d_alpha,
+    const FpExt *__restrict__ d_exposed,
+    const Fp *__restrict__ d_public,
+    const Fp *__restrict__ d_first,
+    const Fp *__restrict__ d_last,
+    const Fp *__restrict__ d_transition,
+    const Fp *__restrict__ d_inv_zeroifier,
+    const FpExt *__restrict__ d_challenge,
+    const FpExt *__restrict__ d_alpha,
     // intermediates
-    const FpExt * __restrict__ d_intermediates,
+    const FpExt *__restrict__ d_intermediates,
     // symbolic constraints (rules)
-    const Rule * __restrict__ d_rules,
+    const Rule *__restrict__ d_rules,
     const uint64_t num_rules,
     const uint64_t quotient_size,
     const uint32_t prep_height,
@@ -250,8 +245,8 @@ __global__ void cukernel_quotient(
                     assert(false);
                 }
 
-                if (decoded_rule.op != OP_VAR) {
-                    intermediates_ptr[decoded_rule.z.index * intermediate_stride] = result;
+                if (decoded_rule.buffer_result) {
+                    intermediates_ptr[decoded_rule.z_index * intermediate_stride] = result;
                 }
 
                 if (decoded_rule.is_constraint) {
@@ -295,8 +290,7 @@ __global__ void cukernel_quotient_selectors(
         Fp xs = base * pow(point_gen, idx);
 
         // first_row
-        point_gen = TWO_ADIC_GENERATORS[log_n];
-        denom = xs - pow(point_gen, 0);
+        denom = xs - Fp::one();
         first_row[idx] = eval * inv(denom);
 
         // last_row
@@ -330,7 +324,7 @@ extern "C" int _cukernel_quotient_selectors(
     cukernel_quotient_selectors<<<grid, block>>>(
         first_row, last_row, transition, inv_zeroifier, log_n, coset_log_n, shift
     );
-    return cudaGetLastError();
+    return CHECK_KERNEL();
 }
 
 extern "C" int _cukernel_quotient(
@@ -387,5 +381,5 @@ extern "C" int _cukernel_quotient(
     } else {
         cukernel_quotient<false><<<grid, block>>>(QUOTIENT_ARGUMENTS);
     }
-    return cudaGetLastError();
+    return CHECK_KERNEL();
 }

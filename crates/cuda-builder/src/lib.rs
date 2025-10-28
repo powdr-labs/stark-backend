@@ -8,7 +8,7 @@ pub struct CudaBuilder {
     watch_paths: Vec<String>,
     watch_globs: Vec<String>,
     library_name: String,
-    cuda_arch: Option<String>,
+    cuda_arch: Vec<String>,
     cuda_opt_level: Option<String>,
     custom_flags: Vec<String>,
     link_libraries: Vec<String>,
@@ -18,12 +18,10 @@ pub struct CudaBuilder {
 impl Default for CudaBuilder {
     fn default() -> Self {
         let mut link_search_paths = Vec::new();
-        if let Ok(ld_path) = env::var("LD_LIBRARY_PATH") {
-            for path in ld_path.split(':') {
-                if !path.is_empty() {
-                    link_search_paths.push(path.to_string());
-                }
-            }
+        if let Ok(cuda_lib_dir) = env::var("CUDA_LIB_DIR") {
+            link_search_paths.push(cuda_lib_dir);
+        } else {
+            link_search_paths.push("/usr/local/cuda/lib64".to_string());
         }
 
         Self {
@@ -32,7 +30,7 @@ impl Default for CudaBuilder {
             watch_paths: vec!["build.rs".to_string()],
             watch_globs: Vec::new(),
             library_name: String::new(),
-            cuda_arch: None,
+            cuda_arch: Vec::new(),
             cuda_opt_level: None,
             custom_flags: vec![
                 "--std=c++17".to_string(),
@@ -118,7 +116,13 @@ impl CudaBuilder {
 
     /// Set CUDA architecture (e.g., "75", "80")
     pub fn cuda_arch(mut self, arch: &str) -> Self {
-        self.cuda_arch = Some(arch.to_string());
+        self.cuda_arch = vec![arch.to_string()];
+        self
+    }
+
+    /// Set multiple CUDA architectures  
+    pub fn cuda_archs(mut self, archs: Vec<&str>) -> Self {
+        self.cuda_arch = archs.iter().map(|s| s.to_string()).collect();
         self
     }
 
@@ -156,17 +160,17 @@ impl CudaBuilder {
         self.setup_rerun_conditions();
 
         // Get or detect CUDA architecture
-        let cuda_arch = self.get_cuda_arch();
-
-        // Handle CUDA_DEBUG=1
-        self.handle_debug_shortcuts();
-
-        // Get optimization level
-        let cuda_opt_level = self.get_cuda_opt_level();
+        let cuda_archs = self.get_cuda_arch();
 
         // Create cc::Build
         let mut builder = cc::Build::new();
         builder.cuda(true);
+
+        // Handle CUDA_DEBUG=1
+        self.handle_debug_shortcuts(&mut builder);
+
+        // Get optimization level
+        let cuda_opt_level = self.get_cuda_opt_level();
 
         // Add include paths
         for include in &self.include_paths {
@@ -183,10 +187,21 @@ impl CudaBuilder {
             builder.flag(flag);
         }
 
-        // Add compute capability flags
-        builder
-            .flag("-gencode")
-            .flag(format!("arch=compute_{},code=sm_{}", cuda_arch, cuda_arch));
+        // Add SASS code for each architecture
+        for arch in &cuda_archs {
+            builder
+                .flag("-gencode")
+                .flag(format!("arch=compute_{},code=sm_{}", arch, arch));
+        }
+
+        // Add PTX for the highest architecture (forward compatibility)
+        // This allows the code to run on future GPUs
+        if let Some(max_arch) = cuda_archs.iter().max() {
+            builder.flag("-gencode").flag(format!(
+                "arch=compute_{},code=compute_{}",
+                max_arch, max_arch
+            ));
+        }
 
         // Add parallel jobs flag
         builder.flag(nvcc_parallel_jobs());
@@ -263,12 +278,22 @@ impl CudaBuilder {
         }
     }
 
-    fn get_cuda_arch(&self) -> String {
-        if let Some(arch) = &self.cuda_arch {
-            return arch.clone();
+    fn get_cuda_arch(&self) -> Vec<String> {
+        if !self.cuda_arch.is_empty() {
+            return self.cuda_arch.clone();
         }
 
-        env::var("CUDA_ARCH").unwrap_or_else(|_| detect_cuda_arch())
+        // Check environment variable
+        if let Ok(env_archs) = env::var("CUDA_ARCH") {
+            return env_archs
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+
+        // Auto-detect current GPU
+        vec![detect_cuda_arch()]
     }
 
     fn get_cuda_opt_level(&self) -> String {
@@ -279,13 +304,24 @@ impl CudaBuilder {
         env::var("CUDA_OPT_LEVEL").unwrap_or_else(|_| "3".to_string())
     }
 
-    fn handle_debug_shortcuts(&self) {
+    fn handle_debug_shortcuts(&self, builder: &mut cc::Build) {
         if env::var("CUDA_DEBUG").map(|v| v == "1").unwrap_or(false) {
             env::set_var("CUDA_OPT_LEVEL", "0");
             env::set_var("CUDA_LAUNCH_BLOCKING", "1");
-            env::set_var("CUDA_MEMCHECK", "1");
             env::set_var("RUST_BACKTRACE", "full");
-            println!("cargo:warning=CUDA_DEBUG=1 → forcing CUDA_OPT_LEVEL=0, CUDA_LAUNCH_BLOCKING=1, CUDA_MEMCHECK=1, RUST_BACKTRACE=full");
+            env::set_var("CUDA_ENABLE_COREDUMP_ON_EXCEPTION", "1");
+            env::set_var("CUDA_DEVICE_WAITS_ON_EXCEPTION", "1");
+
+            println!("cargo:warning=CUDA_DEBUG=1 → Enabling comprehensive debugging:");
+            println!("cargo:warning=  → CUDA_OPT_LEVEL=0 (no optimization)");
+            println!("cargo:warning=  → CUDA_LAUNCH_BLOCKING=1 (synchronous kernels)");
+            println!("cargo:warning=  → Line info and device debug symbols enabled");
+            println!("cargo:warning=  → CUDA_DEBUG macro defined for preprocessor");
+
+            builder.flag("-G"); // Device debug symbols
+            builder.flag("-Xcompiler=-fno-omit-frame-pointer"); // Better stack traces
+            builder.flag("-Xptxas=-v"); // Verbose PTX compilation
+            builder.define("CUDA_DEBUG", "1"); // Define CUDA_DEBUG macro
         }
     }
 }

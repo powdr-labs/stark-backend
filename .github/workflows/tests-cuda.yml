@@ -21,12 +21,7 @@ jobs:
   cuda-backend:
     name: cuda-backend crate tests and examples
     runs-on:
-      - runs-on=${{ github.run_id }}
-      - family=g6.xlarge
-      - image=ubuntu24-gpu-x64
-      - spot=false
-      - extras=s3-cache
-
+      - runs-on=${{ github.run_id }}/runner=test-gpu-nvidia
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v5
@@ -45,7 +40,7 @@ jobs:
           if [ -n "$CUDART_PATH" ]; then
             CUDA_LIB_DIR=$(dirname "$CUDART_PATH")
             echo "CUDA libraries found at: $CUDA_LIB_DIR"
-            echo "LD_LIBRARY_PATH=$CUDA_LIB_DIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" >> $GITHUB_ENV
+            echo "CUDA_LIB_DIR=$CUDA_LIB_DIR" >> $GITHUB_ENV
           else
             echo "CUDA libraries not found!"
             exit 1
@@ -64,4 +59,4 @@ jobs:
         run: |
           cargo run --release --example trace_committer
           cargo run --release --example fibonacci
-          cargo run --release --example keccakf
+          NUM_THREADS=3 NUM_TASKS=10 cargo run --release --example keccakf
