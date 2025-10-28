@@ -4,6 +4,7 @@ use crate::error::{check, CudaError};
 
 #[link(name = "cudart")]
 extern "C" {
+    fn cudaStreamGetId(stream: cudaStream_t, id: *mut CudaStreamId) -> i32;
     fn cudaStreamCreate(stream: *mut cudaStream_t) -> i32;
     fn cudaStreamDestroy(stream: cudaStream_t) -> i32;
     fn cudaStreamSynchronize(stream: cudaStream_t) -> i32;
@@ -11,6 +12,7 @@ extern "C" {
     fn cudaEventCreate(event: *mut cudaEvent_t) -> i32;
     fn cudaEventRecord(event: cudaEvent_t, stream: cudaStream_t) -> i32;
     fn cudaEventSynchronize(event: cudaEvent_t) -> i32;
+    fn cudaEventQuery(event: cudaEvent_t) -> i32;
     fn cudaEventDestroy(event: cudaEvent_t) -> i32;
     fn cudaEventElapsedTime(ms: *mut f32, start: cudaEvent_t, end: cudaEvent_t) -> i32;
 }
@@ -60,15 +62,66 @@ impl Drop for CudaStream {
     }
 }
 
-#[allow(non_camel_case_types)]
-pub type cudaEvent_t = *mut c_void;
 #[allow(non_upper_case_globals)]
 pub const cudaStreamPerThread: cudaStream_t = 0x02 as cudaStream_t;
 
-pub fn default_stream_sync() -> Result<(), CudaError> {
+pub type CudaStreamId = u64;
+
+pub fn current_stream_id() -> Result<CudaStreamId, CudaError> {
+    let mut id = 0;
+    check(unsafe { cudaStreamGetId(cudaStreamPerThread, &mut id) })?;
+    Ok(id)
+}
+
+pub fn current_stream_sync() -> Result<(), CudaError> {
     check(unsafe { cudaStreamSynchronize(cudaStreamPerThread) })
 }
 
+#[allow(non_camel_case_types)]
+pub type cudaEvent_t = *mut c_void;
+
+#[derive(Debug)]
+pub enum CudaEventStatus {
+    Completed,
+    NotReady,
+    Error(CudaError),
+}
+
+impl PartialEq for CudaEventStatus {
+    fn eq(&self, other: &Self) -> bool {
+        use CudaEventStatus::*;
+        matches!((self, other), (Completed, Completed) | (NotReady, NotReady))
+    }
+}
+
+impl Eq for CudaEventStatus {}
+
+impl PartialOrd for CudaEventStatus {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+// Completed < NotReady < Error
+impl Ord for CudaEventStatus {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+
+        use CudaEventStatus::*;
+
+        match (self, other) {
+            (Completed, Completed) => Ordering::Equal,
+            (Completed, _) => Ordering::Less,
+            (_, Completed) => Ordering::Greater,
+            (NotReady, NotReady) => Ordering::Equal,
+            (NotReady, Error(_)) => Ordering::Less,
+            (Error(_), NotReady) => Ordering::Greater,
+            (Error(_), Error(_)) => Ordering::Equal,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct CudaEvent {
     event: cudaEvent_t,
 }
@@ -93,11 +146,28 @@ impl CudaEvent {
         check(cudaEventRecord(self.event, stream))
     }
 
+    pub fn record_on_this(&self) -> Result<(), CudaError> {
+        check(unsafe { cudaEventRecord(self.event, cudaStreamPerThread) })
+    }
+
     /// # Safety
     /// The caller must ensure that `stream` is a valid stream.
     pub unsafe fn record_and_wait(&self, stream: cudaStream_t) -> Result<(), CudaError> {
         self.record(stream)?;
         check(cudaEventSynchronize(self.event))
+    }
+
+    pub fn status(&self) -> CudaEventStatus {
+        let status = unsafe { cudaEventQuery(self.event) };
+        match status {
+            0 => CudaEventStatus::Completed,  // CUDA_SUCCESS
+            600 => CudaEventStatus::NotReady, // CUDA_ERROR_NOT_READY
+            _ => CudaEventStatus::Error(CudaError::new(status)),
+        }
+    }
+
+    pub fn completed(&self) -> bool {
+        self.status() == CudaEventStatus::Completed
     }
 }
 

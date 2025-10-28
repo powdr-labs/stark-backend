@@ -8,12 +8,12 @@
 #include "fp.h"
 #include "fpext.h"
 #include "launcher.cuh"
-#ifdef DEBUG
+#ifdef CUDA_DEBUG
 #include <cstdio>
 #endif
 
 // read the input operands
-__host__ __device__ __forceinline__ FpExt permute_entry(
+__device__ __forceinline__ FpExt permute_entry(
     const SourceInfo &src,
     uint32_t row_index,
     const Fp *d_preprocessed,
@@ -112,7 +112,7 @@ __global__ void calculate_cumulative_sums(
                                 permutation_height
                             ); 
                         } else {  
-                            result = intermediates_ptr[decoded_rule.z.index * intermediate_stride];
+                            result = intermediates_ptr[decoded_rule.z_index * intermediate_stride];
                         }
                     } else {
                         for (; rules_evaluated <= node_idx; rules_evaluated++) {
@@ -162,8 +162,8 @@ __global__ void calculate_cumulative_sums(
                                 assert(0);
                             }
 
-                            if (decoded_rule.op != OP_VAR) {
-                                intermediates_ptr[decoded_rule.z.index * intermediate_stride] = result;
+                            if (decoded_rule.buffer_result) {
+                                intermediates_ptr[decoded_rule.z_index * intermediate_stride] = result;
                             }
                         }
                     }
@@ -261,7 +261,7 @@ extern "C" int _calculate_cumulative_sums(
     } else {
         calculate_cumulative_sums<false><<<grid, block>>>(PERMUTE_ARGUMENTS);
     }
-    return cudaGetLastError();
+    return CHECK_KERNEL();
 }
 
 
@@ -276,5 +276,5 @@ extern "C" int _permute_update(
     cukernel_permute_update<<<grid, block>>>(
         d_sum, d_permutation, d_cumulative_sums, permutation_height, permutation_width_ext
     );
-    return cudaGetLastError();
+    return CHECK_KERNEL();
 }
