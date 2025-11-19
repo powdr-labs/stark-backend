@@ -14,6 +14,9 @@ p3-matrix = { workspace = true }
 p3-maybe-rayon = { workspace = true }
 p3-uni-stark = { workspace = true }
 p3-util = { workspace = true }
+p3-baby-bear = { workspace = true }
+openvm-cuda-common = { workspace = true }
+# openvm-cuda-backend = { workspace = true }
 
 rayon = { workspace = true, optional = true }
 itertools.workspace = true

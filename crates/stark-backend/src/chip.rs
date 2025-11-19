@@ -6,6 +6,9 @@ use std::{
 };
 
 use crate::prover::{hal::ProverBackend, types::AirProvingContext};
+use openvm_cuda_common::d_buffer::DeviceBuffer;
+use p3_baby_bear::BabyBear;
+// use openvm_cuda_backend::types::F;
 
 /// A chip is a [ProverBackend]-specific object that converts execution logs (also referred to as
 /// records) into a trace matrix.
@@ -15,6 +18,10 @@ use crate::prover::{hal::ProverBackend, types::AirProvingContext};
 pub trait Chip<R, PB: ProverBackend> {
     /// Generate all necessary context for proving a single AIR.
     fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB>;
+
+    fn generate_proving_ctx_new(&self, records: R, d_trace: &DeviceBuffer<BabyBear>, d_subs: &DeviceBuffer<u32>, calls_per_apc_row: u32) {
+        // only implemented by ALU GPU chip
+    }
 }
 
 /// Auto-implemented trait for downcasting of trait objects.
