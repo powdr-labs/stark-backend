@@ -6,7 +6,7 @@ use opener::OpeningProver;
 use p3_challenger::FieldChallenger;
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{ExtensionField, Field, FieldExtensionAlgebra};
-use p3_matrix::{dense::RowMajorMatrix, Matrix};
+use p3_matrix::{Matrix, dense::{RowMajorMatrix}};
 use p3_util::log2_strict_usize;
 use quotient::QuotientCommitter;
 use tracing::info_span;
@@ -96,6 +96,18 @@ impl<T: Send + Sync + Clone> MatrixDimensions for Arc<RowMajorMatrix<T>> {
     }
     fn width(&self) -> usize {
         self.deref().width()
+    }
+    fn append(&mut self, other: Self, rows_to_copy: &[usize]) {
+        let mut matrix = Arc::get_mut(self).unwrap().as_view_mut();
+        // start from the end of the table and copy over the relevant rows
+        for (apc_row_idx, row_to_copy_idx) in (0..matrix.height()).rev().zip(rows_to_copy) {
+            let apc_row = matrix.row_mut(apc_row_idx);
+            // TODO: Hard check that the rows are not already used
+            // assert!(apc_row.iter().all(|v| *v == T::ZERO));
+            for (target, value) in apc_row.iter_mut().zip_eq(other.as_view().row(*row_to_copy_idx)) {
+                *target = value;
+            }
+        }
     }
 }
 

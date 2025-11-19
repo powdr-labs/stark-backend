@@ -61,6 +61,7 @@ pub trait ProverBackend {
 pub trait MatrixDimensions {
     fn height(&self) -> usize;
     fn width(&self) -> usize;
+    fn append(&mut self, other: Self, rows: &[usize]);
 }
 
 pub trait ProverDevice<PB: ProverBackend>:

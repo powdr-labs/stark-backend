@@ -1,11 +1,8 @@
 use std::{
-    any::Any,
-    cell::RefCell,
-    rc::Rc,
-    sync::{Arc, Mutex},
+    any::Any, cell::RefCell, rc::Rc, sync::{Arc, Mutex}
 };
 
-use crate::prover::{hal::ProverBackend, types::AirProvingContext};
+use crate::prover::{hal::ProverBackend, types::{AirProvingContext, AirProvingContexts}};
 
 /// A chip is a [ProverBackend]-specific object that converts execution logs (also referred to as
 /// records) into a trace matrix.
@@ -15,6 +12,10 @@ use crate::prover::{hal::ProverBackend, types::AirProvingContext};
 pub trait Chip<R, PB: ProverBackend> {
     /// Generate all necessary context for proving a single AIR.
     fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB>;
+
+    fn generate_proving_ctxs(&self, records: R) -> AirProvingContexts<PB> {
+        self.generate_proving_ctx(records).into()
+    }
 }
 
 /// Auto-implemented trait for downcasting of trait objects.

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use derivative::Derivative;
 use itertools::Itertools;
@@ -130,6 +130,22 @@ pub struct AirProvingContext<PB: ProverBackend> {
     // [jpw] This is on host for now because it seems more convenient for the challenger to be on
     // host.
     pub public_values: Vec<PB::Val>,
+}
+
+#[derive(Derivative, derive_new::new)]
+#[derivative(Clone(bound = "PB::Matrix: Clone, PB::PcsData: Clone"))]
+pub struct AirProvingContexts<PB: ProverBackend> {
+    pub main: AirProvingContext<PB>,
+    pub rejected: HashMap<String, (Vec<usize>, AirProvingContext<PB>)>,
+}
+
+impl<PB: ProverBackend> From<AirProvingContext<PB>> for AirProvingContexts<PB> {
+    fn from(value: AirProvingContext<PB>) -> Self {
+        Self {
+            main: value,
+            rejected: HashMap::default()
+        }
+    }
 }
 
 /// A view of just the AIR, without any preprocessed or after challenge columns.
