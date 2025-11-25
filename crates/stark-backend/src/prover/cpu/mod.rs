@@ -1,4 +1,4 @@
-use std::{iter::zip, marker::PhantomData, mem::ManuallyDrop, ops::Deref, sync::Arc};
+use std::{collections::HashMap, iter::zip, marker::PhantomData, mem::ManuallyDrop, ops::Deref, sync::Arc};
 
 use derivative::Derivative;
 use itertools::{izip, zip_eq, Itertools};
@@ -90,7 +90,7 @@ pub struct PcsData<SC: StarkGenericConfig> {
     pub log_trace_heights: Vec<u8>,
 }
 
-impl<T: Field> MatrixDimensions for Arc<RowMajorMatrix<T>> {
+impl<T: Field> MatrixDimensions<T> for Arc<RowMajorMatrix<T>> {
     fn height(&self) -> usize {
         self.deref().height()
     }
@@ -121,6 +121,20 @@ impl<T: Field> MatrixDimensions for Arc<RowMajorMatrix<T>> {
                 *target = value;
             }
         }
+    }
+    fn add_frequencies(&mut self, start_offset: T, mut frequencies: HashMap<T, usize>) {
+        let mut current_frequencies = Arc::get_mut(self).unwrap().as_view_mut();
+        for (pc, current_frequency) in current_frequencies.rows_mut().enumerate().map(|(row_index, f)| (T::from_canonical_usize(row_index * 4) + start_offset, f)) {
+            if let Some(freq) = frequencies.remove(&pc) {
+                println!("adjust mult");
+                *current_frequency.last_mut().unwrap() += T::from_canonical_usize(freq);
+            }
+        }
+        assert!(frequencies.is_empty());
+    }
+
+    fn top_left(&self) -> T {
+        self.as_view().row(0).next().unwrap()
     }
 }
 

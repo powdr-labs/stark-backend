@@ -136,14 +136,21 @@ pub struct AirProvingContext<PB: ProverBackend> {
 #[derivative(Clone(bound = "PB::Matrix: Clone, PB::PcsData: Clone"))]
 pub struct AirProvingContexts<PB: ProverBackend> {
     pub main: AirProvingContext<PB>,
-    pub rejected: HashMap<String, (AirProvingContext<PB>, Vec<usize>)>,
+    pub rejected: Rejected<PB::Matrix>,
+}
+
+#[derive(Derivative, derive_new::new)]
+#[derivative(Clone(bound = "M: Clone"), Default(bound = ""))]
+pub struct Rejected<M> {
+    pub rows_per_air: HashMap<String, (M, Vec<usize>)>,
+    pub pcs: Vec<u32>
 }
 
 impl<PB: ProverBackend> From<AirProvingContext<PB>> for AirProvingContexts<PB> {
     fn from(value: AirProvingContext<PB>) -> Self {
         Self {
             main: value,
-            rejected: HashMap::default()
+            rejected: Default::default()
         }
     }
 }

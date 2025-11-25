@@ -4,9 +4,10 @@
 //! A pure external device implementation can just implement the [Prover](super::Prover) trait
 //! directly.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use p3_challenger::CanObserve;
+use p3_field::Field;
 use p3_matrix::dense::RowMajorMatrix;
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -29,7 +30,7 @@ pub trait ProverBackend {
     const CHALLENGE_EXT_DEGREE: u8;
     // ==== Host Types ====
     /// Base field type, on host.
-    type Val: Copy + Send + Sync + Serialize + DeserializeOwned;
+    type Val: Field;
     /// Challenge field (extension field of base field), on host.
     type Challenge: Copy + Send + Sync + Serialize + DeserializeOwned;
     /// PCS opening proof on host (see [OpeningProver]). This should not be a reference.
@@ -47,7 +48,7 @@ pub trait ProverBackend {
     // ==== Device Types ====
     /// Single matrix buffer on device together with dimension metadata. Owning this means nothing
     /// else has a shared reference to the buffer.
-    type Matrix: MatrixDimensions + Send + Sync;
+    type Matrix: MatrixDimensions<Self::Val> + Send + Sync;
     /// Owned buffer for the preimage of a PCS commitment on device, together with any metadata
     /// necessary for computing opening proofs.
     ///
@@ -58,10 +59,12 @@ pub trait ProverBackend {
     type RapPartialProvingKey: Send + Sync;
 }
 
-pub trait MatrixDimensions {
+pub trait MatrixDimensions<T> {
     fn height(&self) -> usize;
     fn width(&self) -> usize;
     fn append(&mut self, other: Vec<(Self, Vec<usize>)>) where Self: Sized;
+    fn add_frequencies(&mut self, start_offset: T, frequencies: HashMap<T, usize>);
+    fn top_left(&self) -> T;
 }
 
 pub trait ProverDevice<PB: ProverBackend>:
