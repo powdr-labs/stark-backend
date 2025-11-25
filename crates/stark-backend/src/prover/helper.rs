@@ -34,11 +34,12 @@ impl<PB: ProverBackend> AirProvingContext<PB> {
         }
     }
 
-    pub fn append(&mut self, other: Self, rows: &[usize]) {
-        assert!(other.cached_mains.is_empty());
-        assert!(other.public_values.is_empty());
-        let common_main = other.common_main.unwrap();
-        assert!(self.common_main.is_some());
-        self.common_main.as_mut().unwrap().append(common_main, rows);
+    pub fn append(&mut self, other: Vec<(Self, Vec<usize>)>) {
+        self.common_main.as_mut().unwrap().append(other.into_iter().map(|(ctx, rows)| {
+            assert!(ctx.cached_mains.is_empty());
+            assert!(ctx.public_values.is_empty());
+            let common_main = ctx.common_main.unwrap();
+            (common_main, rows)
+        }).collect());
     }
 }

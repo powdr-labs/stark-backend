@@ -90,21 +90,34 @@ pub struct PcsData<SC: StarkGenericConfig> {
     pub log_trace_heights: Vec<u8>,
 }
 
-impl<T: Send + Sync + Clone> MatrixDimensions for Arc<RowMajorMatrix<T>> {
+impl<T: Field> MatrixDimensions for Arc<RowMajorMatrix<T>> {
     fn height(&self) -> usize {
         self.deref().height()
     }
     fn width(&self) -> usize {
         self.deref().width()
     }
-    fn append(&mut self, other: Self, rows_to_copy: &[usize]) {
-        let mut matrix = Arc::get_mut(self).unwrap().as_view_mut();
+    fn append(&mut self, other: Vec<(Self, Vec<usize>)>) {
+        let matrix = Arc::get_mut(self).unwrap();
+
+       // Figure out how much space we have at the bottom
+        let free_rows = (0..matrix.height()).rev().map(|row_idx| matrix.row_slice(row_idx)).take_while(|row| row.iter().all(|v| *v == T::ZERO)).count();
+        let rows_to_copy: usize = other.iter().map(|(_, rows)| rows.len()).sum();
+        println!("{free_rows} free rows at the bottom to fit {rows_to_copy} appended rows", );
+        // If we don't have enough space, we need to allocate more rows by doubling the height until it fits
+        if free_rows < rows_to_copy {
+            let current_height = matrix.height();
+            let used_rows = current_height - free_rows;
+            println!("used rows: {used_rows}");
+            let new_height = (used_rows + rows_to_copy).next_power_of_two();
+            println!("new height: {new_height}");
+            matrix.values.extend(std::iter::repeat(T::ZERO).take((new_height - used_rows) * matrix.width));
+            assert!(matrix.height().is_power_of_two());
+        }
         // start from the end of the table and copy over the relevant rows
-        for (apc_row_idx, row_to_copy_idx) in (0..matrix.height()).rev().zip(rows_to_copy) {
+        for (apc_row_idx, (row_to_copy_idx, table)) in (0..matrix.height()).rev().zip(other.iter().flat_map(|(table, rows)| rows.iter().map(move |row| (row, table)))) {
             let apc_row = matrix.row_mut(apc_row_idx);
-            // TODO: Hard check that the rows are not already used
-            // assert!(apc_row.iter().all(|v| *v == T::ZERO));
-            for (target, value) in apc_row.iter_mut().zip_eq(other.as_view().row(*row_to_copy_idx)) {
+            for (target, value) in apc_row.iter_mut().zip_eq(table.as_view().row(*row_to_copy_idx)) {
                 *target = value;
             }
         }

@@ -136,7 +136,7 @@ pub struct AirProvingContext<PB: ProverBackend> {
 #[derivative(Clone(bound = "PB::Matrix: Clone, PB::PcsData: Clone"))]
 pub struct AirProvingContexts<PB: ProverBackend> {
     pub main: AirProvingContext<PB>,
-    pub rejected: HashMap<String, (Vec<usize>, AirProvingContext<PB>)>,
+    pub rejected: HashMap<String, (AirProvingContext<PB>, Vec<usize>)>,
 }
 
 impl<PB: ProverBackend> From<AirProvingContext<PB>> for AirProvingContexts<PB> {
