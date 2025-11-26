@@ -1,7 +1,7 @@
 use std::{fmt::Debug, marker::PhantomData, sync::Arc};
 
 use openvm_cuda_common::{copy::MemCopyD2H, d_buffer::DeviceBuffer, error::MemCopyError};
-use openvm_stark_backend::prover::hal::MatrixDimensions;
+use openvm_stark_backend::prover::hal::{AdjustableMatrix, MatrixDimensions};
 
 pub struct DeviceMatrix<T> {
     buffer: Arc<DeviceBuffer<T>>,
@@ -87,6 +87,20 @@ impl<T> MatrixDimensions for DeviceMatrix<T> {
     #[inline]
     fn width(&self) -> usize {
         self.width
+    }
+}
+
+impl<T> AdjustableMatrix<T> for DeviceMatrix<T> {
+    fn append(&mut self, other: Vec<(Self, Vec<usize>)>) where Self: Sized {
+        todo!()
+    }
+
+    fn add_frequencies(&mut self, start_offset: T, frequencies: std::collections::HashMap<T, usize>) {
+        todo!()
+    }
+
+    fn top_left(&self) -> T {
+        todo!()
     }
 }
 
