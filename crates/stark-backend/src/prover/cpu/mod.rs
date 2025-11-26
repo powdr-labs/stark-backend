@@ -114,7 +114,7 @@ impl<T: Field> AdjustableMatrix<T> for Arc<RowMajorMatrix<T>> {
             println!("used rows: {used_rows}");
             let new_height = (used_rows + rows_to_copy).next_power_of_two();
             println!("new height: {new_height}");
-            matrix.values.extend(std::iter::repeat(T::ZERO).take((new_height - used_rows) * matrix.width));
+            matrix.values.extend(std::iter::repeat(T::ZERO).take((new_height - current_height) * matrix.width));
             assert!(matrix.height().is_power_of_two());
         }
         // start from the end of the table and copy over the relevant rows
