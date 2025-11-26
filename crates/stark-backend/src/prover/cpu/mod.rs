@@ -5,7 +5,7 @@ use itertools::{izip, zip_eq, Itertools};
 use opener::OpeningProver;
 use p3_challenger::FieldChallenger;
 use p3_commit::{Pcs, PolynomialSpace};
-use p3_field::{ExtensionField, Field, FieldExtensionAlgebra};
+use p3_field::{ExtensionField, Field, FieldExtensionAlgebra, PrimeField32};
 use p3_matrix::{Matrix, dense::{RowMajorMatrix}};
 use p3_util::log2_strict_usize;
 use quotient::QuotientCommitter;
@@ -28,7 +28,7 @@ use crate::{
     keygen::types::MultiStarkProvingKey,
     proof::OpeningProof,
     prover::{
-        hal::TraceCommitter,
+        hal::{AdjustableMatrix, TraceCommitter},
         types::{CommittedTraceData, DeviceMultiStarkProvingKeyView, PairView, RapSinglePhaseView},
     },
 };
@@ -90,13 +90,16 @@ pub struct PcsData<SC: StarkGenericConfig> {
     pub log_trace_heights: Vec<u8>,
 }
 
-impl<T: Field> MatrixDimensions<T> for Arc<RowMajorMatrix<T>> {
+impl<T: Clone + Send + Sync> MatrixDimensions for Arc<RowMajorMatrix<T>> {
     fn height(&self) -> usize {
         self.deref().height()
     }
     fn width(&self) -> usize {
         self.deref().width()
     }
+}
+
+impl<T: Field> AdjustableMatrix<T> for Arc<RowMajorMatrix<T>> {
     fn append(&mut self, other: Vec<(Self, Vec<usize>)>) {
         let matrix = Arc::get_mut(self).unwrap();
 

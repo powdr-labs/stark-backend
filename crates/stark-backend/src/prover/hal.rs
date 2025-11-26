@@ -48,7 +48,7 @@ pub trait ProverBackend {
     // ==== Device Types ====
     /// Single matrix buffer on device together with dimension metadata. Owning this means nothing
     /// else has a shared reference to the buffer.
-    type Matrix: MatrixDimensions<Self::Val> + Send + Sync;
+    type Matrix: MatrixDimensions + AdjustableMatrix<Self::Val> + Send + Sync;
     /// Owned buffer for the preimage of a PCS commitment on device, together with any metadata
     /// necessary for computing opening proofs.
     ///
@@ -59,9 +59,13 @@ pub trait ProverBackend {
     type RapPartialProvingKey: Send + Sync;
 }
 
-pub trait MatrixDimensions<T> {
+pub trait MatrixDimensions {
     fn height(&self) -> usize;
     fn width(&self) -> usize;
+}
+
+pub trait AdjustableMatrix<T> {
+    // Append rows of another matrix at the bottom of this one, possibly resizing it
     fn append(&mut self, other: Vec<(Self, Vec<usize>)>) where Self: Sized;
     fn add_frequencies(&mut self, start_offset: T, frequencies: HashMap<T, usize>);
     fn top_left(&self) -> T;

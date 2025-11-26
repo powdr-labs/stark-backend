@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use itertools::izip;
 
 use crate::prover::{
-    hal::{MatrixDimensions, ProverBackend},
+    hal::{AdjustableMatrix, MatrixDimensions, ProverBackend},
     types::AirProvingContext,
 };
 
@@ -41,8 +41,9 @@ impl<PB: ProverBackend> AirProvingContext<PB> {
     }
 
     pub fn add_frequencies(&mut self, frequencies: HashMap<PB::Val, usize>) {
+        // Hacky: get the top left value in the fixed columns. It is the value of the first pc in the program.
         let offset = self.cached_mains[0].trace.top_left();
-        println!("offset: {offset}");
+        // Add the new frequencies
         self.common_main.as_mut().unwrap().add_frequencies(offset, frequencies);
     }
 }
