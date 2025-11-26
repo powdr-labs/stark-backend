@@ -125,7 +125,9 @@ impl<T: Field> AdjustableMatrix<T> for Arc<RowMajorMatrix<T>> {
             }
         }
     }
-    fn add_frequencies(&mut self, start_offset: T, mut frequencies: HashMap<T, usize>) {
+    fn add_frequencies(&mut self, mut frequencies: HashMap<T, usize>, fixed: &Self) {
+        // The first pc is the first value in the fixed table
+        let start_offset = fixed.as_view().row(0).next().unwrap();
         let mut current_frequencies = Arc::get_mut(self).unwrap().as_view_mut();
         for (pc, current_frequency) in current_frequencies.rows_mut().enumerate().map(|(row_index, f)| (T::from_canonical_usize(row_index * 4) + start_offset, f)) {
             if let Some(freq) = frequencies.remove(&pc) {
@@ -134,10 +136,6 @@ impl<T: Field> AdjustableMatrix<T> for Arc<RowMajorMatrix<T>> {
             }
         }
         assert!(frequencies.is_empty());
-    }
-
-    fn top_left(&self) -> T {
-        self.as_view().row(0).next().unwrap()
     }
 }
 

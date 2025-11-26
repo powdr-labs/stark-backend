@@ -1,4 +1,4 @@
-use std::{fmt::Debug, marker::PhantomData, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, marker::PhantomData, sync::Arc};
 
 use openvm_cuda_common::{copy::MemCopyD2H, d_buffer::DeviceBuffer, error::MemCopyError};
 use openvm_stark_backend::prover::hal::{AdjustableMatrix, MatrixDimensions};
@@ -95,11 +95,7 @@ impl<T> AdjustableMatrix<T> for DeviceMatrix<T> {
         todo!()
     }
 
-    fn add_frequencies(&mut self, start_offset: T, frequencies: std::collections::HashMap<T, usize>) {
-        todo!()
-    }
-
-    fn top_left(&self) -> T {
+    fn add_frequencies(&mut self, frequencies: HashMap<T, usize>, fixed: &Self) {
         todo!()
     }
 }

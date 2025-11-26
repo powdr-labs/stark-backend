@@ -67,8 +67,7 @@ pub trait MatrixDimensions {
 pub trait AdjustableMatrix<T> {
     // Append rows of another matrix at the bottom of this one, possibly resizing it
     fn append(&mut self, other: Vec<(Self, Vec<usize>)>) where Self: Sized;
-    fn add_frequencies(&mut self, start_offset: T, frequencies: HashMap<T, usize>);
-    fn top_left(&self) -> T;
+    fn add_frequencies(&mut self, frequencies: HashMap<T, usize>, fixed: &Self);
 }
 
 pub trait ProverDevice<PB: ProverBackend>:

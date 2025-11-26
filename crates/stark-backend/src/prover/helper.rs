@@ -41,9 +41,7 @@ impl<PB: ProverBackend> AirProvingContext<PB> {
     }
 
     pub fn add_frequencies(&mut self, frequencies: HashMap<PB::Val, usize>) {
-        // Hacky: get the top left value in the fixed columns. It is the value of the first pc in the program.
-        let offset = self.cached_mains[0].trace.top_left();
-        // Add the new frequencies
-        self.common_main.as_mut().unwrap().add_frequencies(offset, frequencies);
+        let fixed = &self.cached_mains[0].trace;
+        self.common_main.as_mut().unwrap().add_frequencies(frequencies, fixed);
     }
 }
