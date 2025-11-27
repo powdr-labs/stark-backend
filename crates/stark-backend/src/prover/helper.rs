@@ -1,7 +1,4 @@
 //! Helper methods for testing use
-
-use std::collections::HashMap;
-
 use itertools::izip;
 
 use crate::prover::{
@@ -38,10 +35,5 @@ impl<PB: ProverBackend> AirProvingContext<PB> {
 
     pub fn append(&mut self, other: Vec<(PB::Matrix, Vec<usize>)>) {
         self.common_main.as_mut().unwrap().append(other);
-    }
-
-    pub fn add_frequencies(&mut self, frequencies: HashMap<PB::Val, usize>) {
-        let fixed = &self.cached_mains[0].trace;
-        self.common_main.as_mut().unwrap().add_frequencies(frequencies, fixed);
     }
 }

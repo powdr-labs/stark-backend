@@ -94,10 +94,6 @@ impl<T> AdjustableMatrix<T> for DeviceMatrix<T> {
     fn append(&mut self, other: Vec<(Self, Vec<usize>)>) where Self: Sized {
         todo!("send the row indices to the device and copy the rows from the original tables to the final table. Resizing is not supported.")
     }
-
-    fn add_frequencies(&mut self, frequencies: HashMap<T, usize>, fixed: &Self) {
-        todo!("send the frequencies to the device as a flat array and update this matrix using the offset found at the top left of `fixed`")
-    }
 }
 
 impl<T> MemCopyD2H<T> for DeviceMatrix<T> {

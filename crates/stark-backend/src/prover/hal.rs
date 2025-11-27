@@ -4,7 +4,7 @@
 //! A pure external device implementation can just implement the [Prover](super::Prover) trait
 //! directly.
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use p3_challenger::CanObserve;
 use p3_field::Field;
@@ -67,7 +67,6 @@ pub trait MatrixDimensions {
 pub trait AdjustableMatrix<T> {
     // Append rows of another matrix at the bottom of this one, possibly resizing it
     fn append(&mut self, other: Vec<(Self, Vec<usize>)>) where Self: Sized;
-    fn add_frequencies(&mut self, frequencies: HashMap<T, usize>, fixed: &Self);
 }
 
 pub trait ProverDevice<PB: ProverBackend>:

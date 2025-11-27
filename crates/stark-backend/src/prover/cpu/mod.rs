@@ -1,11 +1,11 @@
-use std::{collections::HashMap, iter::zip, marker::PhantomData, mem::ManuallyDrop, ops::Deref, sync::Arc};
+use std::{iter::zip, marker::PhantomData, mem::ManuallyDrop, ops::Deref, sync::Arc};
 
 use derivative::Derivative;
 use itertools::{izip, zip_eq, Itertools};
 use opener::OpeningProver;
 use p3_challenger::FieldChallenger;
 use p3_commit::{Pcs, PolynomialSpace};
-use p3_field::{ExtensionField, Field, FieldExtensionAlgebra, PrimeField32};
+use p3_field::{ExtensionField, Field, FieldExtensionAlgebra};
 use p3_matrix::{Matrix, dense::{RowMajorMatrix}};
 use p3_util::log2_strict_usize;
 use quotient::QuotientCommitter;
@@ -124,18 +124,6 @@ impl<T: Field> AdjustableMatrix<T> for Arc<RowMajorMatrix<T>> {
                 *target = value;
             }
         }
-    }
-    fn add_frequencies(&mut self, mut frequencies: HashMap<T, usize>, fixed: &Self) {
-        // The first pc is the first value in the fixed table
-        let start_offset = fixed.as_view().row(0).next().unwrap();
-        let mut current_frequencies = Arc::get_mut(self).unwrap().as_view_mut();
-        for (pc, current_frequency) in current_frequencies.rows_mut().enumerate().map(|(row_index, f)| (T::from_canonical_usize(row_index * 4) + start_offset, f)) {
-            if let Some(freq) = frequencies.remove(&pc) {
-                println!("adjust mult");
-                *current_frequency.last_mut().unwrap() += T::from_canonical_usize(freq);
-            }
-        }
-        assert!(frequencies.is_empty());
     }
 }
 
