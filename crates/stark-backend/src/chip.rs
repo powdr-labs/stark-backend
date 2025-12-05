@@ -19,7 +19,7 @@ pub trait Chip<R, PB: ProverBackend> {
     /// Generate all necessary context for proving a single AIR.
     fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB>;
 
-    fn generate_proving_ctx_new(&self, records: R, d_trace: &DeviceBuffer<BabyBear>, d_subs: &DeviceBuffer<u32>, calls_per_apc_row: u32) {
+    fn generate_proving_ctx_new(&self, records: R, d_trace: &DeviceBuffer<BabyBear>, d_subs: &DeviceBuffer<u32>, d_pre_opt_widths: &DeviceBuffer<u32>, d_post_opt_widths: &DeviceBuffer<u32>, calls_per_apc_row: u32, apc_height: usize, apc_width: usize) {
         // only implemented by ALU GPU chip
     }
 }
