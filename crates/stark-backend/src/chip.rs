@@ -8,7 +8,48 @@ use std::{
 use crate::prover::{hal::ProverBackend, types::AirProvingContext};
 use openvm_cuda_common::d_buffer::DeviceBuffer;
 use p3_baby_bear::BabyBear;
-// use openvm_cuda_backend::types::F;
+
+/// Context for APC (Aggregated Proving Context) trace generation.
+/// Contains all device buffers and parameters needed for direct-to-APC trace generation.
+#[derive(Clone)]
+pub struct ApcTracingContext<'a> {
+    /// Output trace buffer (column-major)
+    pub d_trace: &'a DeviceBuffer<BabyBear>,
+    /// Substitution indices for column remapping
+    pub d_subs: &'a DeviceBuffer<u32>,
+    /// Optimized widths for each sub-AIR
+    pub d_opt_widths: &'a DeviceBuffer<u32>,
+    /// Post-optimization column offsets
+    pub d_post_opt_offsets: &'a DeviceBuffer<u32>,
+    /// Number of calls packed per APC row
+    pub calls_per_apc_row: u32,
+    /// Height of the APC trace
+    pub apc_height: usize,
+    /// Width of the APC trace
+    pub apc_width: usize,
+}
+
+impl<'a> ApcTracingContext<'a> {
+    pub fn new(
+        d_trace: &'a DeviceBuffer<BabyBear>,
+        d_subs: &'a DeviceBuffer<u32>,
+        d_opt_widths: &'a DeviceBuffer<u32>,
+        d_post_opt_offsets: &'a DeviceBuffer<u32>,
+        calls_per_apc_row: u32,
+        apc_height: usize,
+        apc_width: usize,
+    ) -> Self {
+        Self {
+            d_trace,
+            d_subs,
+            d_opt_widths,
+            d_post_opt_offsets,
+            calls_per_apc_row,
+            apc_height,
+            apc_width,
+        }
+    }
+}
 
 /// A chip is a [ProverBackend]-specific object that converts execution logs (also referred to as
 /// records) into a trace matrix.
@@ -19,8 +60,10 @@ pub trait Chip<R, PB: ProverBackend> {
     /// Generate all necessary context for proving a single AIR.
     fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB>;
 
-    fn generate_proving_ctx_new(&self, records: R, d_trace: &DeviceBuffer<BabyBear>, d_subs: &DeviceBuffer<u32>, d_pre_opt_widths: &DeviceBuffer<u32>, d_post_opt_widths: &DeviceBuffer<u32>, calls_per_apc_row: u32, apc_height: usize, apc_width: usize) {
-        // only implemented by ALU GPU chip
+    /// Generate trace directly into the APC buffer.
+    /// Implementors should write trace data using the context's device buffers.
+    fn generate_proving_ctx_new(&self, _records: R, _ctx: &ApcTracingContext) {
+        // Default no-op implementation for chips that don't support direct-to-APC
     }
 }
 
