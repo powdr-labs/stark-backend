@@ -58,12 +58,26 @@ impl<'a> ApcTracingContext<'a> {
 /// all state is received through records.
 pub trait Chip<R, PB: ProverBackend> {
     /// Generate all necessary context for proving a single AIR.
-    fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB>;
+    /// Default implementation calls generate_proving_ctx_direct with no APC context.
+    fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB> {
+        self.generate_proving_ctx_direct(records, None)
+    }
 
-    /// Generate trace directly into the APC buffer.
-    /// Implementors should write trace data using the context's device buffers.
-    fn generate_proving_ctx_new(&self, _records: R, _ctx: &ApcTracingContext) {
-        // Default no-op implementation for chips that don't support direct-to-APC
+    /// Generate trace, optionally directly into the APC buffer.
+    ///
+    /// When `ctx` is `Some`: writes trace data to the APC buffer via `ctx.d_trace`
+    /// and returns an empty `AirProvingContext`.
+    ///
+    /// When `ctx` is `None`: creates and returns a populated `AirProvingContext`
+    /// with the trace matrix.
+    ///
+    /// Default implementation panics. Chips that support direct-to-APC must override this.
+    fn generate_proving_ctx_direct(
+        &self,
+        _records: R,
+        _ctx: Option<&ApcTracingContext>,
+    ) -> AirProvingContext<PB> {
+        panic!("generate_proving_ctx_direct not implemented for this chip")
     }
 }
 
@@ -82,20 +96,48 @@ impl<R, PB: ProverBackend, C: Chip<R, PB>> Chip<R, PB> for RefCell<C> {
     fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB> {
         self.borrow().generate_proving_ctx(records)
     }
+    fn generate_proving_ctx_direct(
+        &self,
+        records: R,
+        ctx: Option<&ApcTracingContext>,
+    ) -> AirProvingContext<PB> {
+        self.borrow().generate_proving_ctx_direct(records, ctx)
+    }
 }
 impl<R, PB: ProverBackend, C: Chip<R, PB>> Chip<R, PB> for Rc<C> {
     fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB> {
         self.as_ref().generate_proving_ctx(records)
+    }
+    fn generate_proving_ctx_direct(
+        &self,
+        records: R,
+        ctx: Option<&ApcTracingContext>,
+    ) -> AirProvingContext<PB> {
+        self.as_ref().generate_proving_ctx_direct(records, ctx)
     }
 }
 impl<R, PB: ProverBackend, C: Chip<R, PB>> Chip<R, PB> for Arc<C> {
     fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB> {
         self.as_ref().generate_proving_ctx(records)
     }
+    fn generate_proving_ctx_direct(
+        &self,
+        records: R,
+        ctx: Option<&ApcTracingContext>,
+    ) -> AirProvingContext<PB> {
+        self.as_ref().generate_proving_ctx_direct(records, ctx)
+    }
 }
 impl<R, PB: ProverBackend, C: Chip<R, PB>> Chip<R, PB> for Mutex<C> {
     fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB> {
         self.lock().unwrap().generate_proving_ctx(records)
+    }
+    fn generate_proving_ctx_direct(
+        &self,
+        records: R,
+        ctx: Option<&ApcTracingContext>,
+    ) -> AirProvingContext<PB> {
+        self.lock().unwrap().generate_proving_ctx_direct(records, ctx)
     }
 }
 
