@@ -6,11 +6,15 @@ use std::{
 };
 
 use crate::prover::{hal::ProverBackend, types::AirProvingContext};
+
+#[cfg(feature = "cuda")]
 use openvm_cuda_common::d_buffer::DeviceBuffer;
+#[cfg(feature = "cuda")]
 use p3_baby_bear::BabyBear;
 
-/// Context for APC (Aggregated Proving Context) trace generation.
+/// Context for APC trace generation.
 /// Contains all device buffers and parameters needed for direct-to-APC trace generation.
+#[cfg(feature = "cuda")]
 #[derive(Clone)]
 pub struct ApcTracingContext<'a> {
     /// Output trace buffer (column-major)
@@ -29,6 +33,7 @@ pub struct ApcTracingContext<'a> {
     pub apc_width: usize,
 }
 
+#[cfg(feature = "cuda")]
 impl<'a> ApcTracingContext<'a> {
     pub fn new(
         d_trace: &'a DeviceBuffer<BabyBear>,
@@ -48,6 +53,21 @@ impl<'a> ApcTracingContext<'a> {
             apc_height,
             apc_width,
         }
+    }
+}
+
+/// Placeholder type when cuda feature is not enabled.
+#[cfg(not(feature = "cuda"))]
+#[derive(Clone)]
+pub struct ApcTracingContext<'a> {
+    _marker: std::marker::PhantomData<&'a ()>,
+}
+
+#[cfg(not(feature = "cuda"))]
+impl<'a> ApcTracingContext<'a> {
+    /// This should never be called without cuda feature.
+    pub fn new() -> Self {
+        panic!("ApcTracingContext requires cuda feature")
     }
 }
 
