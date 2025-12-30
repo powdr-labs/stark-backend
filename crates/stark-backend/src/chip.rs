@@ -116,24 +116,10 @@ impl<R, PB: ProverBackend, C: Chip<R, PB>> Chip<R, PB> for RefCell<C> {
     fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB> {
         self.borrow().generate_proving_ctx(records)
     }
-    fn generate_proving_ctx_direct(
-        &self,
-        records: R,
-        ctx: Option<&ApcTracingContext>,
-    ) -> AirProvingContext<PB> {
-        self.borrow().generate_proving_ctx_direct(records, ctx)
-    }
 }
 impl<R, PB: ProverBackend, C: Chip<R, PB>> Chip<R, PB> for Rc<C> {
     fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB> {
         self.as_ref().generate_proving_ctx(records)
-    }
-    fn generate_proving_ctx_direct(
-        &self,
-        records: R,
-        ctx: Option<&ApcTracingContext>,
-    ) -> AirProvingContext<PB> {
-        self.as_ref().generate_proving_ctx_direct(records, ctx)
     }
 }
 impl<R, PB: ProverBackend, C: Chip<R, PB>> Chip<R, PB> for Arc<C> {
@@ -151,13 +137,6 @@ impl<R, PB: ProverBackend, C: Chip<R, PB>> Chip<R, PB> for Arc<C> {
 impl<R, PB: ProverBackend, C: Chip<R, PB>> Chip<R, PB> for Mutex<C> {
     fn generate_proving_ctx(&self, records: R) -> AirProvingContext<PB> {
         self.lock().unwrap().generate_proving_ctx(records)
-    }
-    fn generate_proving_ctx_direct(
-        &self,
-        records: R,
-        ctx: Option<&ApcTracingContext>,
-    ) -> AirProvingContext<PB> {
-        self.lock().unwrap().generate_proving_ctx_direct(records, ctx)
     }
 }
 
