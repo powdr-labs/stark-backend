@@ -78,6 +78,8 @@ impl<SC: StarkGenericConfig> ProverBackend for CpuBackend<SC> {
     type Matrix = Arc<RowMajorMatrix<Val<SC>>>;
     type PcsData = PcsData<SC>;
     type RapPartialProvingKey = RapPartialProvingKey<SC>;
+    /// CPU backend does not support APC tracing, use unit type.
+    type ApcTracingContext<'a> = ();
 }
 
 #[derive(Derivative, derive_new::new)]

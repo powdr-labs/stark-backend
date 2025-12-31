@@ -56,6 +56,11 @@ pub trait ProverBackend {
     type PcsData: Send + Sync;
     /// Part of proving key for a single RAP specific for the RAP challenge phases
     type RapPartialProvingKey: Send + Sync;
+
+    /// Context for APC (autoprecompile) trace generation.
+    /// Contains device buffers and parameters for direct-to-APC trace generation.
+    /// For CPU backends, this can be `()`. For GPU backends, this contains device buffer references.
+    type ApcTracingContext<'a>;
 }
 
 pub trait MatrixDimensions {

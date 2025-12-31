@@ -14,8 +14,6 @@ p3-matrix = { workspace = true }
 p3-maybe-rayon = { workspace = true }
 p3-uni-stark = { workspace = true }
 p3-util = { workspace = true }
-p3-baby-bear = { workspace = true }
-openvm-cuda-common = { workspace = true, optional = true }
 
 rayon = { workspace = true, optional = true }
 itertools.workspace = true
@@ -66,4 +64,3 @@ parallel = ["p3-maybe-rayon/parallel", "dep:rayon"]
 jemalloc = ["dep:tikv-jemallocator"]
 jemalloc-prof = ["jemalloc", "tikv-jemallocator?/profiling"]
 metrics = ["dep:metrics"]
-cuda = ["dep:openvm-cuda-common"]
