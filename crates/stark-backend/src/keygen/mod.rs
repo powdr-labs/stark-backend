@@ -205,7 +205,7 @@ impl<'a, SC: StarkGenericConfig> MultiStarkKeygenBuilder<'a, SC> {
         let pre_vk: MultiStarkVerifyingKey0<SC> = MultiStarkVerifyingKey0 {
             per_air: pk_per_air.iter().map(|pk| pk.vk.clone()).collect(),
             trace_height_constraints: trace_height_constraints.clone(),
-            log_up_pow_bits: log_up_security_params.log_up_pow_bits,
+            log_up_pow_bits: log_up_security_params.pow_bits,
         };
         // To protect against weak Fiat-Shamir, we hash the "pre"-verifying key and include it in
         // the final verifying key. This just needs to commit to the verifying key and does
@@ -228,7 +228,7 @@ impl<'a, SC: StarkGenericConfig> MultiStarkKeygenBuilder<'a, SC> {
             per_air: pk_per_air,
             trace_height_constraints,
             max_constraint_degree: self.max_constraint_degree,
-            log_up_pow_bits: log_up_security_params.log_up_pow_bits,
+            log_up_pow_bits: log_up_security_params.pow_bits,
             vk_pre_hash,
         }
     }
@@ -258,6 +258,7 @@ impl<SC: StarkGenericConfig> AirKeygenBuilder<SC> {
         let air_name = self.air.name();
 
         let symbolic_builder = self.get_symbolic_builder(Some(max_constraint_degree));
+        #[allow(deprecated)]
         let params = symbolic_builder.params();
         let symbolic_constraints = symbolic_builder.constraints();
         let log_quotient_degree = symbolic_constraints.get_log_quotient_degree();
@@ -272,11 +273,14 @@ impl<SC: StarkGenericConfig> AirKeygenBuilder<SC> {
             ..
         } = self;
 
+        let max_constraint_degree: u8 =
+            u8::try_from(symbolic_constraints.max_constraint_degree()).unwrap();
         let vk: StarkVerifyingKey<Val<SC>, Com<SC>> = StarkVerifyingKey {
             preprocessed_data: prep_verifier_data,
             params,
             symbolic_constraints: symbolic_constraints.into(),
             quotient_degree,
+            max_constraint_degree,
             rap_phase_seq_kind: self.rap_phase_seq_kind,
         };
         StarkProvingKey {
@@ -289,7 +293,7 @@ impl<SC: StarkGenericConfig> AirKeygenBuilder<SC> {
 
     fn get_symbolic_builder(
         &self,
-        max_constraint_degree: Option<usize>,
+        _max_constraint_degree: Option<usize>,
     ) -> SymbolicRapBuilder<Val<SC>> {
         let width = TraceWidth {
             preprocessed: self.prep_keygen_data.width(),
@@ -297,14 +301,7 @@ impl<SC: StarkGenericConfig> AirKeygenBuilder<SC> {
             common_main: self.air.common_main_width(),
             after_challenge: vec![],
         };
-        get_symbolic_builder(
-            self.air.as_ref(),
-            &width,
-            &[],
-            &[],
-            SC::RapPhaseSeq::ID,
-            max_constraint_degree.unwrap_or(0),
-        )
+        get_symbolic_builder(self.air.as_ref(), &width, &[], &[])
     }
 }
 

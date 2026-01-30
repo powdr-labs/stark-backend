@@ -95,9 +95,8 @@ pub fn trace_metrics<PB: ProverBackend>(
             (weighted_sum, trace_height_constraint.threshold as usize)
         })
         .collect::<Vec<_>>();
-    let per_air: Vec<_> = zip_eq(&mpk.per_air, heights)
-        .enumerate()
-        .map(|(idx, (pk, height))| {
+    let per_air: Vec<_> = zip_eq(mpk.air_ids.iter().copied(), zip_eq(&mpk.per_air, heights))
+        .map(|(air_id, (pk, height))| {
             let air_name = &pk.air_name;
             let mut width = pk.vk.params.width.clone();
             let ext_degree = PB::CHALLENGE_EXT_DEGREE as usize;
@@ -118,7 +117,7 @@ pub fn trace_metrics<PB: ProverBackend>(
                 .sum::<usize>();
             SingleTraceMetrics {
                 air_name: air_name.to_string(),
-                air_id: mpk.air_ids[idx],
+                air_id,
                 height,
                 width,
                 cells,

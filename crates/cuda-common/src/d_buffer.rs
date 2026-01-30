@@ -9,9 +9,13 @@ use crate::{
 
 #[link(name = "cudart")]
 extern "C" {
-    fn cudaMemsetAsync(dst: *mut c_void, value: i32, count: usize, stream: cudaStream_t) -> i32;
+    pub fn cudaMemsetAsync(dst: *mut c_void, value: i32, count: usize, stream: cudaStream_t)
+        -> i32;
 }
 
+/// Struct that owns a buffer allocated on GPU device. The struct only holds the raw pointer and
+/// length, but this struct has a `Drop` implementation which frees the associated device memory.
+#[repr(C)]
 pub struct DeviceBuffer<T> {
     ptr: *mut T,
     len: usize,
@@ -40,6 +44,16 @@ impl<T> DeviceBuffer<T> {
             ptr: ptr::null_mut(),
             len: 0,
         }
+    }
+
+    /// # Safety
+    /// - The caller must ensure that the pointer `ptr` is valid for `len` elements of type `T` in
+    ///   device memory.
+    /// - Dropping the constructed buffer will attempt to free the memory. As such, `ptr` must
+    ///   either have been allocated by the internal memory manager (VPMM) or the caller must use
+    ///   `ManuallyDrop` to prevent double-free.
+    pub unsafe fn from_raw_parts(ptr: *mut T, len: usize) -> Self {
+        DeviceBuffer { ptr, len }
     }
 
     /// Allocate device memory for `len` elements of type `T`.

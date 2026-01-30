@@ -7,9 +7,12 @@ mod lde;
 mod merkle_tree;
 mod opener;
 mod quotient;
-mod transpiler;
+pub mod transpiler;
 pub mod types;
 
+pub mod ntt {
+    pub use crate::lde::ntt::batch_ntt;
+}
 pub mod prelude {
     pub use crate::types::prelude::*;
 }

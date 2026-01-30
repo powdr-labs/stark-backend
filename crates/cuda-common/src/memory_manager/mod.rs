@@ -3,26 +3,38 @@ use std::{
     ffi::c_void,
     ptr::NonNull,
     sync::{Mutex, OnceLock},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use bytesize::ByteSize;
 
 use crate::{
     error::{check, MemoryError},
-    stream::{cudaStreamPerThread, cudaStream_t, current_stream_id},
+    stream::{cudaStreamPerThread, cudaStream_t, current_stream_id, device_synchronize},
 };
 
 mod cuda;
 mod vm_pool;
 use vm_pool::VirtualMemoryPool;
 
+#[cfg(test)]
+mod tests;
+
 #[link(name = "cudart")]
 extern "C" {
     fn cudaMallocAsync(dev_ptr: *mut *mut c_void, size: usize, stream: cudaStream_t) -> i32;
     fn cudaFreeAsync(dev_ptr: *mut c_void, stream: cudaStream_t) -> i32;
+    fn cudaMemGetInfo(free: *mut usize, total: *mut usize) -> i32;
 }
 
 static MEMORY_MANAGER: OnceLock<Mutex<MemoryManager>> = OnceLock::new();
+
+pub fn device_memory_used() -> usize {
+    let mut free = 0usize;
+    let mut total = 0usize;
+    unsafe { cudaMemGetInfo(&mut free, &mut total) };
+    total - free
+}
 
 #[ctor::ctor]
 fn init() {
@@ -37,6 +49,9 @@ pub struct MemoryManager {
     max_used_size: usize,
 }
 
+/// # Safety
+/// `MemoryManager` is not internally synchronized. These impls are safe because
+/// the singleton instance is wrapped in `Mutex` via `MEMORY_MANAGER`.
 unsafe impl Send for MemoryManager {}
 unsafe impl Sync for MemoryManager {}
 
@@ -59,21 +74,28 @@ impl MemoryManager {
         let mut tracked_size = size;
         let ptr = if size < self.pool.page_size {
             let mut ptr: *mut c_void = std::ptr::null_mut();
-            check(unsafe { cudaMallocAsync(&mut ptr, size, cudaStreamPerThread) })?;
-            self.allocated_ptrs
-                .insert(NonNull::new(ptr).expect("cudaMalloc returned null"), size);
-            Ok(ptr)
+            check(unsafe { cudaMallocAsync(&mut ptr, size, cudaStreamPerThread) }).map_err(
+                |e| {
+                    tracing::error!("cudaMallocAsync failed: size={}: {:?}", size, e);
+                    MemoryError::from(e)
+                },
+            )?;
+            self.allocated_ptrs.insert(
+                NonNull::new(ptr).expect("BUG: cudaMallocAsync returned null"),
+                size,
+            );
+            ptr
         } else {
             tracked_size = size.next_multiple_of(self.pool.page_size);
-            self.pool
-                .malloc_internal(tracked_size, current_stream_id()?)
+            let stream_id = current_stream_id()?;
+            self.pool.malloc_internal(tracked_size, stream_id)?
         };
 
         self.current_size += tracked_size;
         if self.current_size > self.max_used_size {
             self.max_used_size = self.current_size;
         }
-        ptr
+        Ok(ptr)
     }
 
     /// # Safety
@@ -84,9 +106,14 @@ impl MemoryManager {
 
         if let Some(size) = self.allocated_ptrs.remove(&nn) {
             self.current_size -= size;
-            check(unsafe { cudaFreeAsync(ptr, cudaStreamPerThread) })?;
+            check(unsafe { cudaFreeAsync(ptr, cudaStreamPerThread) }).map_err(|e| {
+                tracing::error!("cudaFreeAsync failed: ptr={:p}: {:?}", ptr, e);
+                MemoryError::from(e)
+            })?;
         } else {
-            self.current_size -= self.pool.free_internal(ptr, current_stream_id()?)?;
+            let stream_id = current_stream_id()?;
+            let freed_size = self.pool.free_internal(ptr, stream_id)?;
+            self.current_size -= freed_size;
         }
 
         Ok(())
@@ -95,15 +122,12 @@ impl MemoryManager {
 
 impl Drop for MemoryManager {
     fn drop(&mut self) {
+        device_synchronize().unwrap();
         let ptrs: Vec<*mut c_void> = self.allocated_ptrs.keys().map(|nn| nn.as_ptr()).collect();
         for &ptr in &ptrs {
-            unsafe { self.d_free(ptr).unwrap() };
-        }
-        if !self.allocated_ptrs.is_empty() {
-            println!(
-                "Error: {} allocations were automatically freed on MemoryManager drop",
-                self.allocated_ptrs.len()
-            );
+            if let Err(e) = unsafe { self.d_free(ptr) } {
+                tracing::error!("MemoryManager drop: failed to free {:p}: {:?}", ptr, e);
+            }
         }
     }
 }
@@ -141,9 +165,40 @@ impl MemTracker {
             .get()
             .and_then(|m| m.lock().ok())
             .map(|m| m.current_size)
-            .unwrap_or(0);
+            .unwrap_or_default();
 
         Self { current, label }
+    }
+
+    pub fn start_and_reset_peak(label: &'static str) -> Self {
+        let mut mem = Self::start(label);
+        mem.reset_peak();
+        mem
+    }
+
+    pub fn emit_metrics(&self) {
+        self.emit_metrics_with_label(self.label);
+    }
+
+    pub fn emit_metrics_with_label(&self, label: &'static str) {
+        let Some(manager) = MEMORY_MANAGER.get().and_then(|m| m.lock().ok()) else {
+            return;
+        };
+
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64()
+            * 1000.0;
+        let current = manager.current_size;
+        // local_peak is local maximum memory size, as observed by the manager, since the last
+        // reset_peak call
+        let local_peak = manager.max_used_size;
+        let reserved = manager.pool.memory_usage();
+        metrics::gauge!("gpu_mem.timestamp_ms", "module" => label).set(ts);
+        metrics::gauge!("gpu_mem.current_bytes", "module" => label).set(current as f64);
+        metrics::gauge!("gpu_mem.local_peak_bytes", "module" => label).set(local_peak as f64);
+        metrics::gauge!("gpu_mem.reserved_bytes", "module" => label).set(reserved as f64);
     }
 
     #[inline]
