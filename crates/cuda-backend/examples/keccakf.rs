@@ -9,7 +9,9 @@ use openvm_stark_backend::{
     p3_air::{Air, AirBuilder, BaseAir},
     p3_field::Field,
     prover::{AirProvingContext, ColMajorMatrix, DeviceDataTransporter, ProvingContext},
-    BaseAirWithPublicValues, PartitionedBaseAir, StarkEngine, SystemParams,
+
+    BaseAirWithPublicValues, ColumnsAir, PartitionedBaseAir, StarkEngine, SystemParams,
+    BaseAirWithPublicValues, ColumnsAir, PartitionedBaseAir, StarkEngine, SystemParams, WhirConfig, WhirParams,
 };
 use openvm_stark_sdk::{
     config::{
@@ -34,6 +36,7 @@ impl<F> BaseAir<F> for TestAir {
     }
 }
 impl<F: Field> BaseAirWithPublicValues<F> for TestAir {}
+impl<F: Field> ColumnsAir<F> for TestAir {}
 impl<F: Field> PartitionedBaseAir<F> for TestAir {}
 
 impl<AB: AirBuilder> Air<AB> for TestAir {
