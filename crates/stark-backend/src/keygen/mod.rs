@@ -87,6 +87,7 @@ impl<SC: StarkProtocolConfig> MultiStarkKeygenBuilder<SC> {
             .collect::<Result<Vec<_>, KeygenError>>()?;
 
         let mut air_max_constraint_degree = 0;
+        #[allow(unused)]
         for (air_id, pk) in pk_per_air.iter().enumerate() {
             let width = &pk.vk.params.width;
             tracing::info!("{:<20} | Constraint Deg = {:<2} | Prep Cols = {:<2} | Main Cols = {:<8} | {:4} Constraints | {:3} Interactions",
