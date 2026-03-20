@@ -117,7 +117,8 @@ impl<'a, SC: StarkGenericConfig> MultiStarkKeygenBuilder<'a, SC> {
             })
             .collect();
 
-        for pk in pk_per_air.iter() {
+        for (air_id, pk) in pk_per_air.iter().enumerate() {
+            let _ = air_id; // used only with metrics feature
             let width = &pk.vk.params.width;
             tracing::info!("{:<20} | Quotient Deg = {:<2} | Prep Cols = {:<2} | Main Cols = {:<8} | Perm Cols = {:<4} | {:4} Constraints | {:3} Interactions",
                 pk.air_name,
@@ -139,7 +140,10 @@ impl<'a, SC: StarkGenericConfig> MultiStarkKeygenBuilder<'a, SC> {
             );
             #[cfg(feature = "metrics")]
             {
-                let labels = [("air_name", pk.air_name.clone())];
+                let labels = [
+                    ("air_name", pk.air_name.clone()),
+                    ("air_id", air_id.to_string()),
+                ];
                 metrics::counter!("quotient_deg", &labels).absolute(pk.vk.quotient_degree as u64);
                 // column info will be logged by prover later
                 metrics::counter!("constraints", &labels)
