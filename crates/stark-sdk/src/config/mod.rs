@@ -20,7 +20,8 @@ pub mod log_up_params;
 const WHIR_MAX_LOG_FINAL_POLY_LEN: usize = 10;
 const SECURITY_BITS_TARGET: usize = 100;
 
-pub const DEFAULT_APP_L_SKIP: usize = 4;
+// l_skip parameter determines n_stack = log_stacked_height - l_skip
+pub const DEFAULT_APP_L_SKIP: usize = 5;
 pub const DEFAULT_APP_LOG_BLOWUP: usize = 1;
 pub const DEFAULT_LEAF_LOG_BLOWUP: usize = 2;
 pub const DEFAULT_INTERNAL_LOG_BLOWUP: usize = 3;
