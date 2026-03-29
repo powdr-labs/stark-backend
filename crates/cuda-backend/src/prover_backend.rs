@@ -1,7 +1,7 @@
 use std::iter::zip;
 
 use itertools::{izip, zip_eq, Itertools};
-use openvm_cuda_common::{memory_manager::MemTracker, stream::gpu_metrics_span};
+use openvm_cuda_common::{d_buffer::DeviceBuffer, memory_manager::MemTracker, stream::gpu_metrics_span};
 use openvm_stark_backend::{
     air_builders::symbolic::SymbolicConstraints,
     config::{Com, PcsProof, RapPartialProvingKey, RapPhaseSeqPartialProof},
@@ -34,6 +34,48 @@ use crate::{
     quotient::{QuotientCommitterGpu, QuotientDataGpu},
 };
 
+/// Context for APC (autoprecompile) trace generation on GPU.
+/// Contains all device buffers and parameters needed for direct-to-APC trace generation.
+#[derive(Clone)]
+pub struct GpuApcTracingContext<'a> {
+    /// Output trace buffer (column-major)
+    pub d_trace: &'a DeviceBuffer<F>,
+    /// Substitution indices for column remapping
+    pub d_subs: &'a DeviceBuffer<u32>,
+    /// Optimized widths for each sub-AIR
+    pub d_opt_widths: &'a DeviceBuffer<u32>,
+    /// Post-optimization column offsets
+    pub d_post_opt_offsets: &'a DeviceBuffer<u32>,
+    /// Number of calls packed per APC row
+    pub calls_per_apc_row: u32,
+    /// Height of the APC trace
+    pub apc_height: usize,
+    /// Width of the APC trace
+    pub apc_width: usize,
+}
+
+impl<'a> GpuApcTracingContext<'a> {
+    pub fn new(
+        d_trace: &'a DeviceBuffer<F>,
+        d_subs: &'a DeviceBuffer<u32>,
+        d_opt_widths: &'a DeviceBuffer<u32>,
+        d_post_opt_offsets: &'a DeviceBuffer<u32>,
+        calls_per_apc_row: u32,
+        apc_height: usize,
+        apc_width: usize,
+    ) -> Self {
+        Self {
+            d_trace,
+            d_subs,
+            d_opt_widths,
+            d_post_opt_offsets,
+            calls_per_apc_row,
+            apc_height,
+            apc_width,
+        }
+    }
+}
+
 /// Gpu backend implementation for STARK proving system
 #[derive(Clone, Copy, Default, Debug)]
 pub struct GpuBackend {}
@@ -53,6 +95,7 @@ impl ProverBackend for GpuBackend {
     type Matrix = DeviceMatrix<F>;
     type PcsData = GpuPcsData;
     type RapPartialProvingKey = RapPartialProvingKey<SC>;
+    type ApcTracingContext<'a> = GpuApcTracingContext<'a>;
 }
 
 #[derive(Clone)]
