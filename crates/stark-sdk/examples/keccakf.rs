@@ -10,7 +10,7 @@ use openvm_stark_sdk::{
         p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues},
         p3_field::Field,
         prover::{AirProvingContext, DeviceDataTransporter, ProvingContext},
-        PartitionedBaseAir, StarkEngine,
+        ColumnsAir, PartitionedBaseAir, StarkEngine,
     },
 };
 use p3_keccak_air::KeccakAir;
@@ -28,6 +28,7 @@ impl<F> BaseAir<F> for TestAir {
     }
 }
 impl<F: Field> BaseAirWithPublicValues<F> for TestAir {}
+impl<F: Field> ColumnsAir<F> for TestAir {}
 impl<F: Field> PartitionedBaseAir<F> for TestAir {}
 
 impl<AB: AirBuilder> Air<AB> for TestAir {
