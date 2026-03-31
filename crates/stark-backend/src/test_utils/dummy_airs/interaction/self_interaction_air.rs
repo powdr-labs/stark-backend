@@ -6,7 +6,7 @@ use p3_matrix::{dense::RowMajorMatrix, Matrix};
 use crate::{
     interaction::{BusIndex, InteractionBuilder},
     prover::{AirProvingContext, ColMajorMatrix, CpuColMajorBackend},
-    PartitionedBaseAir, StarkProtocolConfig,
+    ColumnsAir, PartitionedBaseAir, StarkProtocolConfig,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -21,6 +21,7 @@ impl<F> BaseAir<F> for SelfInteractionAir {
     }
 }
 impl<F> BaseAirWithPublicValues<F> for SelfInteractionAir {}
+impl<F> ColumnsAir<F> for SelfInteractionAir {}
 impl<F> PartitionedBaseAir<F> for SelfInteractionAir {}
 
 impl<AB: AirBuilder + InteractionBuilder> Air<AB> for SelfInteractionAir {
