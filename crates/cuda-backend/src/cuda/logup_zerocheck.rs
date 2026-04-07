@@ -96,6 +96,36 @@ pub struct LogupMonomialCtx {
 }
 // end of types for batch MLE
 
+// Types for batched GKR input evaluation:
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct GkrBlockCtx {
+    pub local_block_idx_x: u32,
+    pub air_idx: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct GkrInputCtx {
+    pub d_fracs: *mut Frac<EF>,
+    pub d_preprocessed: *const F,
+    pub d_main: *const u64,
+    pub d_public_values: *const F,
+    pub d_challenges: *const EF,
+    pub d_intermediates: *mut EF,
+    pub d_rules: *const std::ffi::c_void,
+    pub d_used_nodes: *const usize,
+    pub d_pair_idxs: *const u32,
+    pub used_nodes_len: usize,
+    pub permutation_height: u32,
+    pub num_rows_per_tile: u32,
+    pub task_stride: u32,
+}
+
+unsafe impl Send for GkrInputCtx {}
+unsafe impl Sync for GkrInputCtx {}
+// end of types for batched GKR input
+
 extern "C" {
     // gkr.cu
     fn _frac_build_tree_layer(
@@ -266,6 +296,13 @@ extern "C" {
         used_nodes_len: usize,
         height: u32,
         num_rows_per_tile: u32,
+    ) -> i32;
+
+    fn _logup_gkr_input_eval_batched(
+        is_global: bool,
+        block_ctxs: *const GkrBlockCtx,
+        air_ctxs: *const GkrInputCtx,
+        num_blocks: u32,
     ) -> i32;
 
     // logup_round0.cu
@@ -907,6 +944,20 @@ pub unsafe fn logup_gkr_input_eval(
         used_nodes.len(),
         height,
         num_rows_per_tile,
+    ))
+}
+
+pub unsafe fn logup_gkr_input_eval_batched(
+    is_global: bool,
+    block_ctxs: &DeviceBuffer<GkrBlockCtx>,
+    air_ctxs: &DeviceBuffer<GkrInputCtx>,
+    num_blocks: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_logup_gkr_input_eval_batched(
+        is_global,
+        block_ctxs.as_ptr(),
+        air_ctxs.as_ptr(),
+        num_blocks,
     ))
 }
 
