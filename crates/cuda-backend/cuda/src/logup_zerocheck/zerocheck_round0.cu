@@ -837,34 +837,33 @@ __global__ void zerocheck_r0_batched_kernel(
     // Stride across x_int using blocks_per_trace (not gridDim.x)
     uint32_t const x_int_stride = (blocks_per_trace * blockDim.x) >> l_skip;
 
-    // Initialize single-coset context (NUM_COSETS=1)
+    // Single-coset context (NUM_COSETS=1), loop-invariant fields only
     NttEvalContext<1> eval_ctx{
         ctx.preprocessed,
         ctx.main_parts,
         ctx.public_values,
         inter_buffer,
         ntt_buffer,
-        {Fp::zero()},  // is_first[1] - updated per x_int
-        {Fp::zero()},  // is_last[1] - updated per x_int
         {omega_shift}, // omega_shifts[1]
         skip_domain,
         height,
         buffer_stride,
         ctx.buffer_size,
         ntt_idx,
-        0 // x_int - updated per iteration
     };
 
     // Main loop
     for (uint32_t x_int = x_int_base; x_int < num_x; x_int += x_int_stride) {
-        eval_ctx.x_int = x_int;
-        eval_ctx.is_first[0] = is_first_mult * ctx.selectors_cube[x_int];
-        eval_ctx.is_last[0] = is_last_mult * ctx.selectors_cube[2 * num_x + x_int];
+        Fp is_first = is_first_mult * ctx.selectors_cube[x_int];
+        Fp is_last = is_last_mult * ctx.selectors_cube[2 * num_x + x_int];
 
         FpExt constraint_sums[1];
         acc_constraints<1, NEEDS_SHMEM>(
             constraint_sums,
             eval_ctx,
+            &is_first,
+            &is_last,
+            x_int,
             d_lambda_pows,
             ctx.d_rules,
             ctx.rules_len,
