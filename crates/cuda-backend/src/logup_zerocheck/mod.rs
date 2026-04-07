@@ -739,91 +739,154 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             _keepalive: DeviceBuffer<*const F>, // keep d_main_parts alive
         }
 
-        // Pass 1: Launch all GPU kernels (no D2H copies)
-        let mut gpu_results: Vec<Round0GpuResult> = Vec::with_capacity(num_present_airs);
-        for (trace_idx, ((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs)) in izip!(
+        // Pass 1: Launch GPU kernels across multiple threads for concurrent execution.
+        // Each thread gets its own CUDA stream via cudaStreamPerThread, enabling
+        // parallel GPU kernel execution for different AIRs.
+        let per_air_inputs: Vec<_> = izip!(
             &ctx.per_trace,
             &self.n_per_trace,
             &selectors_base,
             &self.public_values_per_trace,
             &self.eq_3b_per_trace,
         )
-        .enumerate()
-        {
-            debug!("starting batch constraints for air_idx={air_idx} (trace_idx={trace_idx})");
-            let single_pk = &self.pk.per_air[*air_idx];
-            let single_air_constraints =
-                SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
-            let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
-            debug_assert_eq!(
-                single_air_constraints.max_constraint_degree(),
-                local_constraint_deg
-            );
-            assert!(
-                local_constraint_deg <= self.constraint_degree,
-                "Max constraint degree ({local_constraint_deg}) of AIR {air_idx} exceeds the global maximum {}",
-                self.constraint_degree
-            );
+        .collect();
 
-            let log_large_domain = log2_ceil_usize(local_constraint_deg << l_skip);
-            let omega_root = F::two_adic_generator(log_large_domain);
+        // References needed inside the closure
+        let pk_ref = &self.pk;
+        let constraint_degree = self.constraint_degree;
+        let eq_xis_ref = &self.eq_xis;
+        let memory_limit = self.memory_limit_bytes;
+        let beta_pows_ref = &self.beta_pows;
 
-            assert!(!xi.is_empty(), "xi vector must not be empty");
+        // Only parallelize when there are many small AIRs (typical for APCs).
+        // For few large AIRs, the thread overhead outweighs the benefit.
+        let num_threads = if num_present_airs > 200 {
+            std::thread::available_parallelism()
+                .map(|n| n.get().min(4))
+                .unwrap_or(1)
+        } else {
+            1
+        };
 
-            let height = air_ctx.common_main.height();
-            let mut main_parts = Vec::with_capacity(air_ctx.cached_mains.len() + 1);
-            for committed in &air_ctx.cached_mains {
-                main_parts.push(committed.trace.buffer().as_ptr());
-            }
-            main_parts.push(air_ctx.common_main.buffer().as_ptr());
-            let d_main_parts = main_parts.to_device()?;
+        let gpu_results: Vec<Result<Round0GpuResult, LogupZerocheckError>> = if num_threads <= 1 {
+            // Single-threaded fallback
+            per_air_inputs
+                .iter()
+                .map(|((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs)| {
+                    let single_pk = &pk_ref.per_air[*air_idx];
+                    let single_air_constraints =
+                        SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
+                    let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
+                    assert!(local_constraint_deg <= constraint_degree);
 
-            let n_lift = n.max(0) as usize;
-            let eq_xi_tree = &self.eq_xis[&n_lift];
-            let max_temp_bytes = self.memory_limit_bytes;
-            let num_cosets_zc = local_constraint_deg.saturating_sub(1);
-            let zc_buffer = evaluate_round0_constraints_gpu(
-                single_pk,
-                selectors_cube.buffer(),
-                &d_main_parts,
-                public_values,
-                eq_xi_tree.get_ptr(n_lift),
-                d_lambda_pows,
-                1 << l_skip,
-                1 << n_lift,
-                height as u32,
-                num_cosets_zc as u32,
-                omega_root,
-                max_temp_bytes,
-            )?;
+                    let log_large_domain = log2_ceil_usize(local_constraint_deg << l_skip);
+                    let omega_root = F::two_adic_generator(log_large_domain);
+                    let height = air_ctx.common_main.height();
+                    let mut main_parts = Vec::with_capacity(air_ctx.cached_mains.len() + 1);
+                    for committed in &air_ctx.cached_mains {
+                        main_parts.push(committed.trace.buffer().as_ptr());
+                    }
+                    main_parts.push(air_ctx.common_main.buffer().as_ptr());
+                    let d_main_parts = main_parts.to_device()?;
 
-            let num_cosets_logup = local_constraint_deg;
-            let logup_buffer = evaluate_round0_interactions_gpu(
-                single_pk,
-                &single_air_constraints,
-                selectors_cube.buffer(),
-                &d_main_parts,
-                public_values,
-                eq_xi_tree.get_ptr(n_lift),
-                &self.beta_pows,
-                eq_3bs,
-                1 << l_skip,
-                1 << n_lift,
-                height as u32,
-                num_cosets_logup as u32,
-                omega_root,
-                max_temp_bytes,
-            )?;
+                    let n_lift = n.max(0) as usize;
+                    let eq_xi_tree = &eq_xis_ref[&n_lift];
+                    let num_cosets_zc = local_constraint_deg.saturating_sub(1);
+                    let zc_buffer = evaluate_round0_constraints_gpu(
+                        single_pk, selectors_cube.buffer(), &d_main_parts, public_values,
+                        eq_xi_tree.get_ptr(n_lift), d_lambda_pows,
+                        1 << l_skip, 1 << n_lift, height as u32, num_cosets_zc as u32,
+                        omega_root, memory_limit,
+                    )?;
 
-            gpu_results.push(Round0GpuResult {
-                zc_buffer,
-                logup_buffer,
-                local_constraint_deg,
-                omega_root,
-                n,
-                _keepalive: d_main_parts,
-            });
-        }
+                    let num_cosets_logup = local_constraint_deg;
+                    let logup_buffer = evaluate_round0_interactions_gpu(
+                        single_pk, &single_air_constraints, selectors_cube.buffer(),
+                        &d_main_parts, public_values, eq_xi_tree.get_ptr(n_lift),
+                        beta_pows_ref, eq_3bs,
+                        1 << l_skip, 1 << n_lift, height as u32, num_cosets_logup as u32,
+                        omega_root, memory_limit,
+                    )?;
+
+                    Ok(Round0GpuResult {
+                        zc_buffer, logup_buffer, local_constraint_deg, omega_root, n,
+                        _keepalive: d_main_parts,
+                    })
+                })
+                .collect()
+        } else {
+            // Multi-threaded: partition AIRs across threads for concurrent GPU streams
+            let chunk_size = (per_air_inputs.len() + num_threads - 1) / num_threads;
+            let chunks: Vec<_> = per_air_inputs.chunks(chunk_size).collect();
+
+            std::thread::scope(|s| {
+                let handles: Vec<_> = chunks
+                    .into_iter()
+                    .map(|chunk| {
+                        s.spawn(move || -> Vec<Result<Round0GpuResult, LogupZerocheckError>> {
+                            let mut results = Vec::with_capacity(chunk.len());
+                            for ((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs) in chunk {
+                                let r: Result<Round0GpuResult, LogupZerocheckError> = (|| {
+                                    let single_pk = &pk_ref.per_air[*air_idx];
+                                    let single_air_constraints =
+                                        SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
+                                    let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
+                                    assert!(local_constraint_deg <= constraint_degree);
+
+                                    let log_large_domain = log2_ceil_usize(local_constraint_deg << l_skip);
+                                    let omega_root = F::two_adic_generator(log_large_domain);
+                                    let height = air_ctx.common_main.height();
+                                    let mut main_parts = Vec::with_capacity(air_ctx.cached_mains.len() + 1);
+                                    for committed in &air_ctx.cached_mains {
+                                        main_parts.push(committed.trace.buffer().as_ptr());
+                                    }
+                                    main_parts.push(air_ctx.common_main.buffer().as_ptr());
+                                    let d_main_parts = main_parts.to_device()?;
+
+                                    let n_lift = n.max(0) as usize;
+                                    let eq_xi_tree = &eq_xis_ref[&n_lift];
+                                    let num_cosets_zc = local_constraint_deg.saturating_sub(1);
+                                    let zc_buffer = evaluate_round0_constraints_gpu(
+                                        single_pk, selectors_cube.buffer(), &d_main_parts, public_values,
+                                        eq_xi_tree.get_ptr(n_lift), d_lambda_pows,
+                                        1 << l_skip, 1 << n_lift, height as u32, num_cosets_zc as u32,
+                                        omega_root, memory_limit,
+                                    )?;
+
+                                    let num_cosets_logup = local_constraint_deg;
+                                    let logup_buffer = evaluate_round0_interactions_gpu(
+                                        single_pk, &single_air_constraints, selectors_cube.buffer(),
+                                        &d_main_parts, public_values, eq_xi_tree.get_ptr(n_lift),
+                                        beta_pows_ref, eq_3bs,
+                                        1 << l_skip, 1 << n_lift, height as u32, num_cosets_logup as u32,
+                                        omega_root, memory_limit,
+                                    )?;
+
+                                    Ok(Round0GpuResult {
+                                        zc_buffer, logup_buffer, local_constraint_deg, omega_root, n,
+                                        _keepalive: d_main_parts,
+                                    })
+                                })();
+                                results.push(r);
+                            }
+                            results
+                        })
+                    })
+                    .collect();
+
+                // Collect results in order
+                let mut all_results = Vec::with_capacity(per_air_inputs.len());
+                for handle in handles {
+                    all_results.extend(handle.join().expect("thread panicked"));
+                }
+                all_results
+            })
+        };
+
+        // Unwrap results
+        let gpu_results: Vec<Round0GpuResult> = gpu_results
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
 
         // Pass 2: D2H copies and CPU post-processing (all GPU work is already pipelined)
         for (trace_idx, result) in gpu_results.into_iter().enumerate() {
