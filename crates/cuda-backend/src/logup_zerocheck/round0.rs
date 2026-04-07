@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use itertools::Itertools;
+use rustc_hash::FxHashMap;
 use openvm_cuda_common::{copy::MemCopyH2D, d_buffer::DeviceBuffer};
 use openvm_stark_backend::{
     air_builders::symbolic::{
@@ -13,7 +12,7 @@ use openvm_stark_backend::{
     },
 };
 use p3_field::PrimeCharacteristicRing;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 use super::errors::Round0EvalError;
 use crate::{
@@ -331,8 +330,8 @@ impl Round0TraceInfo {
 pub fn group_batchable_traces(
     traces: &[Round0TraceInfo],
     skip_domain: usize,
-) -> HashMap<Round0GroupKey, Vec<usize>> {
-    let mut groups: HashMap<Round0GroupKey, Vec<usize>> = HashMap::new();
+) -> FxHashMap<Round0GroupKey, Vec<usize>> {
+    let mut groups: FxHashMap<Round0GroupKey, Vec<usize>> = FxHashMap::default();
     for (i, t) in traces.iter().enumerate() {
         if t.is_batchable(skip_domain) {
             groups.entry(t.group_key()).or_default().push(i);
@@ -363,7 +362,7 @@ pub fn evaluate_round0_zerocheck_batched<HS: GpuHashScheme>(
     skip_domain: usize,
     pk: &DeviceMultiStarkProvingKey<GenericGpuBackend<HS>>,
     selectors_base: &[DeviceMatrix<F>],
-    eq_xis: &HashMap<usize, EqEvalLayers<EF>>,
+    eq_xis: &FxHashMap<usize, EqEvalLayers<EF>>,
     public_values_per_trace: &[DeviceBuffer<F>],
     ctx_per_trace: &[(usize, AirProvingContext<GenericGpuBackend<HS>>)],
     d_lambda_pows: &DeviceBuffer<EF>,
