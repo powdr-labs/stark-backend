@@ -727,8 +727,116 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             .as_ref()
             .expect("lambda powers must be set before round-0 evaluation");
 
-        // Loop through one AIR at a time; it is more efficient to do everything for one AIR
-        // together
+        // ====================================================================
+        // Batched zerocheck round 0 for small (coset-parallel) traces.
+        // Classify traces, group batchable ones, run batched path.
+        // The main loop below still runs logup for ALL traces and
+        // zerocheck for non-batched traces only.
+        // ====================================================================
+        let skip_domain = 1 << l_skip;
+        let mut zc_batched: Vec<bool> = vec![false; num_present_airs];
+        {
+            use crate::logup_zerocheck::round0::{
+                evaluate_round0_zerocheck_batched, group_batchable_traces, Round0TraceInfo,
+            };
+
+            // Classify all traces
+            let trace_infos: Vec<Round0TraceInfo> = (0..num_present_airs)
+                .map(|trace_idx| {
+                    let (air_idx, air_ctx) = &ctx.per_trace[trace_idx];
+                    let n = self.n_per_trace[trace_idx];
+                    let n_lift = n.max(0) as usize;
+                    let num_x = 1usize << n_lift;
+                    let height = air_ctx.common_main.height();
+                    let single_pk = &self.pk.per_air[*air_idx];
+                    let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
+                    let num_cosets_zc = local_constraint_deg.saturating_sub(1);
+                    let log_large_domain = log2_ceil_usize(local_constraint_deg.max(1) << l_skip);
+                    let omega_root = F::two_adic_generator(log_large_domain);
+                    let buffer_size_zc = single_pk.other_data.zerocheck_round0.inner.buffer_size;
+                    Round0TraceInfo {
+                        trace_idx,
+                        air_idx: *air_idx,
+                        height,
+                        n_lift,
+                        num_x,
+                        num_cosets_zc,
+                        local_constraint_deg,
+                        omega_root,
+                        buffer_size_zc,
+                    }
+                })
+                .collect();
+
+            let groups = group_batchable_traces(&trace_infos, skip_domain);
+            if !groups.is_empty() {
+                let batched_start = std::time::Instant::now();
+                let mut total_batched = 0usize;
+                for (_key, group_indices) in &groups {
+                    let results = evaluate_round0_zerocheck_batched(
+                        group_indices,
+                        &trace_infos,
+                        skip_domain,
+                        self.pk,
+                        &selectors_base,
+                        &self.eq_xis,
+                        &self.public_values_per_trace,
+                        &ctx.per_trace,
+                        d_lambda_pows,
+                        self.memory_limit_bytes,
+                    )
+                    .map_err(LogupZerocheckError::Round0Eval)?;
+
+                    // Post-process: interpolate q_evals to polynomials
+                    for (trace_idx, q_evals) in results {
+                        let t = &trace_infos[trace_idx];
+                        let num_cosets_zc = t.num_cosets_zc;
+                        if num_cosets_zc == 0 {
+                            continue;
+                        }
+                        let omega_root = t.omega_root;
+                        // Rearrange q_evals from [coset][ntt_idx] to row-major
+                        let mut values = EF::zero_vec(num_cosets_zc << l_skip);
+                        for coset_idx in 0..num_cosets_zc {
+                            for i in 0..1 << l_skip {
+                                values[i * num_cosets_zc + coset_idx] =
+                                    q_evals[(coset_idx << l_skip) + i];
+                            }
+                        }
+                        let q = UnivariatePoly::from_geometric_cosets_evals_idft(
+                            RowMajorMatrix::new(values, num_cosets_zc),
+                            omega_root,
+                            omega_root,
+                        );
+                        // sp_0 = (Z^{2^l_skip} - 1) * q
+                        let sp_0_deg =
+                            sumcheck_round0_deg(l_skip, t.local_constraint_deg);
+                        let coeffs = (0..=sp_0_deg)
+                            .map(|i| {
+                                let mut c = -*q.coeffs().get(i).unwrap_or(&EF::ZERO);
+                                if i >= 1 << l_skip {
+                                    c += q.coeffs()[i - (1 << l_skip)];
+                                }
+                                c
+                            })
+                            .collect_vec();
+                        batch_sp_poly[2 * num_present_airs + trace_idx] =
+                            UnivariatePoly::new(coeffs);
+                        zc_batched[trace_idx] = true;
+                    }
+                    total_batched += group_indices.len();
+                }
+                info!(
+                    "batched zerocheck round0: {total_batched} traces in {} groups, {:.1}ms",
+                    groups.len(),
+                    batched_start.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
+        }
+
+        // Loop through one AIR at a time for:
+        // - zerocheck: only non-batched traces
+        // - logup: ALL traces
         for (trace_idx, ((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs)) in izip!(
             &ctx.per_trace,
             &self.n_per_trace,
@@ -774,6 +882,12 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             // on trace polynomials could vanish on 2^l_skip points is if the constraint polynomial
             // is identically zero. Thus for local_constraint_deg = 0 or 1, we must have `s'_0 = 0`.
             let num_cosets_zc = local_constraint_deg.saturating_sub(1);
+
+            // Skip zerocheck if already handled by batched path
+            if zc_batched[trace_idx] {
+                // Zerocheck result already written to batch_sp_poly by the batched path above.
+                // Fall through to logup below.
+            } else {
             let sum_buffer = evaluate_round0_constraints_gpu(
                 single_pk,
                 selectors_cube.buffer(),
@@ -825,6 +939,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
 
                 batch_sp_poly[2 * num_present_airs + trace_idx] = UnivariatePoly::new(coeffs);
             }
+            } // end of `if !zc_batched[trace_idx]` else block
 
             // PERF: we could use an interaction-specific constraint degree here
             let num_cosets_logup = local_constraint_deg;

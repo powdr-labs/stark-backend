@@ -7,13 +7,17 @@ use openvm_stark_backend::{
         symbolic_expression::SymbolicExpression, SymbolicConstraints, SymbolicDagBuilder,
         SymbolicExpressionDag,
     },
-    prover::{fractional_sumcheck_gkr::Frac, DeviceStarkProvingKey},
+    prover::{
+        fractional_sumcheck_gkr::Frac, AirProvingContext, DeviceMultiStarkProvingKey,
+        DeviceStarkProvingKey,
+    },
 };
 use p3_field::PrimeCharacteristicRing;
 use tracing::{debug, info, warn};
 
 use super::errors::Round0EvalError;
 use crate::{
+    base::DeviceMatrix,
     cuda::logup_zerocheck::{
         _logup_r0_intermediates_buffer_size, _logup_r0_temp_sums_buffer_size,
         _zerocheck_r0_intermediates_buffer_size, _zerocheck_r0_temp_sums_buffer_size,
@@ -22,6 +26,7 @@ use crate::{
     gpu_backend::GenericGpuBackend,
     hash_scheme::GpuHashScheme,
     logup_zerocheck::rules::{codec::Codec, SymbolicRulesGpu},
+    poly::EqEvalLayers,
     prelude::{EF, F},
 };
 
@@ -356,11 +361,11 @@ pub fn evaluate_round0_zerocheck_batched<HS: GpuHashScheme>(
     group: &[usize],
     all_traces: &[Round0TraceInfo],
     skip_domain: usize,
-    pk: &crate::gpu_backend::DeviceMultiStarkProvingKey<HS>,
-    selectors_base: &[crate::base::DeviceMatrix<F>],
-    eq_xis: &HashMap<usize, crate::poly::EqEvalLayers<EF>>,
+    pk: &DeviceMultiStarkProvingKey<GenericGpuBackend<HS>>,
+    selectors_base: &[DeviceMatrix<F>],
+    eq_xis: &HashMap<usize, EqEvalLayers<EF>>,
     public_values_per_trace: &[DeviceBuffer<F>],
-    ctx_per_trace: &[(usize, crate::gpu_backend::AirProvingCtx<HS>)],
+    ctx_per_trace: &[(usize, AirProvingContext<GenericGpuBackend<HS>>)],
     d_lambda_pows: &DeviceBuffer<EF>,
     memory_limit_bytes: usize,
 ) -> Result<Vec<(usize, Vec<EF>)>, Round0EvalError> {
