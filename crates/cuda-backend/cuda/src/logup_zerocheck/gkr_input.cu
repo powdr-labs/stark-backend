@@ -86,7 +86,7 @@ __global__ void evaluate_interactions_gkr_kernel(
         intermediates_ptr = (FpExt *)d_intermediates + task_offset;
         intermediate_stride = task_stride;
     } else {
-        FpExt intermediates[10];
+        FpExt intermediates[32];
         intermediates_ptr = intermediates;
         intermediate_stride = 1;
     }
@@ -249,7 +249,7 @@ __global__ void batch_evaluate_interactions_gkr_kernel(
         intermediates_ptr = ctx.d_intermediates + task_offset;
         intermediate_stride = task_stride;
     } else {
-        FpExt intermediates[10];
+        FpExt intermediates[32];
         intermediates_ptr = intermediates;
         intermediate_stride = 1;
     }

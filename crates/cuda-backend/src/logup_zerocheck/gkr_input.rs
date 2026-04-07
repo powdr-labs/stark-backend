@@ -178,7 +178,7 @@ pub fn log_gkr_input_evals<HS: GpuHashScheme>(
         partition_ptrs.copy_to(&mut d_partition_ptrs)?;
 
         let buffer_size = rules.inner.buffer_size;
-        let is_global = buffer_size > 10;
+        let is_global = buffer_size > 32;
 
         let task_count = if is_global {
             TASK_SIZE as usize
