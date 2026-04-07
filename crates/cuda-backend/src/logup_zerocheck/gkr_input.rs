@@ -250,7 +250,7 @@ pub fn log_gkr_input_evals<HS: GpuHashScheme>(
     let mut local_air_ctxs: Vec<GkrInputCtx> = Vec::new();
     let mut local_block_ctxs: Vec<GkrBlockCtx> = Vec::new();
 
-    for (i, (prep, dev)) in air_prep.iter().zip(air_device_data.iter()).enumerate() {
+    for (prep, dev) in air_prep.iter().zip(air_device_data.iter()) {
         let d_fracs = if prep.height != prep.lifted_height {
             unsafe { lift_tmp.as_mut_ptr().add(prep.lift_tmp_offset) }
         } else {

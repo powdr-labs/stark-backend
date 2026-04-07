@@ -727,8 +727,20 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             .as_ref()
             .expect("lambda powers must be set before round-0 evaluation");
 
-        // Loop through one AIR at a time; it is more efficient to do everything for one AIR
-        // together
+        // Two-pass dispatch: launch all GPU kernels first, then D2H + post-processing.
+        // This allows GPU kernels to pipeline without per-AIR synchronization barriers.
+        struct Round0GpuResult {
+            zc_buffer: DeviceBuffer<EF>,
+            logup_buffer: DeviceBuffer<Frac<EF>>,
+            local_constraint_deg: usize,
+            omega_root: F,
+            n: isize,
+            #[allow(dead_code)]
+            _keepalive: DeviceBuffer<*const F>, // keep d_main_parts alive
+        }
+
+        // Pass 1: Launch all GPU kernels (no D2H copies)
+        let mut gpu_results: Vec<Round0GpuResult> = Vec::with_capacity(num_present_airs);
         for (trace_idx, ((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs)) in izip!(
             &ctx.per_trace,
             &self.n_per_trace,
@@ -740,7 +752,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         {
             debug!("starting batch constraints for air_idx={air_idx} (trace_idx={trace_idx})");
             let single_pk = &self.pk.per_air[*air_idx];
-            // Includes both plain AIR constraints and symbolic interactions
             let single_air_constraints =
                 SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
             let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
@@ -770,11 +781,8 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             let n_lift = n.max(0) as usize;
             let eq_xi_tree = &self.eq_xis[&n_lift];
             let max_temp_bytes = self.memory_limit_bytes;
-            // local_constraint_deg = 0 means no constraints. The only way that linear constraints
-            // on trace polynomials could vanish on 2^l_skip points is if the constraint polynomial
-            // is identically zero. Thus for local_constraint_deg = 0 or 1, we must have `s'_0 = 0`.
             let num_cosets_zc = local_constraint_deg.saturating_sub(1);
-            let sum_buffer = evaluate_round0_constraints_gpu(
+            let zc_buffer = evaluate_round0_constraints_gpu(
                 single_pk,
                 selectors_cube.buffer(),
                 &d_main_parts,
@@ -788,10 +796,50 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 omega_root,
                 max_temp_bytes,
             )?;
+
+            let num_cosets_logup = local_constraint_deg;
+            let logup_buffer = evaluate_round0_interactions_gpu(
+                single_pk,
+                &single_air_constraints,
+                selectors_cube.buffer(),
+                &d_main_parts,
+                public_values,
+                eq_xi_tree.get_ptr(n_lift),
+                &self.beta_pows,
+                eq_3bs,
+                1 << l_skip,
+                1 << n_lift,
+                height as u32,
+                num_cosets_logup as u32,
+                omega_root,
+                max_temp_bytes,
+            )?;
+
+            gpu_results.push(Round0GpuResult {
+                zc_buffer,
+                logup_buffer,
+                local_constraint_deg,
+                omega_root,
+                n,
+                _keepalive: d_main_parts,
+            });
+        }
+
+        // Pass 2: D2H copies and CPU post-processing (all GPU work is already pipelined)
+        for (trace_idx, result) in gpu_results.into_iter().enumerate() {
+            let Round0GpuResult {
+                zc_buffer: sum_buffer,
+                logup_buffer: sum,
+                local_constraint_deg,
+                omega_root,
+                n,
+                ..
+            } = result;
+
+            let num_cosets_zc = local_constraint_deg.saturating_sub(1);
             if !sum_buffer.is_empty() {
                 let q_evals = sum_buffer.to_host()?;
                 let q = {
-                    // Make q_evals row-major, with columns <> cosets
                     let mut values = EF::zero_vec(num_cosets_zc << l_skip);
                     for coset_idx in 0..num_cosets_zc {
                         for i in 0..1 << l_skip {
@@ -805,7 +853,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                         omega_root,
                     )
                 };
-                // sp_0 = (Z^{2^l_skip} - 1) * q
                 let sp_0_deg = sumcheck_round0_deg(l_skip, local_constraint_deg);
                 let coeffs = (0..=sp_0_deg)
                     .map(|i| {
@@ -826,30 +873,12 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 batch_sp_poly[2 * num_present_airs + trace_idx] = UnivariatePoly::new(coeffs);
             }
 
-            // PERF: we could use an interaction-specific constraint degree here
             let num_cosets_logup = local_constraint_deg;
-            let sum = evaluate_round0_interactions_gpu(
-                single_pk,
-                &single_air_constraints,
-                selectors_cube.buffer(),
-                &d_main_parts,
-                public_values,
-                eq_xi_tree.get_ptr(n_lift),
-                &self.beta_pows,
-                eq_3bs,
-                1 << l_skip,
-                1 << n_lift,
-                height as u32,
-                num_cosets_logup as u32,
-                omega_root,
-                max_temp_bytes,
-            )?;
             if !sum.is_empty() {
                 let evals = sum.to_host()?;
                 let (mut numer, denom): (Vec<EF>, Vec<EF>) =
                     evals.into_iter().map(|frac| (frac.p, frac.q)).unzip();
                 if n.is_negative() {
-                    // normalize for lifting
                     let norm_factor = F::from_u32(1 << n.unsigned_abs()).inverse();
                     for s in &mut numer {
                         *s *= norm_factor;
@@ -865,16 +894,15 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                         denom_values[dst] = denom[src];
                     }
                 }
-                // Logup uses cosets 1, g^1, g^2, ... (init = 1, shift = omega_root)
                 batch_sp_poly[2 * trace_idx] = UnivariatePoly::from_geometric_cosets_evals_idft(
                     RowMajorMatrix::new(numer_values, num_cosets_logup),
                     omega_root,
-                    F::ONE, // init = 1 for identity coset
+                    F::ONE,
                 );
                 batch_sp_poly[2 * trace_idx + 1] = UnivariatePoly::from_geometric_cosets_evals_idft(
                     RowMajorMatrix::new(denom_values, num_cosets_logup),
                     omega_root,
-                    F::ONE, // init = 1 for identity coset
+                    F::ONE,
                 );
             }
         }
