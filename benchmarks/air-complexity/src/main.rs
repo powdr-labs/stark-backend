@@ -22,7 +22,7 @@ use openvm_stark_backend::{
     AirRef, ColumnsAir, PartitionedBaseAir, StarkEngine,
 };
 use openvm_stark_sdk::config::{
-    app_params_with_100_bits_security, baby_bear_poseidon2::BabyBearPoseidon2RefEngine
+    app_params_with_100_bits_security, baby_bear_poseidon2::BabyBearPoseidon2RefEngine,
 };
 use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues};
 use p3_baby_bear::BabyBear;
@@ -43,15 +43,16 @@ struct Args {
     #[arg(long, default_value_t = 20)]
     cols_per_air: usize,
 
-    /// Number of boolean constraints per column per AIR
-    #[arg(long, default_value_t = 1)]
-    constraints_per_col: usize,
+    /// Boolean constraints per column (can be fractional, e.g. 0.5 means every
+    /// other column gets a constraint)
+    #[arg(long, default_value_t = 1.0)]
+    constraints_per_col: f64,
 
-    /// Number of send/receive bus interaction pairs per column per AIR.
-    /// Each pair creates one `push_interaction(..., count=1)` and one
-    /// `push_interaction(..., count=-1)` with the same message, so they cancel out.
-    #[arg(long, default_value_t = 1)]
-    interactions_per_col: usize,
+    /// Send/receive bus interaction pairs per column (can be fractional, e.g.
+    /// 0.25 means a pair on every 8th column). Each pair creates one send and
+    /// one receive with the same message, so they cancel out.
+    #[arg(long, default_value_t = 0.25)]
+    interactions_per_col: f64,
 
     /// Log2 of target total trace cells across all AIRs. Actual count may differ
     /// due to rounding trace height to a power of 2.
@@ -72,8 +73,10 @@ struct Args {
 #[derive(Clone, Debug)]
 pub struct BenchmarkAir {
     pub num_columns: usize,
-    pub constraints_per_col: usize,
-    pub interactions_per_col: usize,
+    /// Total boolean constraints in this AIR (spread across columns round-robin).
+    pub total_constraints: usize,
+    /// Total send+receive pairs in this AIR (spread across columns round-robin).
+    pub total_interaction_pairs: usize,
 }
 
 impl<F> BaseAir<F> for BenchmarkAir {
@@ -90,25 +93,27 @@ impl<AB: AirBuilder + InteractionBuilder> Air<AB> for BenchmarkAir {
         let main = builder.main();
         let local = main.row_slice(0).unwrap();
 
-        // Boolean constraints: col * (col - 1) == 0
-        for col_idx in 0..self.num_columns {
-            let col = local[col_idx];
-            for _ in 0..self.constraints_per_col {
-                builder.assert_bool(col);
-            }
+        // Boolean constraints spread round-robin across columns
+        for i in 0..self.total_constraints {
+            builder.assert_bool(local[i % self.num_columns]);
         }
 
-        // Self-canceling bus interactions: place a send+receive pair on every
-        // other column so the total push_interaction count equals
-        // interactions_per_col * num_columns (for even num_columns).
-        let num_interaction_pairs = self.num_columns / 2;
-        for pair in 0..num_interaction_pairs {
-            let field = vec![local[pair * 2]];
-            for _ in 0..self.interactions_per_col {
-                builder.push_interaction(0, field.clone(), AB::Expr::ONE, 0);
-                builder.push_interaction(0, field.clone(), AB::Expr::NEG_ONE, 0);
-            }
+        // Self-canceling bus interaction pairs spread round-robin across columns
+        for i in 0..self.total_interaction_pairs {
+            let field = vec![local[i % self.num_columns]];
+            builder.push_interaction(0, field.clone(), AB::Expr::ONE, 0);
+            builder.push_interaction(0, field, AB::Expr::NEG_ONE, 0);
         }
+    }
+}
+
+fn ratio_str(actual: usize, target: f64) -> String {
+    if (actual as f64 - target).abs() < 0.5 {
+        "exact".to_string()
+    } else if (actual as f64) < target {
+        format!("{:.2}x below target", target / actual as f64)
+    } else {
+        format!("{:.2}x above target", actual as f64 / target)
     }
 }
 
@@ -125,7 +130,6 @@ fn main() {
 }
 
 fn run(args: &Args) {
-
     assert!(args.num_airs > 0);
     assert!(args.cols_per_air > 0);
 
@@ -141,26 +145,22 @@ fn run(args: &Args) {
     let trace_height = 1usize << log_trace_height;
     let actual_total_cells = args.num_airs * args.cols_per_air * trace_height;
 
-    let total_constraints = args.constraints_per_col * args.cols_per_air * args.num_airs;
-    let bus_interactions_per_air = (args.cols_per_air / 2) * 2 * args.interactions_per_col;
-    let total_bus_interactions = bus_interactions_per_air * args.num_airs;
+    // Compute actual integer counts per AIR from fractional rates
+    let constraints_per_air =
+        (args.constraints_per_col * args.cols_per_air as f64).round() as usize;
+    let interaction_pairs_per_air =
+        (args.interactions_per_col * args.cols_per_air as f64 / 2.0).round() as usize;
+
+    let total_constraints = constraints_per_air * args.num_airs;
+    let total_bus_interactions = interaction_pairs_per_air * 2 * args.num_airs;
     let constraint_instances = total_constraints * trace_height;
     let bus_interaction_messages = total_bus_interactions * trace_height;
 
-    // Ratio of actual cells vs target
-    let cells_ratio_str = if actual_total_cells == target_total_cells {
-        "exact".to_string()
-    } else if actual_total_cells < target_total_cells {
-        format!(
-            "{:.2}x below target",
-            target_total_cells as f64 / actual_total_cells as f64
-        )
-    } else {
-        format!(
-            "{:.2}x above target",
-            actual_total_cells as f64 / target_total_cells as f64
-        )
-    };
+    // Target values for ratio reporting
+    let target_constraints =
+        args.constraints_per_col * args.cols_per_air as f64 * args.num_airs as f64;
+    let target_bus_interactions =
+        args.interactions_per_col * args.cols_per_air as f64 * args.num_airs as f64;
 
     println!("=== AIR Complexity Benchmark ===");
     println!("  num_airs:               {}", args.num_airs);
@@ -168,9 +168,18 @@ fn run(args: &Args) {
     println!("  constraints_per_col:    {}", args.constraints_per_col);
     println!("  interactions_per_col:   {}", args.interactions_per_col);
     println!("  trace_height:           {trace_height} (2^{log_trace_height})");
-    println!("  trace_cells:            {actual_total_cells} ({cells_ratio_str})");
-    println!("  constraints:            {total_constraints}");
-    println!("  bus_interactions:       {total_bus_interactions}");
+    println!(
+        "  trace_cells:            {actual_total_cells} ({})",
+        ratio_str(actual_total_cells, target_total_cells as f64)
+    );
+    println!(
+        "  constraints:            {total_constraints} ({})",
+        ratio_str(total_constraints, target_constraints)
+    );
+    println!(
+        "  bus_interactions:        {total_bus_interactions} ({})",
+        ratio_str(total_bus_interactions, target_bus_interactions)
+    );
     println!("  constraint_instances:   {constraint_instances}");
     println!("  bus_interaction_msgs:   {bus_interaction_messages}");
 
@@ -179,8 +188,8 @@ fn run(args: &Args) {
         .map(|_| {
             Arc::new(BenchmarkAir {
                 num_columns: args.cols_per_air,
-                constraints_per_col: args.constraints_per_col,
-                interactions_per_col: args.interactions_per_col,
+                total_constraints: constraints_per_air,
+                total_interaction_pairs: interaction_pairs_per_air,
             }) as AirRef<_>
         })
         .collect();
