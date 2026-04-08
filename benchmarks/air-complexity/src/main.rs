@@ -22,7 +22,7 @@ use openvm_stark_backend::{
     AirRef, ColumnsAir, PartitionedBaseAir, StarkEngine,
 };
 use openvm_stark_sdk::config::{
-    app_params_with_100_bits_security, baby_bear_poseidon2::BabyBearPoseidon2RefEngine,
+    app_params_with_100_bits_security, baby_bear_poseidon2::BabyBearPoseidon2RefEngine
 };
 use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues};
 use p3_baby_bear::BabyBear;
@@ -57,6 +57,12 @@ struct Args {
     /// due to rounding trace height to a power of 2.
     #[arg(long, default_value_t = 28)]
     log_total_cells: usize,
+
+    /// Log2 of stacked height for the PCS. Default is 24
+    /// (MAX_APP_LOG_STACKED_HEIGHT), matching default_app_config() in the
+    /// openvm cli crate.
+    #[arg(long, default_value_t = 24)]
+    log_stacked_height: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -179,8 +185,7 @@ fn run(args: &Args) {
         })
         .collect();
 
-    // Use MAX_APP_LOG_STACKED_HEIGHT, matching default_app_config() in the openvm cli crate.
-    let params = app_params_with_100_bits_security(21);
+    let params = app_params_with_100_bits_security(args.log_stacked_height);
     let engine: BabyBearPoseidon2RefEngine = StarkEngine::new(params);
 
     // Keygen
