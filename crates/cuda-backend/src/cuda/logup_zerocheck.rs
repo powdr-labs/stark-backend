@@ -130,6 +130,39 @@ pub struct Round0BlockCtx {
 
 // end of types for batched round-0 zerocheck
 
+// Types for batched round-0 logup:
+
+/// Per-trace context for batched round-0 logup evaluation.
+/// Must match the CUDA `Round0LogupCtx` struct in `logup_round0.cu`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct Round0LogupCtx {
+    pub selectors_cube: *const F,
+    pub preprocessed: *const F,
+    pub main_parts: *const *const F,
+    pub eq_cube: *const EF,
+    pub public_values: *const F,
+    pub numer_weights: *const EF,
+    pub denom_weights: *const EF,
+    pub denom_sum_init: EF,
+    pub d_rules: *const std::ffi::c_void,
+    pub rules_len: usize,
+    pub buffer_size: u32,
+    pub d_intermediates: *mut F,
+}
+
+/// Per-block mapping for batched round-0 logup. Same layout as zerocheck `Round0BlockCtx`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct LogupRound0BlockCtx {
+    pub local_block_idx_x: u32,
+    pub air_idx: u32,
+    pub coset_idx: u32,
+    pub row_base: u32,
+}
+
+// end of types for batched round-0 logup
+
 extern "C" {
     // gkr.cu
     fn _frac_build_tree_layer(
@@ -341,6 +374,37 @@ extern "C" {
         g_shift: F,
         max_temp_bytes: usize,
     ) -> i32;
+
+    // logup_round0.cu (batched)
+    fn _logup_r0_batched(
+        is_global: bool,
+        needs_shmem: bool,
+        tmp_sums_buffer: *mut Frac<EF>,
+        output: *mut EF,
+        d_block_ctxs: *const LogupRound0BlockCtx,
+        d_trace_ctxs: *const Round0LogupCtx,
+        segment_offsets: *const u32,
+        skip_domain: u32,
+        num_x: u32,
+        height: u32,
+        num_cosets: u32,
+        blocks_per_trace: u32,
+        g_shift: F,
+        total_blocks: u32,
+        threads_per_block: u32,
+        d: u32,
+        num_segments: u32,
+    ) -> i32;
+
+    fn _logup_r0_batched_launch_params(
+        buffer_size: u32,
+        skip_domain: u32,
+        num_x: u32,
+        num_cosets: u32,
+        max_temp_bytes: usize,
+        out_grid_x: *mut u32,
+        out_block_x: *mut u32,
+    );
 
     // zerocheck_round0.cu
     pub fn _zerocheck_r0_temp_sums_buffer_size(
@@ -1492,6 +1556,80 @@ pub fn zerocheck_r0_batched_launch_params(
     let mut block_x: u32 = 0;
     unsafe {
         _zerocheck_r0_batched_launch_params(
+            buffer_size,
+            skip_domain,
+            num_x,
+            num_cosets,
+            max_temp_bytes,
+            &mut grid_x,
+            &mut block_x,
+        );
+    }
+    (grid_x, block_x)
+}
+
+// ============================================================================
+// Batched round-0 logup
+// ============================================================================
+
+/// Launch the batched round-0 logup evaluation + segmented reduction.
+///
+/// # Safety
+/// All device pointers in contexts must be valid. `segment_offsets` must have `num_segments + 1` elements.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn logup_r0_batched(
+    is_global: bool,
+    needs_shmem: bool,
+    tmp_sums_buffer: &mut DeviceBuffer<Frac<EF>>,
+    output: &mut DeviceBuffer<EF>,
+    d_block_ctxs: &DeviceBuffer<LogupRound0BlockCtx>,
+    d_trace_ctxs: &DeviceBuffer<Round0LogupCtx>,
+    segment_offsets: &DeviceBuffer<u32>,
+    skip_domain: u32,
+    num_x: u32,
+    height: u32,
+    num_cosets: u32,
+    blocks_per_trace: u32,
+    g_shift: F,
+    total_blocks: u32,
+    threads_per_block: u32,
+    d: u32,
+    num_segments: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_logup_r0_batched(
+        is_global,
+        needs_shmem,
+        tmp_sums_buffer.as_mut_ptr(),
+        output.as_mut_ptr(),
+        d_block_ctxs.as_ptr(),
+        d_trace_ctxs.as_ptr(),
+        segment_offsets.as_ptr(),
+        skip_domain,
+        num_x,
+        height,
+        num_cosets,
+        blocks_per_trace,
+        g_shift,
+        total_blocks,
+        threads_per_block,
+        d,
+        num_segments,
+    ))
+}
+
+/// Query the CUDA-side launch config for a batched round-0 logup group.
+/// Returns `(blocks_per_trace, threads_per_block)`.
+pub fn logup_r0_batched_launch_params(
+    buffer_size: u32,
+    skip_domain: u32,
+    num_x: u32,
+    num_cosets: u32,
+    max_temp_bytes: usize,
+) -> (u32, u32) {
+    let mut grid_x: u32 = 0;
+    let mut block_x: u32 = 0;
+    unsafe {
+        _logup_r0_batched_launch_params(
             buffer_size,
             skip_domain,
             num_x,
