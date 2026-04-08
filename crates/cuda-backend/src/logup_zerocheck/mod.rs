@@ -941,10 +941,10 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                         })
                         .collect();
                     for (trace_idx, numer, denom) in logup_entries {
-                        for (j, &c) in numer.iter().enumerate() {
+                        for (j, &c) in numer.iter().enumerate().take(sp_0_deg + 1) {
                             logup_coeffs[j * round0_width + 2 * trace_idx] = c;
                         }
-                        for (j, &c) in denom.iter().enumerate() {
+                        for (j, &c) in denom.iter().enumerate().take(sp_0_deg + 1) {
                             logup_coeffs[j * round0_width + 2 * trace_idx + 1] = c;
                         }
                         logup_batched[trace_idx] = true;
@@ -1123,10 +1123,10 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     F::ONE,
                 )
                 .into_coeffs();
-                for (j, &c) in numer_c.iter().enumerate() {
+                for (j, &c) in numer_c.iter().enumerate().take(sp_0_deg + 1) {
                     logup_coeffs[j * round0_width + 2 * trace_idx] = c;
                 }
-                for (j, &c) in denom_c.iter().enumerate() {
+                for (j, &c) in denom_c.iter().enumerate().take(sp_0_deg + 1) {
                     logup_coeffs[j * round0_width + 2 * trace_idx + 1] = c;
                 }
             }
