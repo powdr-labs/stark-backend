@@ -8,6 +8,9 @@
 //! Usage:
 //!   cargo run -p openvm-benchmark-air-complexity --release -- \
 //!     --num-airs 4 --cols-per-air 100 --constraints-per-col 2 --log-total-cells 24
+//!
+//! To also write a metrics.json file:
+//!   METRICS_OUTPUT=metrics.json cargo run -p openvm-benchmark-air-complexity --release -- ...
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -20,7 +23,6 @@ use openvm_stark_backend::{
 };
 use openvm_stark_sdk::config::{
     app_params_with_100_bits_security, baby_bear_poseidon2::BabyBearPoseidon2RefEngine,
-    MAX_APP_LOG_STACKED_HEIGHT,
 };
 use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues};
 use p3_baby_bear::BabyBear;
@@ -109,9 +111,14 @@ impl<AB: AirBuilder + InteractionBuilder> Air<AB> for BenchmarkAir {
 // ---------------------------------------------------------------------------
 
 fn main() {
-    openvm_stark_sdk::utils::setup_tracing();
-
     let args = Args::parse();
+
+    // run_with_metric_collection sets up tracing + metrics recording.
+    // If METRICS_OUTPUT is set, writes a metrics.json on completion.
+    openvm_stark_sdk::bench::run_with_metric_collection("METRICS_OUTPUT", || run(&args));
+}
+
+fn run(args: &Args) {
 
     assert!(args.num_airs > 0);
     assert!(args.cols_per_air > 0);
@@ -173,7 +180,7 @@ fn main() {
         .collect();
 
     // Use MAX_APP_LOG_STACKED_HEIGHT, matching default_app_config() in the openvm cli crate.
-    let params = app_params_with_100_bits_security(MAX_APP_LOG_STACKED_HEIGHT);
+    let params = app_params_with_100_bits_security(21);
     let engine: BabyBearPoseidon2RefEngine = StarkEngine::new(params);
 
     // Keygen
