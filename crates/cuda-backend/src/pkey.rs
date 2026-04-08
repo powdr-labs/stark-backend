@@ -29,6 +29,32 @@ pub struct AirDataGpu {
     pub zerocheck_mle: ConstraintOnlyRules<false>,
     pub zerocheck_monomials: Option<ZerocheckMonomials>,
     pub interaction_monomials: Option<InteractionMonomials>,
+    /// Precomputed logup round0 DAG rules and interaction-to-rule mappings.
+    /// `None` if the AIR has no interactions.
+    pub logup_round0: Option<LogupRound0Rules>,
+}
+
+/// Precomputed data for the batched logup round0 kernel.
+/// The DAG is built and uploaded once at keygen; at prove-time only the per-interaction
+/// weights (which depend on prover randomness) need to be computed.
+pub struct LogupRound0Rules {
+    /// Encoded DAG rules on device.
+    pub d_rules: DeviceBuffer<u128>,
+    /// Number of intermediate buffer slots required per thread.
+    pub buffer_size: u32,
+    /// Total number of rules (length of `d_rules`).
+    pub num_rules: usize,
+    /// Per-interaction: rule index for the count expression.
+    pub count_rule_idxs: Vec<usize>,
+    /// Flattened per-interaction per-field rule indices for message expressions.
+    pub message_rule_idxs: Vec<usize>,
+    /// Offsets into `message_rule_idxs` (length = num_interactions + 1).
+    /// Interaction `i` has fields at `message_rule_idxs[message_offsets[i]..message_offsets[i+1]]`.
+    pub message_offsets: Vec<usize>,
+    /// Per-interaction bus index.
+    pub bus_indices: Vec<u16>,
+    /// Per-interaction message length.
+    pub message_lens: Vec<usize>,
 }
 
 /// Used for GKR input evaluation and logup MLE sumcheck rounds.
@@ -105,12 +131,20 @@ impl AirDataGpu {
         } else {
             None
         };
+        let _keygen_t0 = std::time::Instant::now();
+        let logup_round0 = LogupRound0Rules::new(&symbolic_constraints)?;
+        let _keygen_us = _keygen_t0.elapsed().as_micros();
+        if _keygen_us > 100 {
+            eprintln!("[KEYGEN_TIMING] LogupRound0Rules::new = {_keygen_us}us (interactions={})",
+                symbolic_constraints.interactions.len());
+        }
         Ok(Self {
             interaction_rules,
             zerocheck_round0,
             zerocheck_mle,
             zerocheck_monomials,
             interaction_monomials,
+            logup_round0,
         })
     }
 }
@@ -314,6 +348,81 @@ impl<const BUFFER_VARS: bool> ConstraintOnlyRules<BUFFER_VARS> {
         };
         Ok(Self { inner })
     }
+}
+
+impl LogupRound0Rules {
+    /// Build the logup round0 DAG and precompute interaction-to-rule mappings.
+    /// Returns `Ok(None)` when the AIR has no interactions.
+    pub fn new(symbolic: &SymbolicConstraints<F>) -> Result<Option<Self>, MemCopyError> {
+        if symbolic.interactions.is_empty() {
+            return Ok(None);
+        }
+
+        // Build the interactions DAG (same as evaluate_round0_interactions_gpu used to do at
+        // prove time). We track only the sorted/deduped constraint indices.
+        let mut dag_builder = SymbolicDagBuilder::new();
+        let mut sorted_used_dag_idxs = Vec::new();
+        for interaction in &symbolic.interactions {
+            let count = dag_builder.add_expr(&interaction.count);
+            sorted_used_dag_idxs.push(count);
+            sorted_used_dag_idxs.extend(
+                interaction
+                    .message
+                    .iter()
+                    .map(|field_expr| dag_builder.add_expr(field_expr)),
+            );
+        }
+        sorted_used_dag_idxs.sort();
+        sorted_used_dag_idxs.dedup();
+        let dag = SymbolicExpressionDag {
+            nodes: dag_builder.nodes,
+            constraint_idx: sorted_used_dag_idxs,
+        };
+        let rules = SymbolicRulesGpu::new(&dag, true);
+
+        // Map each interaction field to its rule index.
+        let mut count_rule_idxs = Vec::with_capacity(symbolic.interactions.len());
+        let mut message_rule_idxs = Vec::new();
+        let mut message_offsets = Vec::with_capacity(symbolic.interactions.len() + 1);
+        let mut bus_indices = Vec::with_capacity(symbolic.interactions.len());
+        let mut message_lens = Vec::with_capacity(symbolic.interactions.len());
+
+        message_offsets.push(0);
+        for interaction in &symbolic.interactions {
+            let count_dag_idx = dag_builder
+                .expr_to_idx[&(&interaction.count as *const SymbolicExpression<_>)];
+            count_rule_idxs.push(rules.dag_idx_to_rule_idx[&count_dag_idx]);
+
+            for message in &interaction.message {
+                let msg_dag_idx =
+                    dag_builder.expr_to_idx[&(message as *const SymbolicExpression<_>)];
+                message_rule_idxs.push(rules.dag_idx_to_rule_idx[&msg_dag_idx]);
+            }
+            message_offsets.push(message_rule_idxs.len());
+            bus_indices.push(interaction.bus_index);
+            message_lens.push(interaction.message.len());
+        }
+
+        let encoded_rules = rules.rules.iter().map(|c| c.encode()).collect_vec();
+        let num_rules = encoded_rules.len();
+        let d_rules = encoded_rules.to_device()?;
+        let buffer_size: u32 = rules
+            .buffer_size
+            .try_into()
+            .expect("buffer_size exceeds u32");
+
+        Ok(Some(Self {
+            d_rules,
+            buffer_size,
+            num_rules,
+            count_rule_idxs,
+            message_rule_idxs,
+            message_offsets,
+            bus_indices,
+            message_lens,
+        }))
+    }
+
 }
 
 impl EvalRules {

@@ -1,12 +1,12 @@
-use itertools::Itertools;
+use std::sync::atomic::AtomicU64;
+
 use openvm_cuda_common::{copy::MemCopyH2D, d_buffer::DeviceBuffer};
-use openvm_stark_backend::{
-    air_builders::symbolic::{
-        symbolic_expression::SymbolicExpression, SymbolicConstraints, SymbolicDagBuilder,
-        SymbolicExpressionDag,
-    },
-    prover::{fractional_sumcheck_gkr::Frac, DeviceStarkProvingKey},
-};
+use openvm_stark_backend::prover::{fractional_sumcheck_gkr::Frac, DeviceStarkProvingKey};
+
+/// Accumulated logup weight computation time across all per-AIR calls (microseconds, thread-safe).
+/// On 003 branch: measures only weight compute + 2 H2D (DAG build is at keygen).
+/// On 002 branch: would measure full DAG build + rule compile + weight compute + 3 H2D.
+pub static DAG_BUILD_TOTAL_US: AtomicU64 = AtomicU64::new(0);
 use p3_field::PrimeCharacteristicRing;
 use tracing::{debug, warn};
 
@@ -19,7 +19,6 @@ use crate::{
     },
     gpu_backend::GenericGpuBackend,
     hash_scheme::GpuHashScheme,
-    logup_zerocheck::rules::{codec::Codec, SymbolicRulesGpu},
     prelude::{EF, F},
 };
 
@@ -28,6 +27,7 @@ use crate::{
 /// `num_cosets` should equal `constraint_degree - 1` because we evaluate the quotient polynomial.
 /// See [`crate::logup_zerocheck`] module docs for async-free/peak memory behavior.
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
     pk: &DeviceStarkProvingKey<GenericGpuBackend<HS>>,
     selectors_cube: &DeviceBuffer<F>,
@@ -126,12 +126,12 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
 /// Evaluate interaction constraints (excluding plain AIR constraints) for a single AIR, given
 /// prepared trace input.
 ///
-/// `constraints` includes interaction expressions for the AIR.
+/// Uses precomputed `LogupRound0Rules` from the proving key to avoid DAG rebuild at prove time.
 /// See [`crate::logup_zerocheck`] module docs for async-free/peak memory behavior.
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
     pk: &DeviceStarkProvingKey<GenericGpuBackend<HS>>,
-    symbolic: &SymbolicConstraints<F>,
     selectors_cube: &DeviceBuffer<F>,
     main_parts: &DeviceBuffer<*const F>,
     public_values: &DeviceBuffer<F>,
@@ -151,65 +151,47 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
     }
     let large_domain = num_cosets * skip_domain;
 
-    // We create a new "interactions DAG" where the new .constraints are the interaction [count,
-    // message_0, message_1, ..] expressions themselves, while the .interactions are empty
-    // We track the indices with InteractionNode
+    // Use precomputed logup round0 rules from the proving key.
+    let logup_r0 = pk
+        .other_data
+        .logup_round0
+        .as_ref()
+        .expect("LogupRound0Rules must be precomputed for AIRs with interactions");
 
-    // Copied from build_symbolic_constraints_dag to handle sorting of constraints
-    // NOTE: For logup round0, the kernel uses weights indexed by rule_idx, not constraint_idx.
-    // So we deduplicate constraint_idx and use dag_idx_to_rule_idx for weight mapping.
-    let (rules, d_numer_weights, d_denom_weights, denom_sum_init) = {
-        let mut dag_builder = SymbolicDagBuilder::new();
-        let mut sorted_used_dag_idxs = Vec::new();
-        for interaction in &symbolic.interactions {
-            let count = dag_builder.add_expr(&interaction.count);
-            sorted_used_dag_idxs.push(count);
-            sorted_used_dag_idxs.extend(
-                interaction
-                    .message
-                    .iter()
-                    .map(|field_expr| dag_builder.add_expr(field_expr)),
-            );
-        }
-        sorted_used_dag_idxs.sort();
-        // Deduplicate for the dag since logup round0 kernel doesn't use used_nodes
-        sorted_used_dag_idxs.dedup();
-        let dag = SymbolicExpressionDag {
-            nodes: dag_builder.nodes,
-            constraint_idx: sorted_used_dag_idxs,
-        };
-        let rules = SymbolicRulesGpu::new(&dag, true);
-        let mut numer_weights = vec![EF::ZERO; rules.rules.len()];
-        let mut denom_weights = vec![EF::ZERO; rules.rules.len()];
+    // Compute weights using the precomputed interaction-to-rule mappings.
+    // TIMING: measures weight computation + 2 H2D uploads (DAG build already done at keygen)
+    let _weight_t0 = std::time::Instant::now();
+    let (d_numer_weights, d_denom_weights, denom_sum_init) = {
+        let num_rules = logup_r0.num_rules;
+        let mut numer_weights = vec![EF::ZERO; num_rules];
+        let mut denom_weights = vec![EF::ZERO; num_rules];
         let mut denom_sum_init = EF::ZERO;
-        for (interaction_idx, interaction) in symbolic.interactions.iter().enumerate() {
-            // CAUTION: an expression node could be used in multiple interactions, and might even be
-            // used as `count` in one, but message field in another. We only care about their
-            // weighted sum with eq_3b, so we compute the weights ahead of time.
-            let count_dag_idx =
-                dag_builder.expr_to_idx[&(&interaction.count as *const SymbolicExpression<_>)];
-            let count_rule_idx = rules.dag_idx_to_rule_idx[&count_dag_idx];
+
+        for interaction_idx in 0..logup_r0.count_rule_idxs.len() {
+            let count_rule_idx = logup_r0.count_rule_idxs[interaction_idx];
             numer_weights[count_rule_idx] += eq_3bs[interaction_idx];
             denom_sum_init += eq_3bs[interaction_idx]
-                * beta_pows[interaction.message.len()]
-                * F::from_u32(interaction.bus_index as u32 + 1);
+                * beta_pows[logup_r0.message_lens[interaction_idx]]
+                * F::from_u32(logup_r0.bus_indices[interaction_idx] as u32 + 1);
 
-            for (message_idx, message) in interaction.message.iter().enumerate() {
-                let message_dag_idx =
-                    dag_builder.expr_to_idx[&(message as *const SymbolicExpression<_>)];
-                let message_rule_idx = rules.dag_idx_to_rule_idx[&message_dag_idx];
-                denom_weights[message_rule_idx] += eq_3bs[interaction_idx] * beta_pows[message_idx];
+            let msg_start = logup_r0.message_offsets[interaction_idx];
+            let msg_end = logup_r0.message_offsets[interaction_idx + 1];
+            for (local_idx, &msg_rule_idx) in
+                logup_r0.message_rule_idxs[msg_start..msg_end].iter().enumerate()
+            {
+                denom_weights[msg_rule_idx] += eq_3bs[interaction_idx] * beta_pows[local_idx];
             }
         }
+
         let d_numer_weights = numer_weights.to_device()?;
         let d_denom_weights = denom_weights.to_device()?;
-        (rules, d_numer_weights, d_denom_weights, denom_sum_init)
+        (d_numer_weights, d_denom_weights, denom_sum_init)
     };
 
-    let encoded_rules = rules.rules.iter().map(|c| c.encode()).collect_vec();
-    let d_rules = encoded_rules.to_device()?;
+    let _weight_us = _weight_t0.elapsed().as_micros();
+    DAG_BUILD_TOTAL_US.fetch_add(_weight_us as u64, std::sync::atomic::Ordering::Relaxed);
 
-    let buffer_size: u32 = rules.buffer_size.try_into().unwrap();
+    let buffer_size: u32 = logup_r0.buffer_size;
     let intermed_capacity = unsafe {
         _logup_r0_intermediates_buffer_size(
             buffer_size,
@@ -259,7 +241,7 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
             &d_numer_weights,
             &d_denom_weights,
             denom_sum_init,
-            &d_rules,
+            &logup_r0.d_rules,
             buffer_size,
             &mut intermediates,
             skip_domain,

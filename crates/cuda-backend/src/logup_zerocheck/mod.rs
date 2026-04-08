@@ -22,7 +22,7 @@ use openvm_cuda_common::{
     memory_manager::MemTracker,
 };
 use openvm_stark_backend::{
-    air_builders::symbolic::SymbolicConstraints,
+    // SymbolicConstraints no longer needed — logup DAG precomputed at keygen
     calculate_n_logup,
     dft::Radix2BowersSerial,
     p3_matrix::dense::RowMajorMatrix,
@@ -739,6 +739,8 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             _keepalive: DeviceBuffer<*const F>, // keep d_main_parts alive
         }
 
+        // TIMING: pass1 = per-AIR kernel dispatch (weight compute + GPU kernel launches across threads)
+        let pass1_t0 = std::time::Instant::now();
         // Pass 1: Launch GPU kernels across multiple threads for concurrent execution.
         // Each thread gets its own CUDA stream via cudaStreamPerThread, enabling
         // parallel GPU kernel execution for different AIRs.
@@ -774,8 +776,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 .iter()
                 .map(|((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs)| {
                     let single_pk = &pk_ref.per_air[*air_idx];
-                    let single_air_constraints =
-                        SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
                     let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
                     assert!(local_constraint_deg <= constraint_degree);
 
@@ -801,7 +801,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
 
                     let num_cosets_logup = local_constraint_deg;
                     let logup_buffer = evaluate_round0_interactions_gpu(
-                        single_pk, &single_air_constraints, selectors_cube.buffer(),
+                        single_pk, selectors_cube.buffer(),
                         &d_main_parts, public_values, eq_xi_tree.get_ptr(n_lift),
                         beta_pows_ref, eq_3bs,
                         1 << l_skip, 1 << n_lift, height as u32, num_cosets_logup as u32,
@@ -828,8 +828,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                             for ((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs) in chunk {
                                 let r: Result<Round0GpuResult, LogupZerocheckError> = (|| {
                                     let single_pk = &pk_ref.per_air[*air_idx];
-                                    let single_air_constraints =
-                                        SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
                                     let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
                                     assert!(local_constraint_deg <= constraint_degree);
 
@@ -855,7 +853,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
 
                                     let num_cosets_logup = local_constraint_deg;
                                     let logup_buffer = evaluate_round0_interactions_gpu(
-                                        single_pk, &single_air_constraints, selectors_cube.buffer(),
+                                        single_pk, selectors_cube.buffer(),
                                         &d_main_parts, public_values, eq_xi_tree.get_ptr(n_lift),
                                         beta_pows_ref, eq_3bs,
                                         1 << l_skip, 1 << n_lift, height as u32, num_cosets_logup as u32,
@@ -887,6 +885,12 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         let gpu_results: Vec<Round0GpuResult> = gpu_results
             .into_iter()
             .collect::<Result<Vec<_>, _>>()?;
+        let pass1_ms = pass1_t0.elapsed().as_secs_f64() * 1000.0;
+        // Read accumulated weight/DAG compute time from all threads, then reset for next segment
+        let dag_build_us = crate::logup_zerocheck::round0::DAG_BUILD_TOTAL_US
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
+        // TIMING: pass2 = D2H transfers + CPU interpolation (sequential)
+        let pass2_t0 = std::time::Instant::now();
 
         // Pass 2: D2H copies and CPU post-processing (all GPU work is already pipelined)
         for (trace_idx, result) in gpu_results.into_iter().enumerate() {
@@ -971,6 +975,11 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         }
         self.mem
             .emit_metrics_with_label("prover.batch_constraints.round0");
+        let pass2_ms = pass2_t0.elapsed().as_secs_f64() * 1000.0;
+        let dag_build_ms = dag_build_us as f64 / 1000.0;
+        // dag_build on 003 = weight compute + 2 H2D only (DAG precomputed at keygen)
+        // dag_build on 002 = full DAG build + rule compile + weight compute + 3 H2D
+        eprintln!("[ROUND0_TIMING] pass1_kernel_dispatch={pass1_ms:.1}ms (weight_or_dag={dag_build_ms:.1}ms) pass2_d2h_interp={pass2_ms:.1}ms num_airs={num_present_airs}");
         Ok(batch_sp_poly)
     }
 
