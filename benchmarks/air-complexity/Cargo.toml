@@ -7,6 +7,7 @@ edition.workspace = true
 [dependencies]
 openvm-stark-backend = { workspace = true, features = ["parallel", "metrics"] }
 openvm-stark-sdk = { workspace = true, features = ["parallel", "metrics"] }
+openvm-cuda-backend = { workspace = true, optional = true }
 
 p3-air.workspace = true
 p3-baby-bear.workspace = true
@@ -16,5 +17,6 @@ p3-util.workspace = true
 
 clap = { workspace = true }
 
-[dev-dependencies]
-openvm-stark-backend = { workspace = true, features = ["test-utils"] }
+[features]
+default = []
+cuda = ["dep:openvm-cuda-backend"]
