@@ -86,13 +86,16 @@ impl<AB: AirBuilder + InteractionBuilder> Air<AB> for BenchmarkAir {
         for col_idx in 0..self.num_columns {
             let col = local[col_idx];
             for _ in 0..self.constraints_per_col {
-                builder.assert_zero(col * (col - AB::Expr::ONE));
+                builder.assert_bool(col);
             }
         }
 
-        // Self-canceling bus interactions: send and receive the same message
-        for col_idx in 0..self.num_columns {
-            let field = vec![local[col_idx]];
+        // Self-canceling bus interactions: place a send+receive pair on every
+        // other column so the total push_interaction count equals
+        // interactions_per_col * num_columns (for even num_columns).
+        let num_interaction_pairs = self.num_columns / 2;
+        for pair in 0..num_interaction_pairs {
+            let field = vec![local[pair * 2]];
             for _ in 0..self.interactions_per_col {
                 builder.push_interaction(0, field.clone(), AB::Expr::ONE, 0);
                 builder.push_interaction(0, field.clone(), AB::Expr::NEG_ONE, 0);
@@ -126,7 +129,8 @@ fn main() {
     let actual_total_cells = args.num_airs * args.cols_per_air * trace_height;
 
     let total_constraints = args.constraints_per_col * args.cols_per_air * args.num_airs;
-    let total_bus_interactions = args.interactions_per_col * args.cols_per_air * args.num_airs;
+    let bus_interactions_per_air = (args.cols_per_air / 2) * 2 * args.interactions_per_col;
+    let total_bus_interactions = bus_interactions_per_air * args.num_airs;
     let constraint_instances = total_constraints * trace_height;
     let bus_interaction_messages = total_bus_interactions * trace_height;
 
@@ -153,7 +157,7 @@ fn main() {
     println!("  trace_height:           {trace_height} (2^{log_trace_height})");
     println!("  trace_cells:            {actual_total_cells} ({cells_ratio_str})");
     println!("  constraints:            {total_constraints}");
-    println!("  bus_interactions:        {total_bus_interactions}");
+    println!("  bus_interactions:       {total_bus_interactions}");
     println!("  constraint_instances:   {constraint_instances}");
     println!("  bus_interaction_msgs:   {bus_interaction_messages}");
 
