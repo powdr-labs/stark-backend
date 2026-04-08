@@ -7,7 +7,7 @@
 //!
 //! Usage:
 //!   cargo run -p openvm-benchmark-air-complexity --release -- \
-//!     --num-airs 4 --cols-per-air 100 --interactions-per-air 20 --log-total-cells 24
+//!     --num-airs 4 --cols-per-air 100 --constraints-per-col 2 --log-total-cells 24
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -41,19 +41,19 @@ struct Args {
     #[arg(long, default_value_t = 20)]
     cols_per_air: usize,
 
-    /// Number of boolean constraints per AIR (defaults to cols_per_air)
-    #[arg(long)]
-    constraints_per_air: Option<usize>,
+    /// Number of boolean constraints per column per AIR
+    #[arg(long, default_value_t = 1)]
+    constraints_per_col: usize,
 
-    /// Number of send/receive bus interaction pairs per AIR.
+    /// Number of send/receive bus interaction pairs per column per AIR.
     /// Each pair creates one `push_interaction(..., count=1)` and one
     /// `push_interaction(..., count=-1)` with the same message, so they cancel out.
-    #[arg(long, default_value_t = 0)]
-    interactions_per_air: usize,
+    #[arg(long, default_value_t = 1)]
+    interactions_per_col: usize,
 
-    /// Log2 of total trace cells across all AIRs. Actual count may be slightly
-    /// larger due to rounding trace height to a power of 2.
-    #[arg(long)]
+    /// Log2 of target total trace cells across all AIRs. Actual count may differ
+    /// due to rounding trace height to a power of 2.
+    #[arg(long, default_value_t = 28)]
     log_total_cells: usize,
 }
 
@@ -64,8 +64,8 @@ struct Args {
 #[derive(Clone, Debug)]
 pub struct BenchmarkAir {
     pub num_columns: usize,
-    pub num_constraints: usize,
-    pub num_interactions: usize,
+    pub constraints_per_col: usize,
+    pub interactions_per_col: usize,
 }
 
 impl<F> BaseAir<F> for BenchmarkAir {
@@ -83,17 +83,20 @@ impl<AB: AirBuilder + InteractionBuilder> Air<AB> for BenchmarkAir {
         let local = main.row_slice(0).unwrap();
 
         // Boolean constraints: col * (col - 1) == 0
-        for i in 0..self.num_constraints {
-            let col = local[i];
-            builder.assert_zero(col * (col - AB::Expr::ONE));
+        for col_idx in 0..self.num_columns {
+            let col = local[col_idx];
+            for _ in 0..self.constraints_per_col {
+                builder.assert_zero(col * (col - AB::Expr::ONE));
+            }
         }
 
         // Self-canceling bus interactions: send and receive the same message
-        for i in 0..self.num_interactions {
-            let col_idx = i % self.num_columns;
+        for col_idx in 0..self.num_columns {
             let field = vec![local[col_idx]];
-            builder.push_interaction(0, field.clone(), AB::Expr::ONE, 0);
-            builder.push_interaction(0, field, AB::Expr::NEG_ONE, 0);
+            for _ in 0..self.interactions_per_col {
+                builder.push_interaction(0, field.clone(), AB::Expr::ONE, 0);
+                builder.push_interaction(0, field.clone(), AB::Expr::NEG_ONE, 0);
+            }
         }
     }
 }
@@ -106,43 +109,61 @@ fn main() {
     openvm_stark_sdk::utils::setup_tracing();
 
     let args = Args::parse();
-    let constraints_per_air = args.constraints_per_air.unwrap_or(args.cols_per_air);
 
     assert!(args.num_airs > 0);
     assert!(args.cols_per_air > 0);
-    assert!(
-        constraints_per_air <= args.cols_per_air,
-        "constraints_per_air ({constraints_per_air}) exceeds cols_per_air ({})",
-        args.cols_per_air,
-    );
 
     // Compute trace height (round up to power of 2)
-    let total_cells = 1usize << args.log_total_cells;
-    let cells_per_air = total_cells / args.num_airs;
+    let target_total_cells = 1usize << args.log_total_cells;
+    let cells_per_air = target_total_cells / args.num_airs;
     let rows_per_air = cells_per_air / args.cols_per_air;
     assert!(
         rows_per_air >= 2,
-        "total_cells too small for the given num_airs and cols_per_air"
+        "log_total_cells too small for the given num_airs and cols_per_air"
     );
     let log_trace_height = log2_ceil_usize(rows_per_air);
     let trace_height = 1usize << log_trace_height;
     let actual_total_cells = args.num_airs * args.cols_per_air * trace_height;
 
+    let total_constraints = args.constraints_per_col * args.cols_per_air * args.num_airs;
+    let total_bus_interactions = args.interactions_per_col * args.cols_per_air * args.num_airs;
+    let constraint_instances = total_constraints * trace_height;
+    let bus_interaction_messages = total_bus_interactions * trace_height;
+
+    // Ratio of actual cells vs target
+    let cells_ratio_str = if actual_total_cells == target_total_cells {
+        "exact".to_string()
+    } else if actual_total_cells < target_total_cells {
+        format!(
+            "{:.2}x below target",
+            target_total_cells as f64 / actual_total_cells as f64
+        )
+    } else {
+        format!(
+            "{:.2}x above target",
+            actual_total_cells as f64 / target_total_cells as f64
+        )
+    };
+
     println!("=== AIR Complexity Benchmark ===");
-    println!("  num_airs:             {}", args.num_airs);
-    println!("  cols_per_air:         {}", args.cols_per_air);
-    println!("  constraints_per_air:  {constraints_per_air}");
-    println!("  interactions_per_air: {}", args.interactions_per_air);
-    println!("  trace_height:         {trace_height} (2^{log_trace_height})");
-    println!("  total_cells:          {actual_total_cells}");
+    println!("  num_airs:               {}", args.num_airs);
+    println!("  cols_per_air:           {}", args.cols_per_air);
+    println!("  constraints_per_col:    {}", args.constraints_per_col);
+    println!("  interactions_per_col:   {}", args.interactions_per_col);
+    println!("  trace_height:           {trace_height} (2^{log_trace_height})");
+    println!("  trace_cells:            {actual_total_cells} ({cells_ratio_str})");
+    println!("  constraints:            {total_constraints}");
+    println!("  bus_interactions:        {total_bus_interactions}");
+    println!("  constraint_instances:   {constraint_instances}");
+    println!("  bus_interaction_msgs:   {bus_interaction_messages}");
 
     // Create AIRs
     let airs: Vec<AirRef<_>> = (0..args.num_airs)
         .map(|_| {
             Arc::new(BenchmarkAir {
                 num_columns: args.cols_per_air,
-                num_constraints: constraints_per_air,
-                num_interactions: args.interactions_per_air,
+                constraints_per_col: args.constraints_per_col,
+                interactions_per_col: args.interactions_per_col,
             }) as AirRef<_>
         })
         .collect();
@@ -157,7 +178,6 @@ fn main() {
         .max(log_trace_height)
         .max(min_for_whir)
         .min(24);
-    println!("  log_stacked_height:   {log_stacked_height}");
 
     let params = app_params_with_100_bits_security(log_stacked_height);
     let engine: BabyBearPoseidon2RefEngine = StarkEngine::new(params);
@@ -199,14 +219,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openvm_stark_backend::{prover::ColMajorMatrix, SystemParams};
+    use openvm_stark_backend::SystemParams;
     use openvm_stark_sdk::config::baby_bear_poseidon2::BabyBearPoseidon2RefEngine;
 
     fn run_benchmark_test(
         num_airs: usize,
         cols_per_air: usize,
-        constraints_per_air: usize,
-        interactions_per_air: usize,
+        constraints_per_col: usize,
+        interactions_per_col: usize,
         log_trace_height: usize,
     ) {
         let trace_height = 1usize << log_trace_height;
@@ -215,8 +235,8 @@ mod tests {
             .map(|_| {
                 Arc::new(BenchmarkAir {
                     num_columns: cols_per_air,
-                    num_constraints: constraints_per_air,
-                    num_interactions: interactions_per_air,
+                    constraints_per_col,
+                    interactions_per_col,
                 }) as AirRef<_>
             })
             .collect();
@@ -244,27 +264,26 @@ mod tests {
 
     #[test]
     fn test_single_air_constraints_only() {
-        run_benchmark_test(1, 10, 10, 0, 8);
+        run_benchmark_test(1, 10, 1, 0, 8);
     }
 
     #[test]
     fn test_single_air_with_interactions() {
-        run_benchmark_test(1, 10, 5, 3, 8);
+        run_benchmark_test(1, 10, 1, 1, 8);
     }
 
     #[test]
     fn test_multi_air() {
-        run_benchmark_test(3, 10, 5, 2, 8);
+        run_benchmark_test(3, 10, 1, 1, 8);
     }
 
     #[test]
     fn test_wide_air() {
-        run_benchmark_test(1, 100, 50, 10, 8);
+        run_benchmark_test(1, 100, 2, 1, 8);
     }
 
     #[test]
-    fn test_many_interactions() {
-        // interactions_per_air > cols_per_air: wraps around column indices
-        run_benchmark_test(1, 5, 3, 10, 8);
+    fn test_many_constraints_and_interactions() {
+        run_benchmark_test(1, 5, 3, 3, 8);
     }
 }
