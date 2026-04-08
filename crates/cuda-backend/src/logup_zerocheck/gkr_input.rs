@@ -111,7 +111,7 @@ pub fn log_gkr_input_evals<HS: GpuHashScheme>(
         use crate::cuda::logup_zerocheck::{
             gkr_input_eval_batched, GkrInputBlockCtx, GkrInputCtx,
         };
-        use openvm_cuda_common::stream::current_stream_sync;
+
 
         const GKR_GLOBAL_THRESHOLD: u32 = 10;
         const GKR_TASK_SIZE: usize = 1 << 16;
@@ -256,8 +256,10 @@ pub fn log_gkr_input_evals<HS: GpuHashScheme>(
                 )?;
             }
 
-            // Sync before lifting
-            current_stream_sync()?;
+            // No stream sync needed: the lifting kernels below run on the same
+            // CUDA stream as the batched GKR kernel, so stream ordering guarantees
+            // the batched kernel completes first. The tmp_buf keepalive scope
+            // extends past the lifting loop (dropped at end of is_global iteration).
 
             // Post-kernel lifting for lifted traces
             for &(_local_idx, tmp_idx, dst_offset, lifted_height, num_interactions) in
