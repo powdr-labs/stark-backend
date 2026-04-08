@@ -50,10 +50,18 @@ use crate::{
 /// Degree of the sumcheck polynomial for stacked reduction.
 pub const STACKED_REDUCTION_S_DEG: usize = 2;
 
-/// Window count threshold for activating the batched MLE round path.
-/// Below this, the sequential per-window path is used (benefits from GPU-CPU pipeline overlap).
-/// This is a starting heuristic — tune after profiling.
-const SR_MLE_BATCH_THRESHOLD: usize = 512;
+/// Per-segment window count threshold for activating the batched MLE round path.
+/// Below this, the sequential per-window path is used, which benefits from GPU-CPU
+/// pipeline overlap (CPU reduces window N while GPU runs window N+1).
+///
+/// `ht_diff_idxs` is per proving segment — each `StackedReductionGpu` instance handles
+/// one segment. Observed per-segment window counts:
+///   - APC=0:   ~20 windows/segment (sequential wins — pipeline overlap makes wall < kernel)
+///   - APC=300: 43–318 windows/segment (batched wins — sync overhead dominates)
+///
+/// 64 gives a 3x margin above APC=0's ~20 windows, ensuring sequential stays active there.
+/// Tune after profiling.
+const SR_MLE_BATCH_THRESHOLD: usize = 64;
 
 pub struct StackedReductionGpu<D = Digest> {
     sm_count: u32,
