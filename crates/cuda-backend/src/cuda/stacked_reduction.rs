@@ -271,3 +271,135 @@ pub unsafe fn stacked_reduction_sumcheck_mle_round_degenerate(
         round as u32,
     ))
 }
+
+// ============================================================================
+// Batched MLE round types and wrappers
+// ============================================================================
+
+/// Per-window context for batched degenerate MLE round evaluation.
+/// Must match the CUDA `SrMleDegenerateWindowCtx` struct in `stacked_reduction.cu`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SrMleDegenerateWindowCtx {
+    pub col_start: u32,
+    pub window_len: u32,
+    pub eq_r: EF,
+    pub k_rot_r: EF,
+}
+
+/// Per-window context for batched non-degenerate MLE round evaluation.
+/// Must match the CUDA `SrMleNondegWindowCtx` struct in `stacked_reduction.cu`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SrMleNondegWindowCtx {
+    pub col_start: u32,
+    pub window_len: u32,
+}
+
+extern "C" {
+    fn _sr_mle_degenerate_batched(
+        q_evals: *const *const EF,
+        eq_ub: *const EF,
+        unstacked_cols: *const UnstackedSlice,
+        lambda_pows: *const EF,
+        output: *mut u64,
+        windows: *const SrMleDegenerateWindowCtx,
+        q_height: u32,
+        num_windows: u32,
+        shift_factor: u32,
+    ) -> i32;
+
+    fn _sr_mle_nondeg_batched(
+        q_evals: *const *const EF,
+        eq_r_ns: *const EF,
+        k_rot_ns: *const EF,
+        unstacked_cols: *const UnstackedSlice,
+        lambda_pows: *const EF,
+        output: *mut u64,
+        windows: *const SrMleNondegWindowCtx,
+        q_height: u32,
+        num_windows: u32,
+        num_y: u32,
+        total_cols: u32,
+        sm_count: u32,
+    ) -> i32;
+}
+
+/// Batched degenerate MLE round: one block per window, all windows in one launch.
+///
+/// # Safety
+/// - `q_evals` must be pointers to device matrices all of height `q_height`.
+/// - `eq_ub` must be valid for `total_num_cols` elements (full eq_ub_per_trace on device).
+/// - `unstacked_cols` must be valid for `total_num_cols` elements.
+/// - `lambda_pows` must be valid for `2 * total_num_cols` elements.
+/// - `output` must have length at least `S_DEG * D_EF = 8`. Must be zero-initialized before
+///   the first kernel in a round; subsequent kernels in the same round accumulate.
+/// - `d_windows` must contain `num_windows` valid `SrMleDegenerateWindowCtx` entries.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn sr_mle_degenerate_batched(
+    q_evals: &DeviceBuffer<*const EF>,
+    eq_ub: &DeviceBuffer<EF>,
+    unstacked_cols: &DeviceBuffer<UnstackedSlice>,
+    lambda_pows: &DeviceBuffer<EF>,
+    output: &mut DeviceBuffer<u64>,
+    d_windows: &DeviceBuffer<SrMleDegenerateWindowCtx>,
+    q_height: u32,
+    num_windows: u32,
+    shift_factor: u32,
+) -> Result<(), CudaError> {
+    debug_assert!(output.len() >= STACKED_REDUCTION_S_DEG * D_EF);
+
+    check(_sr_mle_degenerate_batched(
+        q_evals.as_ptr(),
+        eq_ub.as_ptr(),
+        unstacked_cols.as_ptr(),
+        lambda_pows.as_ptr(),
+        output.as_mut_ptr(),
+        d_windows.as_ptr(),
+        q_height,
+        num_windows,
+        shift_factor,
+    ))
+}
+
+/// Batched non-degenerate MLE round: all windows in a `num_y` group in one launch.
+///
+/// # Safety
+/// - `q_evals` must be pointers to device matrices all of height `q_height`.
+/// - `unstacked_cols` must be valid for `total_num_cols` elements.
+/// - `lambda_pows` must be valid for `2 * total_num_cols` elements.
+/// - `output` must have length at least `S_DEG * D_EF = 8`. Must be zero-initialized before
+///   the first kernel in a round; subsequent kernels in the same round accumulate.
+/// - `d_windows` must contain `num_windows` valid `SrMleNondegWindowCtx` entries.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn sr_mle_nondeg_batched(
+    q_evals: &DeviceBuffer<*const EF>,
+    eq_r_ns: &EqEvalSegments<EF>,
+    k_rot_ns: &EqEvalSegments<EF>,
+    unstacked_cols: &DeviceBuffer<UnstackedSlice>,
+    lambda_pows: &DeviceBuffer<EF>,
+    output: &mut DeviceBuffer<u64>,
+    d_windows: &DeviceBuffer<SrMleNondegWindowCtx>,
+    q_height: u32,
+    num_windows: u32,
+    num_y: u32,
+    total_cols: u32,
+    sm_count: u32,
+) -> Result<(), CudaError> {
+    debug_assert!(output.len() >= STACKED_REDUCTION_S_DEG * D_EF);
+
+    check(_sr_mle_nondeg_batched(
+        q_evals.as_ptr(),
+        eq_r_ns.buffer.as_ptr(),
+        k_rot_ns.buffer.as_ptr(),
+        unstacked_cols.as_ptr(),
+        lambda_pows.as_ptr(),
+        output.as_mut_ptr(),
+        d_windows.as_ptr(),
+        q_height,
+        num_windows,
+        num_y,
+        total_cols,
+        sm_count,
+    ))
+}

@@ -1,4 +1,4 @@
-use std::{array::from_fn, cmp::max, ffi::c_void, iter::zip, mem, sync::Arc};
+use std::{array::from_fn, cmp::max, collections::BTreeMap, ffi::c_void, iter::zip, mem, sync::Arc};
 
 use itertools::{zip_eq, Itertools};
 use openvm_cuda_common::{
@@ -30,8 +30,9 @@ use crate::{
         poly::vector_scalar_multiply_ext,
         stacked_reduction::{
             _stacked_reduction_r0_required_temp_buffer_size, initialize_k_rot_from_eq_segments,
-            stacked_reduction_fold_ple, stacked_reduction_sumcheck_mle_round,
-            stacked_reduction_sumcheck_mle_round_degenerate, stacked_reduction_sumcheck_round0,
+            sr_mle_degenerate_batched, sr_mle_nondeg_batched, stacked_reduction_fold_ple,
+            stacked_reduction_sumcheck_mle_round, stacked_reduction_sumcheck_mle_round_degenerate,
+            stacked_reduction_sumcheck_round0, SrMleDegenerateWindowCtx, SrMleNondegWindowCtx,
             NUM_G,
         },
         sumcheck::{fold_mle, triangular_fold_mle},
@@ -48,6 +49,11 @@ use crate::{
 
 /// Degree of the sumcheck polynomial for stacked reduction.
 pub const STACKED_REDUCTION_S_DEG: usize = 2;
+
+/// Window count threshold for activating the batched MLE round path.
+/// Below this, the sequential per-window path is used (benefits from GPU-CPU pipeline overlap).
+/// This is a starting heuristic — tune after profiling.
+const SR_MLE_BATCH_THRESHOLD: usize = 512;
 
 pub struct StackedReductionGpu<D = Digest> {
     sm_count: u32,
@@ -100,6 +106,8 @@ pub struct StackedReductionGpu<D = Digest> {
     /// Stores eq(u[1+n_T..round-1], b_{T,j}[..round-n_T-1])
     eq_ub_per_trace: Vec<EF>,
     d_eq_ub: DeviceBuffer<EF>,
+    /// Full eq_ub_per_trace on device, uploaded once per round for batched MLE path.
+    d_eq_ub_full: DeviceBuffer<EF>,
 
     d_block_sums: DeviceBuffer<EF>,
     d_accum: DeviceBuffer<u64>,
@@ -434,6 +442,11 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
         } else {
             DeviceBuffer::new()
         };
+        let d_eq_ub_full = if total_num_cols > 0 {
+            DeviceBuffer::with_capacity(total_num_cols)
+        } else {
+            DeviceBuffer::new()
+        };
 
         Ok(Self {
             sm_count,
@@ -462,6 +475,7 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
             k_rot_ns: unsafe { EqEvalSegments::from_raw_parts(DeviceBuffer::new(), 0) },
             eq_ub_per_trace,
             d_eq_ub,
+            d_eq_ub_full,
             d_block_sums: DeviceBuffer::new(),
             d_accum,
             d_input_ptrs,
@@ -810,50 +824,51 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
             debug_assert!(self.k_rot_ns.buffer.len() > 1);
             // SAFETY: size of eq_r_ns, k_rot_ns is currently 2 * 2^{n_max - round + 1}
             unsafe {
-                // D2H copy of single EF element
                 cuda_memcpy::<true, false>(
                     tmp.as_mut_ptr() as *mut c_void,
                     self.eq_r_ns.get_ptr(0) as *const c_void,
                     size_of::<EF>(),
                 )?;
-
                 self.eq_stable.push(tmp[0]);
 
-                // D2H copy of single EF element
                 cuda_memcpy::<true, false>(
                     tmp.as_mut_ptr() as *mut c_void,
                     self.k_rot_ns.get_ptr(0) as *const c_void,
                     size_of::<EF>(),
                 )?;
-
                 self.k_rot_stable.push(tmp[0]);
             }
         }
+
+        let num_windows = self.ht_diff_idxs.len() - 1;
+        if num_windows >= SR_MLE_BATCH_THRESHOLD {
+            self.batch_sumcheck_poly_eval_batched(round)
+        } else {
+            self.batch_sumcheck_poly_eval_sequential(round)
+        }
+    }
+
+    /// Sequential per-window evaluation (original implementation).
+    /// Used when window count is below SR_MLE_BATCH_THRESHOLD.
+    fn batch_sumcheck_poly_eval_sequential(
+        &mut self,
+        round: usize,
+    ) -> Result<[EF; STACKED_REDUCTION_S_DEG], StackedReductionError> {
+        let l_skip = self.l_skip;
         let mut s_evals_batch = Vec::with_capacity(self.ht_diff_idxs.len() - 1);
         for window in self.ht_diff_idxs.windows(2) {
             let window_len = window[1] - window[0];
-            // SAFETY: in bounds by construction of ht_diff_idxs
             let unstacked_cols_ptr = unsafe { self.d_unstacked_cols.as_ptr().add(window[0]) };
-            // 2 per column for (eq, k_rot)
-            // SAFETY: in bounds by construction of lambda_pows
             let lambda_pows_ptr = unsafe { self.d_lambda_pows.as_ptr().add(2 * window[0]) };
-
             let log_height = self.unstacked_cols[window[0]].log_height as usize;
 
-            // Zero-initialize accumulator for atomic adds
             self.d_accum
                 .fill_zero()
                 .map_err(StackedReductionError::FillZero)?;
 
             if log_height < l_skip + round {
-                // We are in the eq, k_rot stable regime
-                // This includes all n < 0 cases
-                // In this case, the `s` poly contribution is a constant and we don't need to
-                // interpolate
                 let eq_r = self.eq_stable[log_height];
                 let k_rot_r = self.k_rot_stable[log_height];
-                // PERF[jpw]: most of eq_ub can be incorporated into eq_stable, k_rot_stable, so
-                // this transfer can be minimized.
                 let eq_ub_slice = &self.eq_ub_per_trace[window[0]..window[1]];
                 if eq_ub_slice.len() > self.d_eq_ub.len() {
                     self.d_eq_ub = DeviceBuffer::with_capacity(eq_ub_slice.len());
@@ -879,9 +894,6 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
             } else {
                 let hypercube_dim = log_height - l_skip - round;
                 let num_y = 1 << hypercube_dim;
-                // Allow the CUDA launcher to auto-tune grid.y (thread_window_stride) based on
-                // (num_y, window_len) and device SM count.
-
                 let stacked_height = self.stacked_height(round);
                 unsafe {
                     stacked_reduction_sumcheck_mle_round(
@@ -900,7 +912,6 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
                 };
             }
 
-            // D2H copy and reduce modulo P
             let h_accum = self.d_accum.to_host()?;
             let evals = reduce_raw_u64_to_ef(&h_accum);
             s_evals_batch.push(evals);
@@ -909,6 +920,100 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
         Ok(from_fn(|i| {
             s_evals_batch.iter().map(|evals| evals[i]).sum::<EF>()
         }))
+    }
+
+    /// Batched evaluation: all windows in one or few kernel launches per round.
+    /// Used when window count exceeds SR_MLE_BATCH_THRESHOLD.
+    fn batch_sumcheck_poly_eval_batched(
+        &mut self,
+        round: usize,
+    ) -> Result<[EF; STACKED_REDUCTION_S_DEG], StackedReductionError> {
+        let l_skip = self.l_skip;
+        let stacked_height = self.stacked_height(round);
+
+        // Upload full eq_ub_per_trace to device (once per round)
+        self.eq_ub_per_trace[..].copy_to(&mut self.d_eq_ub_full)?;
+
+        // Classify windows into degenerate vs non-degenerate
+        let mut degen_windows: Vec<SrMleDegenerateWindowCtx> = Vec::new();
+        let mut nondeg_groups: BTreeMap<u32, Vec<SrMleNondegWindowCtx>> = BTreeMap::new();
+
+        for window in self.ht_diff_idxs.windows(2) {
+            let col_start = window[0];
+            let window_len = window[1] - window[0];
+            let log_height = self.unstacked_cols[col_start].log_height as usize;
+
+            if log_height < l_skip + round {
+                degen_windows.push(SrMleDegenerateWindowCtx {
+                    col_start: col_start as u32,
+                    window_len: window_len as u32,
+                    eq_r: self.eq_stable[log_height],
+                    k_rot_r: self.k_rot_stable[log_height],
+                });
+            } else {
+                let num_y = 1u32 << (log_height - l_skip - round);
+                nondeg_groups
+                    .entry(num_y)
+                    .or_default()
+                    .push(SrMleNondegWindowCtx {
+                        col_start: col_start as u32,
+                        window_len: window_len as u32,
+                    });
+            }
+        }
+
+        // Zero accumulator ONCE for this round
+        self.d_accum
+            .fill_zero()
+            .map_err(StackedReductionError::FillZero)?;
+
+        // Launch degenerate batched kernel
+        if !degen_windows.is_empty() {
+            let d_windows = degen_windows.to_device()?;
+            let shift_factor = (l_skip + round) as u32;
+            unsafe {
+                sr_mle_degenerate_batched(
+                    &self.d_q_eval_ptrs,
+                    &self.d_eq_ub_full,
+                    &self.d_unstacked_cols,
+                    &self.d_lambda_pows,
+                    &mut self.d_accum,
+                    &d_windows,
+                    stacked_height as u32,
+                    degen_windows.len() as u32,
+                    shift_factor,
+                )
+                .map_err(StackedReductionError::SumcheckMleRoundDegenerate)?;
+            }
+        }
+
+        // Launch non-degenerate batched kernel (per num_y group)
+        for (&num_y, windows) in &nondeg_groups {
+            let d_windows = windows.to_device()?;
+            let total_cols: u32 = windows.iter().map(|w| w.window_len).sum();
+            unsafe {
+                sr_mle_nondeg_batched(
+                    &self.d_q_eval_ptrs,
+                    &self.eq_r_ns,
+                    &self.k_rot_ns,
+                    &self.d_unstacked_cols,
+                    &self.d_lambda_pows,
+                    &mut self.d_accum,
+                    &d_windows,
+                    stacked_height as u32,
+                    windows.len() as u32,
+                    num_y,
+                    total_cols,
+                    self.sm_count,
+                )
+                .map_err(StackedReductionError::SumcheckMleRound)?;
+            }
+        }
+
+        // Single D2H + CPU reduce
+        let h_accum = self.d_accum.to_host()?;
+        let evals = reduce_raw_u64_to_ef(&h_accum);
+        Ok(from_fn(|i| evals[i]))
     }
 
     #[instrument("stacked_reduction_fold_mle", level = "debug", skip_all, fields(round = round))]

@@ -33,6 +33,21 @@ struct UnstackedSlice {
     uint32_t stacked_col_idx;
 };
 
+// Context structs for batched MLE round kernels.
+// Must match the Rust #[repr(C)] definitions in src/cuda/stacked_reduction.rs.
+
+struct SrMleDegenerateWindowCtx {
+    uint32_t col_start;   // start index into unstacked_cols / eq_ub / lambda_pows
+    uint32_t window_len;  // number of columns in this window
+    FpExt eq_r;           // eq_stable[log_height]
+    FpExt k_rot_r;        // k_rot_stable[log_height]
+};
+
+struct SrMleNondegWindowCtx {
+    uint32_t col_start;   // start index into unstacked_cols
+    uint32_t window_len;  // number of columns in this window
+};
+
 struct UnstackedPleFoldPacket {
     const Fp *__restrict__ src;
     FpExt *__restrict__ dst;
@@ -564,6 +579,241 @@ extern "C" int _stacked_reduction_sumcheck_mle_round_degenerate(
         q_height,
         window_len,
         shift_factor
+    );
+
+    return CHECK_KERNEL();
+}
+
+// ============================================================================
+// BATCHED MLE ROUND KERNELS
+// ============================================================================
+
+// Batched degenerate: one block per window, all windows in one launch.
+// All blocks atomically accumulate into the same output buffer.
+__global__ void sr_mle_degenerate_batched_kernel(
+    const FpExt *__restrict__ const *__restrict__ q_evals,
+    const FpExt *__restrict__ eq_ub,               // full eq_ub_per_trace on device
+    const UnstackedSlice *__restrict__ unstacked_cols,
+    const FpExt *__restrict__ lambda_pows,
+    uint64_t *__restrict__ output,                 // [S_DEG * 4] atomic accumulator
+    const SrMleDegenerateWindowCtx *__restrict__ windows,
+    uint32_t q_height,
+    uint32_t num_windows,
+    uint32_t shift_factor
+) {
+    uint32_t win_idx = blockIdx.x;
+    if (win_idx >= num_windows) return;
+
+    SrMleDegenerateWindowCtx ctx = windows[win_idx];
+    uint32_t col_start = ctx.col_start;
+    uint32_t window_len = ctx.window_len;
+    FpExt eq_r = ctx.eq_r;
+    FpExt k_rot_r = ctx.k_rot_r;
+
+    extern __shared__ char smem[];
+    FpExt *shared = (FpExt *)smem;
+
+    FpExt local_sums[S_DEG];
+#pragma unroll
+    for (int i = 0; i < S_DEG; i++) {
+        local_sums[i] = FpExt(0);
+    }
+
+    for (uint32_t i = threadIdx.x; i < window_len; i += blockDim.x) {
+        uint32_t col_global = col_start + i;
+        UnstackedSlice s = unstacked_cols[col_global];
+        const FpExt *__restrict__ q = q_evals[s.commit_idx];
+
+        auto col_idx = s.stacked_col_idx;
+        auto row_idx = s.stacked_row_idx;
+        auto row_start = (row_idx >> shift_factor) << 1;
+        auto q_offset = col_idx * q_height + row_start;
+
+        auto q_0 = q[q_offset];
+        auto q_1 = q[q_offset + 1];
+        auto q_c1 = q_1 - q_0;
+
+        uint32_t b_bool = (row_idx >> (shift_factor - 1)) & 1;
+        Fp b = Fp(b_bool);
+
+        auto eq_ub_val = eq_ub[col_global];
+
+#pragma unroll
+        for (int x_int = 1; x_int <= S_DEG; ++x_int) {
+            Fp x = Fp(x_int);
+            auto eq_ub_x = eq_ub_val * eq1(x, b);
+            auto eq = eq_r * eq_ub_x;
+            auto k_rot = k_rot_r * eq_ub_x;
+
+            auto q_x = q_0 + q_c1 * x;
+
+            local_sums[x_int - 1] +=
+                (lambda_pows[2 * col_global] * eq +
+                 lambda_pows[2 * col_global + 1] * k_rot) * q_x;
+        }
+    }
+
+#pragma unroll
+    for (int idx = 0; idx < S_DEG; idx++) {
+        FpExt reduced = sumcheck::block_reduce_sum(local_sums[idx], shared);
+        if (threadIdx.x == 0) {
+            sumcheck::atomic_add_fpext_to_u64(output + idx * 4, reduced);
+        }
+        __syncthreads();
+    }
+}
+
+// Batched non-degenerate: all windows in a num_y group in one launch.
+// grid.x parallelizes over y-points, grid.y strides over flattened column space.
+__global__ void sr_mle_nondeg_batched_kernel(
+    const FpExt *__restrict__ const *__restrict__ q_evals,
+    const FpExt *__restrict__ eq_r_ns,
+    const FpExt *__restrict__ k_rot_ns,
+    const UnstackedSlice *__restrict__ unstacked_cols,
+    const FpExt *__restrict__ lambda_pows,
+    uint64_t *__restrict__ output,
+    const SrMleNondegWindowCtx *__restrict__ windows,
+    uint32_t q_height,
+    uint32_t num_windows,
+    uint32_t num_y,
+    uint32_t total_cols
+) {
+    extern __shared__ char smem[];
+    FpExt *shared = (FpExt *)smem;
+
+    FpExt local_sums[S_DEG];
+#pragma unroll
+    for (int i = 0; i < S_DEG; i++) {
+        local_sums[i] = FpExt(0);
+    }
+
+    uint32_t y_int = blockIdx.x * blockDim.x + threadIdx.x;
+    bool const active = (y_int < num_y);
+
+    if (active) {
+        uint32_t num_evals = num_y * 2;
+
+        auto eq_0 = get_eq_cube(eq_r_ns, num_evals, y_int << 1);
+        auto eq_1 = get_eq_cube(eq_r_ns, num_evals, (y_int << 1) | 1);
+        auto eq_c1 = eq_1 - eq_0;
+        auto k_rot_0 = get_eq_cube(k_rot_ns, num_evals, y_int << 1);
+        auto k_rot_1 = get_eq_cube(k_rot_ns, num_evals, (y_int << 1) | 1);
+        auto k_rot_c1 = k_rot_1 - k_rot_0;
+
+        // Stride over flattened column space [0, total_cols)
+        for (uint32_t flat_col = blockIdx.y; flat_col < total_cols;
+             flat_col += gridDim.y) {
+            // Map flat_col -> (window, col_local) via linear scan
+            uint32_t win = 0;
+            uint32_t prefix = 0;
+            while (win < num_windows - 1 &&
+                   prefix + windows[win].window_len <= flat_col) {
+                prefix += windows[win].window_len;
+                win++;
+            }
+            uint32_t col_global = windows[win].col_start + (flat_col - prefix);
+
+            UnstackedSlice s = unstacked_cols[col_global];
+            const FpExt *__restrict__ q = q_evals[s.commit_idx];
+
+            auto col_idx = s.stacked_col_idx;
+            auto row_start = (s.stacked_row_idx >> s.log_height) * num_evals;
+            auto q_offset = col_idx * q_height + row_start;
+
+            auto q_0 = q[q_offset + (y_int << 1)];
+            auto q_1 = q[q_offset + (y_int << 1) + 1];
+            auto q_c1 = q_1 - q_0;
+
+#pragma unroll
+            for (int x_int = 1; x_int <= S_DEG; ++x_int) {
+                Fp x = Fp(x_int);
+                auto q_x = q_0 + q_c1 * x;
+                auto eq = eq_0 + eq_c1 * x;
+                auto k_rot = k_rot_0 + k_rot_c1 * x;
+                uint32_t lp_idx = 2 * col_global;
+
+                local_sums[x_int - 1] +=
+                    (lambda_pows[lp_idx] * eq + lambda_pows[lp_idx + 1] * k_rot) *
+                    q_x;
+            }
+        }
+    }
+
+#pragma unroll
+    for (int idx = 0; idx < S_DEG; idx++) {
+        FpExt reduced = sumcheck::block_reduce_sum(local_sums[idx], shared);
+        if (threadIdx.x == 0) {
+            sumcheck::atomic_add_fpext_to_u64(output + idx * 4, reduced);
+        }
+        __syncthreads();
+    }
+}
+
+// Launchers for batched MLE round kernels
+
+extern "C" int _sr_mle_degenerate_batched(
+    const FpExt *const *q_evals,
+    const FpExt *eq_ub,
+    const UnstackedSlice *unstacked_cols,
+    const FpExt *lambda_pows,
+    uint64_t *output,
+    const SrMleDegenerateWindowCtx *windows,
+    uint32_t q_height,
+    uint32_t num_windows,
+    uint32_t shift_factor
+) {
+    if (num_windows == 0) return 0;
+
+    dim3 grid(num_windows);
+    dim3 block(256);
+    size_t shmem = div_ceil(256u, WARP_SIZE) * sizeof(FpExt);
+
+    sr_mle_degenerate_batched_kernel<<<grid, block, shmem>>>(
+        q_evals, eq_ub, unstacked_cols, lambda_pows, output,
+        windows, q_height, num_windows, shift_factor
+    );
+
+    return CHECK_KERNEL();
+}
+
+extern "C" int _sr_mle_nondeg_batched(
+    const FpExt *const *q_evals,
+    const FpExt *eq_r_ns,
+    const FpExt *k_rot_ns,
+    const UnstackedSlice *unstacked_cols,
+    const FpExt *lambda_pows,
+    uint64_t *output,
+    const SrMleNondegWindowCtx *windows,
+    uint32_t q_height,
+    uint32_t num_windows,
+    uint32_t num_y,
+    uint32_t total_cols,
+    uint32_t sm_count
+) {
+    if (num_windows == 0 || num_y == 0) return 0;
+
+    auto [grid, block] = kernel_launch_params(num_y, 256);
+
+    // grid.y auto-tuning: same heuristic as single-window launcher
+    constexpr uint32_t WAVES_TARGET = 4;
+    constexpr uint32_t ITERS_MIN = 4;
+    constexpr uint32_t ITERS_MAX = 16;
+
+    uint32_t stride_occ = div_ceil(sm_count * WAVES_TARGET, grid.x);
+    uint32_t stride_loop_lo = div_ceil(total_cols, ITERS_MAX);
+    uint32_t stride_loop_hi = div_ceil(total_cols, ITERS_MIN);
+
+    uint32_t lo = std::max(1u, std::max(stride_occ, stride_loop_lo));
+    uint32_t hi = std::min(std::min(total_cols, MAX_GRID_DIM), stride_loop_hi);
+    grid.y = (lo <= hi) ? lo : std::min(lo, std::min(total_cols, MAX_GRID_DIM));
+
+    assert((size_t)num_y * (size_t)total_cols < (size_t)1ull << 40);
+
+    size_t shmem = div_ceil(block.x, WARP_SIZE) * sizeof(FpExt);
+
+    sr_mle_nondeg_batched_kernel<<<grid, block, shmem>>>(
+        q_evals, eq_r_ns, k_rot_ns, unstacked_cols, lambda_pows, output,
+        windows, q_height, num_windows, num_y, total_cols
     );
 
     return CHECK_KERNEL();
