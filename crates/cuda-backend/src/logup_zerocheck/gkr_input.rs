@@ -8,7 +8,7 @@ use openvm_stark_backend::prover::{
     DeviceMultiStarkProvingKey, MatrixDimensions, ProvingContext,
 };
 use p3_field::{Field, PrimeCharacteristicRing};
-use tracing::instrument;
+use tracing::{info, instrument};
 
 use super::errors::InteractionGpuError;
 use crate::{
@@ -100,12 +100,209 @@ pub fn log_gkr_input_evals<HS: GpuHashScheme>(
     }
 
     let leaves = DeviceBuffer::<Frac<EF>>::with_capacity(total_leaves);
-    leaves.fill_zero()?;
+    leaves.fill_zero()?; // Correctness: untouched slots must be zero
     let null_preprocessed = DeviceBuffer::<F>::new();
 
+    // ====================================================================
+    // Batched GKR input evaluation
+    // ====================================================================
+    let mut gkr_batched = vec![false; trace_interactions.len()];
+    {
+        use crate::cuda::logup_zerocheck::{
+            gkr_input_eval_batched, GkrInputBlockCtx, GkrInputCtx,
+        };
+        use openvm_cuda_common::stream::current_stream_sync;
+
+        const GKR_GLOBAL_THRESHOLD: u32 = 10;
+        const GKR_TASK_SIZE: usize = 1 << 16;
+
+        // Group traces by GLOBAL
+        for is_global in [true, false] {
+            // Collect traces for this group
+            let group: Vec<(usize, &TraceInteractionMeta)> = trace_interactions
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, opt)| {
+                    let meta = opt.as_ref()?;
+                    let pk_air = &pk.per_air[meta.air_idx];
+                    let bs = pk_air.other_data.interaction_rules.inner.buffer_size;
+                    if (bs > GKR_GLOBAL_THRESHOLD) == is_global {
+                        Some((idx, meta))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if group.is_empty() {
+                continue;
+            }
+
+            // Build BlockCtx and trace contexts
+            let mut block_ctxs: Vec<GkrInputBlockCtx> = Vec::new();
+            let mut trace_ctxs: Vec<GkrInputCtx> = Vec::new();
+            let mut _keepalive_intermed: Vec<DeviceBuffer<EF>> = Vec::new();
+            let mut _keepalive_partitions: Vec<DeviceBuffer<u64>> = Vec::new();
+            let mut _keepalive_pubvals: Vec<DeviceBuffer<F>> = Vec::new();
+            // Track lifted traces: (group_local_idx, tmp_buf_idx, meta data for lifting)
+            let mut lifted_traces: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
+            let mut _keepalive_tmp_output: Vec<DeviceBuffer<Frac<EF>>> = Vec::new();
+
+            for (local_idx, (trace_idx, meta)) in group.iter().enumerate() {
+                let air_ctx = &ctx.per_trace[meta.trace_idx].1;
+                let pk_air = &pk.per_air[meta.air_idx];
+                let rules = &pk_air.other_data.interaction_rules;
+                let num_interactions = pk_air.vk.symbolic_constraints.interactions.len();
+                let height = air_ctx.height();
+
+                let blocks_per_trace = if is_global {
+                    ((GKR_TASK_SIZE + 255) / 256) as u32
+                } else {
+                    ((height + 255) / 256).max(1) as u32
+                };
+
+                for b in 0..blocks_per_trace {
+                    block_ctxs.push(GkrInputBlockCtx {
+                        local_block_idx_x: b,
+                        air_idx: local_idx as u32,
+                    });
+                }
+
+                // Partition pointers
+                let partition_ptrs: Vec<u64> = air_ctx
+                    .cached_mains
+                    .iter()
+                    .map(|c| c.trace.buffer().as_ptr() as u64)
+                    .chain(std::iter::once(air_ctx.common_main.buffer().as_ptr() as u64))
+                    .collect();
+                let d_partition = partition_ptrs.to_device()?;
+
+                let d_pub = if air_ctx.public_values.is_empty() {
+                    DeviceBuffer::<F>::new()
+                } else {
+                    air_ctx.public_values.to_device()?
+                };
+
+                let d_intermediates_ptr = if is_global && rules.inner.buffer_size > 0 {
+                    let cap = GKR_TASK_SIZE * rules.inner.buffer_size as usize;
+                    let buf = DeviceBuffer::<EF>::with_capacity(cap);
+                    let ptr = buf.as_mut_ptr();
+                    _keepalive_intermed.push(buf);
+                    ptr
+                } else {
+                    std::ptr::null_mut()
+                };
+
+                // Output pointer
+                let slice = meta.layout_slices.first().unwrap();
+                debug_assert_eq!(slice.col_idx, 0);
+                let dst_offset = slice.row_idx;
+                let lifted_height = max(height, 1 << l_skip);
+                let needs_lifting = height != lifted_height;
+
+                let d_output = if needs_lifting {
+                    let required = height * num_interactions;
+                    let buf = DeviceBuffer::<Frac<EF>>::with_capacity(required);
+                    let ptr = buf.as_mut_ptr();
+                    let tmp_idx = _keepalive_tmp_output.len();
+                    _keepalive_tmp_output.push(buf);
+                    lifted_traces.push((
+                        local_idx, tmp_idx, dst_offset, lifted_height, num_interactions,
+                    ));
+                    ptr
+                } else {
+                    unsafe { leaves.as_mut_ptr().add(dst_offset) }
+                };
+
+                let d_preprocessed_ptr = pk_air
+                    .preprocessed_data
+                    .as_ref()
+                    .map(|cd| cd.trace.buffer().as_ptr())
+                    .unwrap_or(std::ptr::null());
+
+                let num_rows_per_tile = height.div_ceil(GKR_TASK_SIZE).max(1);
+
+                trace_ctxs.push(GkrInputCtx {
+                    d_preprocessed: d_preprocessed_ptr,
+                    d_main: d_partition.as_ptr(),
+                    d_public_values: d_pub.as_ptr(),
+                    d_rules: rules.inner.d_rules.as_raw_ptr(),
+                    d_used_nodes: rules.inner.d_used_nodes.as_ptr(),
+                    d_pair_idxs: rules.d_pair_idxs.as_ptr(),
+                    used_nodes_len: rules.inner.d_used_nodes.len(),
+                    permutation_height: height as u32,
+                    num_rows_per_tile: num_rows_per_tile as u32,
+                    buffer_size: rules.inner.buffer_size,
+                    blocks_per_trace,
+                    d_intermediates: d_intermediates_ptr,
+                    d_output,
+                });
+
+                _keepalive_partitions.push(d_partition);
+                _keepalive_pubvals.push(d_pub);
+            }
+
+            let total_blocks = block_ctxs.len() as u32;
+            let d_block_ctxs = block_ctxs.to_device()?;
+            let d_trace_ctxs = trace_ctxs.to_device()?;
+
+            unsafe {
+                gkr_input_eval_batched(
+                    is_global,
+                    &d_block_ctxs,
+                    &d_trace_ctxs,
+                    d_challenges,
+                    total_blocks,
+                )?;
+            }
+
+            // Sync before lifting
+            current_stream_sync()?;
+
+            // Post-kernel lifting for lifted traces
+            for &(_local_idx, tmp_idx, dst_offset, lifted_height, num_interactions) in
+                &lifted_traces
+            {
+                let tmp_buf = &_keepalive_tmp_output[tmp_idx];
+                let leaves_ptr = unsafe { leaves.as_mut_ptr().add(dst_offset) };
+                let height = tmp_buf.len() / num_interactions;
+                let norm_factor_denom = lifted_height / height;
+                let norm_factor = F::from_usize(norm_factor_denom).inverse();
+                unsafe {
+                    frac_vector_scalar_multiply_ext_fp(
+                        tmp_buf.as_mut_ptr(),
+                        norm_factor,
+                        tmp_buf.len() as u32,
+                    )?;
+                    frac_matrix_vertically_repeat(
+                        leaves_ptr,
+                        tmp_buf.as_ptr(),
+                        num_interactions as u32,
+                        lifted_height as u32,
+                        height as u32,
+                    )?;
+                }
+            }
+
+            // Mark all traces in this group as batched
+            for (trace_idx, _) in &group {
+                gkr_batched[*trace_idx] = true;
+            }
+        }
+
+        let batched_count = gkr_batched.iter().filter(|&&b| b).count();
+        if batched_count > 0 {
+            info!("batched gkr input: {batched_count} traces");
+        }
+    }
+
+    // Sequential fallback for any non-batched traces
     let mut d_partition_ptrs = DeviceBuffer::<u64>::new();
     let mut tmp = DeviceBuffer::<Frac<EF>>::new();
-    for meta in trace_interactions.iter().flatten() {
+    for (meta_idx, meta) in trace_interactions.iter().enumerate().filter_map(|(i, m)| m.as_ref().map(|m| (i, m))) {
+        if gkr_batched[meta_idx] {
+            continue;
+        }
         let air_ctx = &ctx.per_trace[meta.trace_idx].1;
         let pk_air = &pk.per_air[meta.air_idx];
 

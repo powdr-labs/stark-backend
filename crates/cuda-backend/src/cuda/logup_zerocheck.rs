@@ -163,6 +163,38 @@ pub struct LogupRound0BlockCtx {
 
 // end of types for batched round-0 logup
 
+// Types for batched GKR input evaluation:
+
+/// Per-trace context for batched GKR input evaluation.
+/// Must match the CUDA `GkrInputCtx` struct in `gkr_input.cu`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct GkrInputCtx {
+    pub d_preprocessed: *const F,
+    pub d_main: *const u64,
+    pub d_public_values: *const F,
+    pub d_rules: *const std::ffi::c_void,
+    pub d_used_nodes: *const usize,
+    pub d_pair_idxs: *const u32,
+    pub used_nodes_len: usize,
+    pub permutation_height: u32,
+    pub num_rows_per_tile: u32,
+    pub buffer_size: u32,
+    pub blocks_per_trace: u32,
+    pub d_intermediates: *mut EF,
+    pub d_output: *mut Frac<EF>,
+}
+
+/// Per-block mapping for batched GKR input evaluation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct GkrInputBlockCtx {
+    pub local_block_idx_x: u32,
+    pub air_idx: u32,
+}
+
+// end of types for batched GKR input evaluation
+
 extern "C" {
     // gkr.cu
     fn _frac_build_tree_layer(
@@ -405,6 +437,15 @@ extern "C" {
         out_grid_x: *mut u32,
         out_block_x: *mut u32,
     );
+
+    // gkr_input.cu (batched)
+    fn _gkr_input_eval_batched(
+        is_global: bool,
+        d_block_ctxs: *const GkrInputBlockCtx,
+        d_trace_ctxs: *const GkrInputCtx,
+        d_challenges: *const EF,
+        total_blocks: u32,
+    ) -> i32;
 
     // zerocheck_round0.cu
     pub fn _zerocheck_r0_temp_sums_buffer_size(
@@ -1640,4 +1681,28 @@ pub fn logup_r0_batched_launch_params(
         );
     }
     (grid_x, block_x)
+}
+
+// ============================================================================
+// Batched GKR input evaluation
+// ============================================================================
+
+/// Launch the batched GKR input evaluation kernel.
+///
+/// # Safety
+/// All device pointers in contexts must be valid.
+pub unsafe fn gkr_input_eval_batched(
+    is_global: bool,
+    d_block_ctxs: &DeviceBuffer<GkrInputBlockCtx>,
+    d_trace_ctxs: &DeviceBuffer<GkrInputCtx>,
+    d_challenges: &DeviceBuffer<EF>,
+    total_blocks: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_gkr_input_eval_batched(
+        is_global,
+        d_block_ctxs.as_ptr(),
+        d_trace_ctxs.as_ptr(),
+        d_challenges.as_ptr(),
+        total_blocks,
+    ))
 }
