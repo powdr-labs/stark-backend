@@ -19,8 +19,8 @@ use openvm_stark_backend::{
     AirRef, ColumnsAir, PartitionedBaseAir, StarkEngine,
 };
 use openvm_stark_sdk::config::{
-    app_params_with_100_bits_security,
-    baby_bear_poseidon2::BabyBearPoseidon2RefEngine,
+    app_params_with_100_bits_security, baby_bear_poseidon2::BabyBearPoseidon2RefEngine,
+    MAX_APP_LOG_STACKED_HEIGHT,
 };
 use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues};
 use p3_baby_bear::BabyBear;
@@ -176,12 +176,12 @@ fn main() {
     //   - Must be >= log_trace_height (individual traces must fit)
     //   - Total stacked cells = w_stack * 2^log_stacked_height must be >= actual_total_cells
     //   - Must be > WHIR log_final_poly_len (10) to have at least 1 WHIR round
-    let w_stack: usize = 2048;
+    let w_stack: usize = 2048; // matches app_params_with_100_bits_security
     let min_for_whir = 15; // WHIR_MAX_LOG_FINAL_POLY_LEN (10) + DEFAULT_K_WHIR (4) + 1
     let log_stacked_height = log2_ceil_usize(actual_total_cells.div_ceil(w_stack))
         .max(log_trace_height)
         .max(min_for_whir)
-        .min(24);
+        .min(MAX_APP_LOG_STACKED_HEIGHT);
 
     let params = app_params_with_100_bits_security(log_stacked_height);
     let engine: BabyBearPoseidon2RefEngine = StarkEngine::new(params);
