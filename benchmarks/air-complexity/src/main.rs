@@ -22,10 +22,15 @@ use std::time::Instant;
 use clap::Parser;
 use openvm_stark_backend::{
     interaction::InteractionBuilder,
+    keygen::types::MultiStarkProvingKey,
+    proof::Proof,
     prover::{AirProvingContext, ColMajorMatrix, DeviceDataTransporter, ProvingContext},
     AirRef, ColumnsAir, PartitionedBaseAir, StarkEngine,
 };
-use openvm_stark_sdk::config::app_params_with_100_bits_security;
+use openvm_stark_sdk::config::{
+    app_params_with_100_bits_security,
+    baby_bear_poseidon2::{BabyBearPoseidon2Config, BabyBearPoseidon2RefEngine},
+};
 use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues};
 use p3_baby_bear::BabyBear;
 use p3_field::PrimeCharacteristicRing;
@@ -33,6 +38,7 @@ use p3_matrix::Matrix;
 use p3_util::log2_ceil_usize;
 
 type F = BabyBear;
+type SC = BabyBearPoseidon2Config;
 
 #[derive(Parser)]
 #[command(about = "Benchmark proving time vs AIR complexity")]
@@ -108,6 +114,60 @@ impl<AB: AirBuilder + InteractionBuilder> Air<AB> for BenchmarkAir {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Backend-specific proving
+// ---------------------------------------------------------------------------
+
+#[cfg(not(feature = "cuda"))]
+fn prove(
+    params: &openvm_stark_backend::SystemParams,
+    pk: &MultiStarkProvingKey<SC>,
+    cpu_traces: Vec<ColMajorMatrix<F>>,
+) -> Proof<SC> {
+    let engine: BabyBearPoseidon2RefEngine = StarkEngine::new(params.clone());
+    let d_pk = engine.device().transport_pk_to_device(pk);
+    let ctx = ProvingContext::new(
+        cpu_traces
+            .into_iter()
+            .enumerate()
+            .map(|(i, trace)| (i, AirProvingContext::simple_no_pis(trace)))
+            .collect(),
+    );
+    engine.prove(&d_pk, ctx).unwrap()
+}
+
+#[cfg(feature = "cuda")]
+fn prove(
+    params: &openvm_stark_backend::SystemParams,
+    pk: &MultiStarkProvingKey<SC>,
+    cpu_traces: Vec<ColMajorMatrix<F>>,
+) -> Proof<SC> {
+    use openvm_cuda_backend::{prelude::SC as CudaSC, BabyBearPoseidon2GpuEngine, GpuBackend};
+
+    let engine = BabyBearPoseidon2GpuEngine::new(params.clone());
+    let device = engine.device();
+    let d_pk =
+        <_ as DeviceDataTransporter<CudaSC, GpuBackend>>::transport_pk_to_device(device, pk);
+    let ctx = ProvingContext::new(
+        cpu_traces
+            .iter()
+            .enumerate()
+            .map(|(i, trace)| {
+                let d_trace =
+                    <_ as DeviceDataTransporter<CudaSC, GpuBackend>>::transport_matrix_to_device(
+                        device, trace,
+                    );
+                (i, AirProvingContext::simple_no_pis(d_trace))
+            })
+            .collect(),
+    );
+    engine.prove(&d_pk, ctx).unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 fn ratio_str(actual: usize, target: f64) -> String {
     if (actual as f64 - target).abs() < 0.5 {
@@ -192,19 +252,26 @@ fn run(args: &Args) {
     println!("  bus_interaction_msgs:   {bus_interaction_messages}");
 
     // Create AIRs
-    let airs: Vec<AirRef<_>> = (0..args.num_airs)
+    let airs: Vec<AirRef<SC>> = (0..args.num_airs)
         .map(|_| {
             Arc::new(BenchmarkAir {
                 num_columns: args.cols_per_air,
                 total_constraints: constraints_per_air,
                 total_interaction_pairs: interaction_pairs_per_air,
-            }) as AirRef<_>
+            }) as AirRef<SC>
         })
         .collect();
 
     let params = app_params_with_100_bits_security(args.log_stacked_height);
 
-    // Generate zero traces on CPU (col-major, needed by both backends)
+    // Keygen (always CPU)
+    let keygen_engine: BabyBearPoseidon2RefEngine = StarkEngine::new(params.clone());
+    println!("\nKeygen...");
+    let start = Instant::now();
+    let (pk, vk) = keygen_engine.keygen(&airs);
+    println!("  time: {:?}", start.elapsed());
+
+    // Generate zero traces on CPU
     let cpu_traces: Vec<ColMajorMatrix<F>> = (0..args.num_airs)
         .map(|_| {
             ColMajorMatrix::new(
@@ -214,81 +281,16 @@ fn run(args: &Args) {
         })
         .collect();
 
-    #[cfg(feature = "cuda")]
-    {
-        use openvm_cuda_backend::{prelude::SC, BabyBearPoseidon2GpuEngine, GpuBackend};
+    // Prove (backend-specific)
+    println!("Proving...");
+    let start = Instant::now();
+    let proof = prove(&params, &pk, cpu_traces);
+    let prove_time = start.elapsed();
+    println!("  time: {prove_time:?}");
 
-        let engine = BabyBearPoseidon2GpuEngine::new(params);
-
-        // Keygen (CPU)
-        println!("\nKeygen...");
-        let start = Instant::now();
-        let (pk, vk) = engine.keygen(&airs);
-        println!("  time: {:?}", start.elapsed());
-
-        // Transport PK and traces to GPU
-        let device = engine.device();
-        let d_pk =
-            <_ as DeviceDataTransporter<SC, GpuBackend>>::transport_pk_to_device(device, &pk);
-        let ctx = ProvingContext::new(
-            cpu_traces
-                .iter()
-                .enumerate()
-                .map(|(i, trace)| {
-                    let d_trace =
-                        <_ as DeviceDataTransporter<SC, GpuBackend>>::transport_matrix_to_device(
-                            device, trace,
-                        );
-                    (i, AirProvingContext::simple_no_pis(d_trace))
-                })
-                .collect(),
-        );
-
-        // Prove (GPU)
-        println!("Proving...");
-        let start = Instant::now();
-        let proof = engine.prove(&d_pk, ctx).unwrap();
-        let prove_time = start.elapsed();
-        println!("  time: {prove_time:?}");
-
-        // Verify
-        println!("Verifying...");
-        let start = Instant::now();
-        engine.verify(&vk, &proof).unwrap();
-        println!("  time: {:?}", start.elapsed());
-    }
-
-    #[cfg(not(feature = "cuda"))]
-    {
-        use openvm_stark_sdk::config::baby_bear_poseidon2::BabyBearPoseidon2RefEngine;
-
-        let engine: BabyBearPoseidon2RefEngine = StarkEngine::new(params);
-
-        // Keygen
-        println!("\nKeygen...");
-        let start = Instant::now();
-        let (pk, vk) = engine.keygen(&airs);
-        println!("  time: {:?}", start.elapsed());
-
-        // Prove (CPU)
-        let ctx = ProvingContext::new(
-            cpu_traces
-                .into_iter()
-                .enumerate()
-                .map(|(i, trace)| (i, AirProvingContext::simple_no_pis(trace)))
-                .collect(),
-        );
-        let d_pk = engine.device().transport_pk_to_device(&pk);
-        println!("Proving...");
-        let start = Instant::now();
-        let proof = engine.prove(&d_pk, ctx).unwrap();
-        let prove_time = start.elapsed();
-        println!("  time: {prove_time:?}");
-
-        // Verify
-        println!("Verifying...");
-        let start = Instant::now();
-        engine.verify(&vk, &proof).unwrap();
-        println!("  time: {:?}", start.elapsed());
-    }
+    // Verify (always CPU)
+    println!("Verifying...");
+    let start = Instant::now();
+    keygen_engine.verify(&vk, &proof).unwrap();
+    println!("  time: {:?}", start.elapsed());
 }
