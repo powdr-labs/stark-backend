@@ -585,3 +585,323 @@ pub fn evaluate_round0_zerocheck_batched<HS: GpuHashScheme>(
 
     Ok(all_results)
 }
+
+// ============================================================================
+// Batched round-0 logup
+// ============================================================================
+
+/// Per-trace logup ruleset built at proving time.
+/// Owns the device buffers for rules and weights.
+struct LogupRuleset {
+    d_rules: DeviceBuffer<u128>,
+    d_numer_weights: DeviceBuffer<EF>,
+    d_denom_weights: DeviceBuffer<EF>,
+    denom_sum_init: EF,
+    buffer_size: u32,
+}
+
+/// Build the logup ruleset for a single trace (CPU rule compilation + H2D upload).
+/// This is the same logic as `evaluate_round0_interactions_gpu` L167-216, extracted.
+fn build_logup_ruleset<HS: GpuHashScheme>(
+    pk_air: &DeviceStarkProvingKey<GenericGpuBackend<HS>>,
+    eq_3bs: &[EF],
+    beta_pows: &[EF],
+) -> Result<LogupRuleset, Round0EvalError> {
+    use p3_field::Field;
+
+    let symbolic = SymbolicConstraints::from(&pk_air.vk.symbolic_constraints);
+    let mut dag_builder = SymbolicDagBuilder::new();
+    let mut sorted_used_dag_idxs = Vec::new();
+    for interaction in &symbolic.interactions {
+        let count = dag_builder.add_expr(&interaction.count);
+        sorted_used_dag_idxs.push(count);
+        sorted_used_dag_idxs.extend(
+            interaction
+                .message
+                .iter()
+                .map(|field_expr| dag_builder.add_expr(field_expr)),
+        );
+    }
+    sorted_used_dag_idxs.sort();
+    sorted_used_dag_idxs.dedup();
+    let dag = SymbolicExpressionDag {
+        nodes: dag_builder.nodes,
+        constraint_idx: sorted_used_dag_idxs,
+    };
+    let rules = SymbolicRulesGpu::new(&dag, true);
+    let mut numer_weights = vec![EF::ZERO; rules.rules.len()];
+    let mut denom_weights = vec![EF::ZERO; rules.rules.len()];
+    let mut denom_sum_init = EF::ZERO;
+    for (interaction_idx, interaction) in symbolic.interactions.iter().enumerate() {
+        let count_dag_idx =
+            dag_builder.expr_to_idx[&(&interaction.count as *const SymbolicExpression<_>)];
+        let count_rule_idx = rules.dag_idx_to_rule_idx[&count_dag_idx];
+        numer_weights[count_rule_idx] += eq_3bs[interaction_idx];
+        denom_sum_init += eq_3bs[interaction_idx]
+            * beta_pows[interaction.message.len()]
+            * F::from_u32(interaction.bus_index as u32 + 1);
+
+        for (message_idx, message) in interaction.message.iter().enumerate() {
+            let message_dag_idx =
+                dag_builder.expr_to_idx[&(message as *const SymbolicExpression<_>)];
+            let message_rule_idx = rules.dag_idx_to_rule_idx[&message_dag_idx];
+            denom_weights[message_rule_idx] += eq_3bs[interaction_idx] * beta_pows[message_idx];
+        }
+    }
+    let encoded_rules = rules.rules.iter().map(|c| c.encode()).collect_vec();
+    let d_rules = encoded_rules.to_device().map_err(Round0EvalError::Copy)?;
+    let d_numer_weights = numer_weights.to_device().map_err(Round0EvalError::Copy)?;
+    let d_denom_weights = denom_weights.to_device().map_err(Round0EvalError::Copy)?;
+    let buffer_size: u32 = rules.buffer_size.try_into().unwrap();
+
+    Ok(LogupRuleset {
+        d_rules,
+        d_numer_weights,
+        d_denom_weights,
+        denom_sum_init,
+        buffer_size,
+    })
+}
+
+/// Evaluate batched round-0 logup interactions for a group of traces.
+///
+/// Returns `Vec<(trace_idx, evals)>` where `evals` is `Vec<Frac<EF>>` with
+/// `num_cosets * skip_domain` elements (FracExt = numer + denom).
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_round0_logup_batched<HS: GpuHashScheme>(
+    group: &[usize],
+    all_traces: &[Round0TraceInfo],
+    skip_domain: usize,
+    pk: &DeviceMultiStarkProvingKey<GenericGpuBackend<HS>>,
+    selectors_base: &[DeviceMatrix<F>],
+    eq_xis: &FxHashMap<usize, EqEvalLayers<EF>>,
+    public_values_per_trace: &[DeviceBuffer<F>],
+    ctx_per_trace: &[(usize, AirProvingContext<GenericGpuBackend<HS>>)],
+    eq_3b_per_trace: &[Vec<EF>],
+    beta_pows: &[EF],
+    memory_limit_bytes: usize,
+) -> Result<Vec<(usize, Vec<Frac<EF>>)>, Round0EvalError> {
+    use crate::cuda::logup_zerocheck::{
+        logup_r0_batched, logup_r0_batched_launch_params, LogupRound0BlockCtx, Round0LogupCtx,
+    };
+    use openvm_cuda_common::copy::MemCopyD2H;
+
+    if group.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let first = &all_traces[group[0]];
+    let num_x = first.num_x;
+    let height = first.height;
+    let num_cosets = first.num_cosets_zc + 1; // logup uses constraint_deg cosets, not deg-1
+    let omega_root = first.omega_root;
+    let skip_domain_u32 = skip_domain as u32;
+    let d_frac = num_cosets * skip_domain; // in FracExt units
+    let d_fpext = 2 * d_frac; // in FpExt units (for reduction)
+
+    // Pre-build all rulesets (CPU work, GPU is idle)
+    let rulesets: Vec<LogupRuleset> = group
+        .iter()
+        .map(|&i| {
+            let t = &all_traces[i];
+            let pk_air = &pk.per_air[t.air_idx];
+            let eq_3bs = &eq_3b_per_trace[t.trace_idx];
+            build_logup_ruleset(pk_air, eq_3bs, beta_pows)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Compute launch params from worst-case buffer_size
+    let max_buffer_size = rulesets.iter().map(|r| r.buffer_size).max().unwrap();
+    let is_global = max_buffer_size > BUFFER_THRESHOLD;
+    let needs_shmem = skip_domain_u32 > WARP_SIZE;
+    let (blocks_per_trace, threads_per_block) = logup_r0_batched_launch_params(
+        max_buffer_size,
+        skip_domain_u32,
+        num_x as u32,
+        num_cosets as u32,
+        memory_limit_bytes,
+    );
+
+    // Per-trace memory for sub-batching
+    let per_trace_bytes = |idx: usize| -> usize {
+        let rs = &rulesets[idx];
+        let tmp_sums = blocks_per_trace as usize * d_frac * std::mem::size_of::<Frac<EF>>();
+        let output = d_frac * std::mem::size_of::<Frac<EF>>();
+        let intermed = if is_global {
+            num_cosets
+                * blocks_per_trace as usize
+                * threads_per_block as usize
+                * rs.buffer_size as usize
+                * std::mem::size_of::<F>()
+        } else {
+            0
+        };
+        tmp_sums + output + intermed
+    };
+
+    let mut all_results = Vec::with_capacity(group.len());
+    let mut batch_start = 0;
+
+    while batch_start < group.len() {
+        // Sub-batch by memory
+        let mut batch_end = batch_start;
+        let mut batch_memory = 0usize;
+        while batch_end < group.len() {
+            let trace_mem = per_trace_bytes(batch_end);
+            if batch_end > batch_start && batch_memory + trace_mem > memory_limit_bytes {
+                break;
+            }
+            batch_memory += trace_mem;
+            batch_end += 1;
+        }
+        if batch_end == batch_start {
+            batch_end = batch_start + 1;
+        }
+        let sub_batch_indices = &group[batch_start..batch_end];
+        let sub_batch_rulesets = &rulesets[batch_start..batch_end];
+        let num_traces = sub_batch_indices.len();
+
+        debug!(
+            "logup_r0_batched: sub-batch of {num_traces} traces, \
+             height={height}, num_x={num_x}, num_cosets={num_cosets}, \
+             blocks_per_trace={blocks_per_trace}, is_global={is_global}"
+        );
+
+        // Build BlockCtx and segment_offsets
+        let mut block_ctxs: Vec<LogupRound0BlockCtx> = Vec::new();
+        let mut segment_offsets: Vec<u32> = vec![0];
+        let mut spatial_row_count: u32 = 0;
+        for (local_idx, _) in sub_batch_indices.iter().enumerate() {
+            let row_base = spatial_row_count;
+            for coset in 0..num_cosets as u32 {
+                for b in 0..blocks_per_trace {
+                    block_ctxs.push(LogupRound0BlockCtx {
+                        local_block_idx_x: b,
+                        air_idx: local_idx as u32,
+                        coset_idx: coset,
+                        row_base,
+                    });
+                }
+            }
+            spatial_row_count += blocks_per_trace;
+            segment_offsets.push(spatial_row_count);
+        }
+        let total_blocks = block_ctxs.len() as u32;
+        let total_spatial_rows = spatial_row_count as usize;
+
+        // Build per-trace contexts
+        let mut intermediates_keepalive: Vec<DeviceBuffer<F>> = Vec::new();
+        let mut main_parts_keepalive: Vec<DeviceBuffer<*const F>> = Vec::new();
+        let mut trace_ctxs: Vec<Round0LogupCtx> = Vec::with_capacity(num_traces);
+
+        for (_local_idx, (&trace_global_idx, rs)) in
+            sub_batch_indices.iter().zip(sub_batch_rulesets.iter()).enumerate()
+        {
+            let t = &all_traces[trace_global_idx];
+            let pk_air = &pk.per_air[t.air_idx];
+            let (_, air_ctx) = &ctx_per_trace[t.trace_idx];
+
+            let mut main_ptrs: Vec<*const F> = Vec::new();
+            for committed in &air_ctx.cached_mains {
+                main_ptrs.push(committed.trace.buffer().as_ptr());
+            }
+            main_ptrs.push(air_ctx.common_main.buffer().as_ptr());
+            let d_main_parts = main_ptrs.to_device().map_err(Round0EvalError::Copy)?;
+
+            let d_intermediates = if is_global && rs.buffer_size > 0 {
+                let cap = num_cosets
+                    * blocks_per_trace as usize
+                    * threads_per_block as usize
+                    * rs.buffer_size as usize;
+                let buf = DeviceBuffer::<F>::with_capacity(cap);
+                let ptr = buf.as_mut_ptr();
+                intermediates_keepalive.push(buf);
+                ptr
+            } else {
+                std::ptr::null_mut()
+            };
+
+            let preprocessed_ptr = pk_air
+                .preprocessed_data
+                .as_ref()
+                .map(|cd| cd.trace.buffer().as_ptr())
+                .unwrap_or(std::ptr::null());
+
+            let eq_xi_tree = &eq_xis[&t.n_lift];
+
+            trace_ctxs.push(Round0LogupCtx {
+                selectors_cube: selectors_base[t.trace_idx].buffer().as_ptr(),
+                preprocessed: preprocessed_ptr,
+                main_parts: d_main_parts.as_ptr(),
+                eq_cube: eq_xi_tree.get_ptr(t.n_lift),
+                public_values: public_values_per_trace[t.trace_idx].as_ptr(),
+                numer_weights: rs.d_numer_weights.as_ptr(),
+                denom_weights: rs.d_denom_weights.as_ptr(),
+                denom_sum_init: rs.denom_sum_init,
+                d_rules: rs.d_rules.as_raw_ptr(),
+                rules_len: rs.d_rules.len(),
+                buffer_size: rs.buffer_size,
+                d_intermediates,
+            });
+            main_parts_keepalive.push(d_main_parts);
+        }
+
+        // Upload contexts
+        let d_block_ctxs = block_ctxs.to_device().map_err(Round0EvalError::Copy)?;
+        let d_trace_ctxs = trace_ctxs.to_device().map_err(Round0EvalError::Copy)?;
+        let d_segment_offsets = segment_offsets.to_device().map_err(Round0EvalError::Copy)?;
+
+        // Allocate output buffers
+        let mut d_tmp_sums =
+            DeviceBuffer::<Frac<EF>>::with_capacity(total_spatial_rows * d_frac);
+        // Output in FpExt units for reduction (2 * d_frac FpExt elements per trace)
+        let mut d_output = DeviceBuffer::<EF>::with_capacity(num_traces * d_fpext);
+
+        // Launch
+        unsafe {
+            logup_r0_batched(
+                is_global,
+                needs_shmem,
+                &mut d_tmp_sums,
+                &mut d_output,
+                &d_block_ctxs,
+                &d_trace_ctxs,
+                &d_segment_offsets,
+                skip_domain_u32,
+                num_x as u32,
+                height as u32,
+                num_cosets as u32,
+                blocks_per_trace,
+                omega_root,
+                total_blocks,
+                threads_per_block,
+                d_fpext as u32,
+                num_traces as u32,
+            )
+            .map_err(Round0EvalError::Cuda)?;
+        }
+
+        // Single D2H
+        let all_evals_fpext = d_output.to_host().map_err(Round0EvalError::Copy)?;
+
+        // Reconstruct Frac<EF> from interleaved FpExt pairs
+        for (i, &trace_global_idx) in sub_batch_indices.iter().enumerate() {
+            let offset = i * d_fpext;
+            let fpext_slice = &all_evals_fpext[offset..offset + d_fpext];
+            let frac_evals: Vec<Frac<EF>> = (0..d_frac)
+                .map(|j| Frac {
+                    p: fpext_slice[2 * j],
+                    q: fpext_slice[2 * j + 1],
+                })
+                .collect();
+            all_results.push((all_traces[trace_global_idx].trace_idx, frac_evals));
+        }
+
+        drop(intermediates_keepalive);
+        drop(main_parts_keepalive);
+
+        batch_start = batch_end;
+    }
+
+    Ok(all_results)
+}

@@ -735,13 +735,13 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         // ====================================================================
         let skip_domain = 1 << l_skip;
         let mut zc_batched: Vec<bool> = vec![false; num_present_airs];
-        {
-            use crate::logup_zerocheck::round0::{
-                evaluate_round0_zerocheck_batched, group_batchable_traces, Round0TraceInfo,
-            };
+        use crate::logup_zerocheck::round0::{
+            evaluate_round0_zerocheck_batched, evaluate_round0_logup_batched,
+            group_batchable_traces, Round0TraceInfo,
+        };
 
-            // Classify all traces
-            let trace_infos: Vec<Round0TraceInfo> = (0..num_present_airs)
+        // Classify all traces for batching (used by both zerocheck and logup)
+        let trace_infos: Vec<Round0TraceInfo> = (0..num_present_airs)
                 .map(|trace_idx| {
                     let (air_idx, air_ctx) = &ctx.per_trace[trace_idx];
                     let n = self.n_per_trace[trace_idx];
@@ -832,11 +832,106 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     batched_start.elapsed().as_secs_f64() * 1000.0,
                 );
             }
+
+        // ====================================================================
+        // Batched logup round 0 for small (coset-parallel) traces.
+        // Same grouping as zerocheck but with per-trace rule building.
+        // ====================================================================
+        let mut logup_batched: Vec<bool> = vec![false; num_present_airs];
+        {
+            // Group by (num_x, height, num_cosets_logup) — note: logup uses constraint_deg cosets
+            let mut logup_groups: FxHashMap<(usize, usize, usize), Vec<usize>> =
+                FxHashMap::default();
+            for (i, t) in trace_infos.iter().enumerate() {
+                if t.is_batchable(skip_domain)
+                    && !self.eq_3b_per_trace[t.trace_idx].is_empty()
+                {
+                    let num_cosets_logup = t.local_constraint_deg;
+                    if num_cosets_logup > 0 {
+                        logup_groups
+                            .entry((t.num_x, t.height, num_cosets_logup))
+                            .or_default()
+                            .push(i);
+                    }
+                }
+            }
+
+            if !logup_groups.is_empty() {
+                let logup_batched_start = std::time::Instant::now();
+                let mut total_logup_batched = 0usize;
+                for (_key, group_indices) in &logup_groups {
+                    let results = evaluate_round0_logup_batched(
+                        group_indices,
+                        &trace_infos,
+                        skip_domain,
+                        self.pk,
+                        &selectors_base,
+                        &self.eq_xis,
+                        &self.public_values_per_trace,
+                        &ctx.per_trace,
+                        &self.eq_3b_per_trace,
+                        &self.beta_pows,
+                        self.memory_limit_bytes,
+                    )
+                    .map_err(LogupZerocheckError::Round0Eval)?;
+
+                    // Post-process: rearrange and interpolate
+                    for (trace_idx, frac_evals) in results {
+                        let t = &trace_infos[trace_idx];
+                        let num_cosets_logup = t.local_constraint_deg;
+                        let omega_root = t.omega_root;
+                        let n = self.n_per_trace[trace_idx];
+
+                        let (mut numer, denom): (Vec<EF>, Vec<EF>) =
+                            frac_evals.into_iter().map(|frac| (frac.p, frac.q)).unzip();
+
+                        // Normalize numerator for lifted traces
+                        if n.is_negative() {
+                            let norm_factor =
+                                F::from_u32(1 << n.unsigned_abs()).inverse();
+                            for s in &mut numer {
+                                *s *= norm_factor;
+                            }
+                        }
+
+                        let mut numer_values = EF::zero_vec(num_cosets_logup << l_skip);
+                        let mut denom_values = EF::zero_vec(num_cosets_logup << l_skip);
+                        for coset_idx in 0..num_cosets_logup {
+                            for i in 0..1 << l_skip {
+                                let src = (coset_idx << l_skip) + i;
+                                let dst = i * num_cosets_logup + coset_idx;
+                                numer_values[dst] = numer[src];
+                                denom_values[dst] = denom[src];
+                            }
+                        }
+                        // Logup uses cosets 1, g^1, g^2, ... (init = 1, shift = omega_root)
+                        batch_sp_poly[2 * trace_idx] =
+                            UnivariatePoly::from_geometric_cosets_evals_idft(
+                                RowMajorMatrix::new(numer_values, num_cosets_logup),
+                                omega_root,
+                                F::ONE,
+                            );
+                        batch_sp_poly[2 * trace_idx + 1] =
+                            UnivariatePoly::from_geometric_cosets_evals_idft(
+                                RowMajorMatrix::new(denom_values, num_cosets_logup),
+                                omega_root,
+                                F::ONE,
+                            );
+                        logup_batched[trace_idx] = true;
+                    }
+                    total_logup_batched += group_indices.len();
+                }
+                info!(
+                    "batched logup round0: {total_logup_batched} traces in {} groups, {:.1}ms",
+                    logup_groups.len(),
+                    logup_batched_start.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
         }
 
         // Loop through one AIR at a time for:
         // - zerocheck: only non-batched traces
-        // - logup: ALL traces
+        // - logup: only non-batched traces
         for (trace_idx, ((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs)) in izip!(
             &ctx.per_trace,
             &self.n_per_trace,
@@ -943,6 +1038,11 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
 
             // PERF: we could use an interaction-specific constraint degree here
             let num_cosets_logup = local_constraint_deg;
+
+            // Skip logup if already handled by batched path
+            if logup_batched[trace_idx] {
+                // Logup result already written to batch_sp_poly by the batched path above.
+            } else {
             let sum = evaluate_round0_interactions_gpu(
                 single_pk,
                 &single_air_constraints,
@@ -992,6 +1092,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     F::ONE, // init = 1 for identity coset
                 );
             }
+            } // end of `if !logup_batched[trace_idx]` else block
         }
         self.mem
             .emit_metrics_with_label("prover.batch_constraints.round0");
