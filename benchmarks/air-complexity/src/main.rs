@@ -7,7 +7,7 @@
 //!
 //! Usage:
 //!   cargo run -p openvm-benchmark-air-complexity --release -- \
-//!     --num-airs 4 --cols-per-air 100 --interactions-per-air 20 --total-cells 16777216
+//!     --num-airs 4 --cols-per-air 100 --interactions-per-air 20 --log-total-cells 24
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -51,10 +51,10 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     interactions_per_air: usize,
 
-    /// Total trace cells across all AIRs. Actual count may be slightly larger
-    /// due to rounding trace height to a power of 2.
+    /// Log2 of total trace cells across all AIRs. Actual count may be slightly
+    /// larger due to rounding trace height to a power of 2.
     #[arg(long)]
-    total_cells: usize,
+    log_total_cells: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +117,8 @@ fn main() {
     );
 
     // Compute trace height (round up to power of 2)
-    let cells_per_air = args.total_cells / args.num_airs;
+    let total_cells = 1usize << args.log_total_cells;
+    let cells_per_air = total_cells / args.num_airs;
     let rows_per_air = cells_per_air / args.cols_per_air;
     assert!(
         rows_per_air >= 2,
