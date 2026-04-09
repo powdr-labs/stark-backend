@@ -1220,7 +1220,7 @@ pub fn evaluate_round0_logup_lockstep_batched<HS: GpuHashScheme>(
         for (local_idx, &trace_global_idx) in sub_batch_indices.iter().enumerate() {
             let base = local_idx * d_fpext;
             let frac_evals: Vec<Frac<EF>> = (0..d_frac)
-                .map(|j| Frac { p: h_output[base + j], q: h_output[base + d_frac + j] })
+                .map(|j| Frac { p: h_output[base + 2 * j], q: h_output[base + 2 * j + 1] })
                 .collect();
             all_results.push((trace_global_idx, frac_evals));
         }
