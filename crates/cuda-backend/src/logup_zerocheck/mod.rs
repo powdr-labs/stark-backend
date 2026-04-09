@@ -121,6 +121,7 @@ where
     let constraint_degree = mpk.max_constraint_degree;
     let num_traces = ctx.per_trace.len();
 
+
     // Traces are sorted
     let n_max = log2_strict_usize(ctx.per_trace[0].1.common_main.height()).saturating_sub(l_skip);
     // Gather interactions metadata, including interactions stacked layout which depends on trace

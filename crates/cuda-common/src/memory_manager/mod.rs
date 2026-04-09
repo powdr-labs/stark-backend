@@ -144,6 +144,17 @@ pub fn d_malloc(size: usize) -> Result<*mut c_void, MemoryError> {
     manager.d_malloc(size)
 }
 
+/// Pre-warm the VPMM by allocating and immediately freeing a buffer of the given size.
+/// This commits physical pages so that subsequent allocations of similar or smaller sizes
+/// avoid expensive `cuMemSetAccess` calls. Should be called once before the hot proving path.
+pub fn prewarm_pool(size: usize) -> Result<(), MemoryError> {
+    if size == 0 {
+        return Ok(());
+    }
+    let ptr = d_malloc(size)?;
+    unsafe { d_free(ptr) }
+}
+
 /// # Safety
 /// The pointer `ptr` must be a valid, previously allocated device pointer.
 /// The caller must ensure that `ptr` is not used after this function is called.
