@@ -76,7 +76,32 @@ extern "C" {
         l_skip: u32,
         round: u32,
     ) -> i32;
+
+    fn _stacked_reduction_sumcheck_mle_round_degenerate_batched(
+        q_evals: *const *const EF,
+        d_window_ctxs: *const DegenerateWindowCtx,
+        output: *mut u64,
+        q_height: u32,
+        num_windows: u32,
+        l_skip: u32,
+        round: u32,
+    ) -> i32;
 }
+
+/// Context struct for batched degenerate window kernel. Must match CUDA `DegenerateWindowCtx`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct DegenerateWindowCtx {
+    pub unstacked_cols: *const UnstackedSlice,
+    pub lambda_pows: *const EF,
+    pub eq_ub_ptr: *const EF,
+    pub window_len: u32,
+    pub eq_r: EF,
+    pub k_rot_r: EF,
+}
+
+unsafe impl Send for DegenerateWindowCtx {}
+unsafe impl Sync for DegenerateWindowCtx {}
 
 /// SP_DEG=1 round 0 kernel: computes G0, G1, G2 partial sums on identity coset only.
 ///
@@ -244,7 +269,7 @@ pub unsafe fn stacked_reduction_sumcheck_mle_round(
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn stacked_reduction_sumcheck_mle_round_degenerate(
     q_evals: &DeviceBuffer<*const EF>,
-    eq_ub_ptr: &DeviceBuffer<EF>,
+    eq_ub_ptr: *const EF,
     eq_r: EF,
     k_rot_r: EF,
     unstacked_cols: *const UnstackedSlice,
@@ -259,7 +284,7 @@ pub unsafe fn stacked_reduction_sumcheck_mle_round_degenerate(
 
     check(_stacked_reduction_sumcheck_mle_round_degenerate(
         q_evals.as_ptr(),
-        eq_ub_ptr.as_ptr(),
+        eq_ub_ptr,
         eq_r,
         k_rot_r,
         unstacked_cols,
@@ -267,6 +292,32 @@ pub unsafe fn stacked_reduction_sumcheck_mle_round_degenerate(
         output.as_mut_ptr(),
         q_height as u32,
         window_len as u32,
+        l_skip as u32,
+        round as u32,
+    ))
+}
+
+/// Batched version: launches all degenerate windows in a single kernel.
+pub unsafe fn stacked_reduction_sumcheck_mle_round_degenerate_batched(
+    q_evals: &DeviceBuffer<*const EF>,
+    d_window_ctxs: &DeviceBuffer<DegenerateWindowCtx>,
+    output: &mut DeviceBuffer<u64>,
+    q_height: usize,
+    num_windows: usize,
+    l_skip: usize,
+    round: usize,
+) -> Result<(), CudaError> {
+    if num_windows == 0 {
+        return Ok(());
+    }
+    debug_assert!(output.len() >= STACKED_REDUCTION_S_DEG * D_EF);
+
+    check(_stacked_reduction_sumcheck_mle_round_degenerate_batched(
+        q_evals.as_ptr(),
+        d_window_ctxs.as_ptr(),
+        output.as_mut_ptr(),
+        q_height as u32,
+        num_windows as u32,
         l_skip as u32,
         round as u32,
     ))
