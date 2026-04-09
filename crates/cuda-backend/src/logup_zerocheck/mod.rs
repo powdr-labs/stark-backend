@@ -671,23 +671,82 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        // Precompute logup combinations for all traces with interaction monomials
-        for (trace_idx, (air_idx, _)) in ctx.per_trace.iter().enumerate() {
-            let air_pk = &self.pk.per_air[*air_idx];
-            if air_pk.other_data.interaction_monomials.is_some()
-                && !self.eq_3b_per_trace[trace_idx].is_empty()
-            {
-                self.logup_combinations[trace_idx] = Some(
-                    compute_logup_combinations(
-                        self.pk,
-                        *air_idx,
-                        &self.d_beta_pows,
-                        &self.d_eq_3b_per_trace[trace_idx],
-                        &self.eq_3b_per_trace[trace_idx],
-                        &self.beta_pows,
-                    )
-                    .map_err(LogupZerocheckError::LogupCombinations)?,
-                );
+        // Precompute logup combinations for all traces with interaction monomials.
+        // Use parallel threads to overlap GPU kernel launches across CUDA streams.
+        {
+            let pk = self.pk;
+            let d_beta_pows = &self.d_beta_pows;
+            let d_eq_3b_per_trace = &self.d_eq_3b_per_trace;
+            let eq_3b_per_trace = &self.eq_3b_per_trace;
+            let beta_pows = &self.beta_pows;
+            let per_trace = &ctx.per_trace;
+
+            let work_items: Vec<usize> = (0..per_trace.len())
+                .filter(|&trace_idx| {
+                    let (air_idx, _) = &per_trace[trace_idx];
+                    let air_pk = &pk.per_air[*air_idx];
+                    air_pk.other_data.interaction_monomials.is_some()
+                        && !eq_3b_per_trace[trace_idx].is_empty()
+                })
+                .collect();
+
+            let results: Result<Vec<_>, _> = if work_items.len() > 100 {
+                let num_threads = 8.min(work_items.len());
+                std::thread::scope(|s| {
+                    let work_ref = &work_items;
+                    let handles: Vec<_> = (0..num_threads)
+                        .map(|tid| {
+                            s.spawn(move || -> Result<Vec<(usize, LogupCombinations)>, LogupZerocheckError> {
+                                let mut results = Vec::new();
+                                let mut idx = tid;
+                                while idx < work_ref.len() {
+                                    let trace_idx = work_ref[idx];
+                                    let (air_idx, _) = &per_trace[trace_idx];
+                                    let combo = compute_logup_combinations(
+                                        pk,
+                                        *air_idx,
+                                        d_beta_pows,
+                                        &d_eq_3b_per_trace[trace_idx],
+                                        &eq_3b_per_trace[trace_idx],
+                                        beta_pows,
+                                    )
+                                    .map_err(LogupZerocheckError::LogupCombinations)?;
+                                    results.push((trace_idx, combo));
+                                    idx += num_threads;
+                                }
+                                Ok(results)
+                            })
+                        })
+                        .collect();
+                    let mut all_results = Vec::new();
+                    for handle in handles {
+                        let thread_result =
+                            handle.join().unwrap_or_else(|e| std::panic::resume_unwind(e));
+                        all_results.extend(thread_result?);
+                    }
+                    Ok::<_, LogupZerocheckError>(all_results)
+                })
+            } else {
+                work_items
+                    .iter()
+                    .map(|&trace_idx| {
+                        let (air_idx, _) = &per_trace[trace_idx];
+                        let combo = compute_logup_combinations(
+                            pk,
+                            *air_idx,
+                            d_beta_pows,
+                            &d_eq_3b_per_trace[trace_idx],
+                            &eq_3b_per_trace[trace_idx],
+                            beta_pows,
+                        )
+                        .map_err(LogupZerocheckError::LogupCombinations)?;
+                        Ok((trace_idx, combo))
+                    })
+                    .collect()
+            };
+
+            for (trace_idx, combo) in results? {
+                self.logup_combinations[trace_idx] = Some(combo);
             }
         }
 

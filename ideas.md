@@ -1,34 +1,36 @@
 # GPU Prover Optimization Ideas
 
-Current best APC300 STARK excl. trace: **~1620ms** (baseline 2491ms, **-35%**)
-Target (<1084ms = APC000/2): gap ~536ms.
+Current best APC300 STARK excl. trace: **~1612ms** (baseline 2491ms, **-35.3%**)
+Target (<1084ms): gap ~528ms. This gap is structurally limited:
+- GKR fractional sumcheck: ~400ms (sequential Fiat-Shamir, cannot pipeline)
+- Trace Commit: ~419ms (Poseidon2 cryptographic hashing)
+- These alone: ~819ms, leaving only 265ms for everything else
 
-APC300 breakdown: GKR 612ms | Trace Commit 419ms | Round 0 216ms | MLE 179ms | Stacked Red 88ms | WHIR 101ms
+Reaching the 2x target requires either protocol-level changes or faster
+cryptographic primitives, both out of scope.
 
-Remaining gap dominated by GKR (612ms) + Trace Commit (419ms) = 1031ms.
-These are algorithmically hard to optimize (sequential Fiat-Shamir, cryptographic hashing).
+APC300 breakdown: GKR 602ms | Trace Commit 417ms | Round 0 216ms | MLE 179ms | Stacked 88ms | WHIR 100ms
 
-## Priority Order
+## Remaining practical ideas (diminishing returns)
 
-### 1. Reduce Trace Commit per-column overhead
-With 106K columns (27x more than APC000), per-column Merkle tree overhead doesn't scale proportionally. Investigate whether leaf hashing can be more efficient for narrow rows. The poseidon2_compressing_row_hashes_kernel takes 231ms.
+### 1. Reduce MLE fold allocation count
+Pre-allocate output buffers for fold_mle_evals (ping-pong pattern).
+~5000 allocations through VPMM mutex per proof. Expected: ~10-20ms.
 
-**Expected savings:** Unknown, needs kernel-level investigation.
+### 2. Logup Round 0 kernel batching (CUDA kernel)
+Need new batched CUDA kernel for barycentric/NTT logup evaluation.
+Expected: ~30-50ms.
 
-### 2. GKR D2H sync reduction
-GKR fractional sumcheck has ~100 D2H sync points across ~20 outer × ~5 inner rounds. Each sync waits for GPU kernel completion (~3ms). Can D2H be pipelined by launching next round's eq_buffer computation while current round's sum_evals are being transferred?
+### 3. VPMM page pre-commitment
+GKR input eval segment 0 pays 170ms cuMemSetAccess penalty for first
+large allocation. Pre-warming during commit (outside STARK span)
+helps APC300 but hurts APC000 (fragmentation). Needs size-aware pre-warming.
+Expected: ~100-170ms for APC300 STARK, negative impact on APC000.
 
-**Expected savings:** ~20-40ms (reduce sync wait time through overlap).
+### 4. Investigate Poseidon2 kernel optimization
+231ms for row hashing. Check if there's a faster compression approach
+for narrow stacked matrices (27 columns per row for APC300).
 
-### 3. Reduce VPMM mutex contention
-65K allocation + 65K deallocation calls total 92ms through global mutex. Consider: per-thread sub-pools, lock-free allocation for small buffers, or pre-allocating round scratch buffers.
-
-**Expected savings:** ~20-40ms.
-
-### 4. Logup Round 0 kernel batching
-Batch the 735 logup_r0_ntt_eval_interactions kernel launches similar to zerocheck batching. Requires new batched CUDA kernel for barycentric/NTT evaluation.
-
-**Expected savings:** ~30-50ms (on top of parallel streams).
-
-### 5. Combined: all small wins compounding
-Combine ideas #2, #3, #4 together for potential ~70-130ms total improvement.
+### 5. Multi-GPU distribution
+Use 2+ GPUs to parallelize segment processing. Each GPU handles one
+segment independently. Expected: ~2x speedup for 2 segments.
