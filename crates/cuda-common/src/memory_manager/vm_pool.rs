@@ -47,7 +47,10 @@ impl Default for VpmmConfig {
         Self {
             page_size: None,
             va_size: DEFAULT_VA_SIZE,
-            initial_pages: 0,
+            // Pre-commit 256 pages (~512MB with default 2MB page size) at startup.
+            // This avoids expensive cuMemSetAccess calls during the first large allocation
+            // (e.g., GKR leaves buffer), saving ~300ms on the first proof segment.
+            initial_pages: 256,
         }
     }
 }
