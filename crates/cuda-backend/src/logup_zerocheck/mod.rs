@@ -850,13 +850,21 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
 
         let gpu_outputs: Vec<Round0GpuOutput> = if num_present_airs > PARALLEL_STREAMS_THRESHOLD {
             let num_threads = NUM_ROUND0_THREADS.min(num_present_airs);
-            let chunk_size = (num_present_airs + num_threads - 1) / num_threads;
+            // Interleaved assignment: thread T gets traces T, T+N, T+2N, ...
+            // This distributes large AIRs (sorted first by height) evenly across threads,
+            // avoiding load imbalance where one thread gets all the largest AIRs.
             std::thread::scope(|s| {
-                let handles: Vec<_> = (0..num_present_airs)
-                    .step_by(chunk_size)
-                    .map(|start| {
-                        let end = (start + chunk_size).min(num_present_airs);
-                        s.spawn(move || process_range(start, end))
+                let handles: Vec<_> = (0..num_threads)
+                    .map(|thread_id| {
+                        s.spawn(move || {
+                            let mut results = Vec::new();
+                            let mut idx = thread_id;
+                            while idx < num_present_airs {
+                                results.extend(process_range(idx, idx + 1)?);
+                                idx += num_threads;
+                            }
+                            Ok::<_, LogupZerocheckError>(results)
+                        })
                     })
                     .collect();
                 let mut all_results = Vec::with_capacity(num_present_airs);
