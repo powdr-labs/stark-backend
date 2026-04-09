@@ -727,6 +727,110 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             .as_ref()
             .expect("lambda powers must be set before round-0 evaluation");
 
+        // --- Batched round-0 zerocheck ---
+        // Classify all traces and batch small ones into grouped kernel launches.
+        use crate::logup_zerocheck::round0::{
+            evaluate_round0_zerocheck_batched, group_batchable_traces, Round0TraceInfo,
+        };
+        use std::collections::HashSet;
+
+        let skip_domain = 1usize << l_skip;
+        let all_trace_infos: Vec<Round0TraceInfo> = (0..num_present_airs)
+            .map(|trace_idx| {
+                let (air_idx, air_ctx) = &ctx.per_trace[trace_idx];
+                let single_pk = &self.pk.per_air[*air_idx];
+                let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
+                let n = self.n_per_trace[trace_idx];
+                let n_lift = n.max(0) as usize;
+                let height = air_ctx.common_main.height();
+                let num_cosets_zc = local_constraint_deg.saturating_sub(1);
+                let log_large_domain = log2_ceil_usize(local_constraint_deg << l_skip);
+                let omega_root = F::two_adic_generator(log_large_domain);
+                let buffer_size_zc = single_pk.other_data.zerocheck_round0.inner.buffer_size;
+                Round0TraceInfo {
+                    trace_idx,
+                    air_idx: *air_idx,
+                    height,
+                    n_lift,
+                    num_x: 1 << n_lift,
+                    num_cosets_zc,
+                    local_constraint_deg,
+                    omega_root,
+                    buffer_size_zc,
+                }
+            })
+            .collect();
+
+        let groups = group_batchable_traces(&all_trace_infos, skip_domain);
+        let mut batched_trace_indices: HashSet<usize> = HashSet::new();
+
+        // Run batched zerocheck for each group and post-process results
+        for (_key, group_indices) in &groups {
+            if group_indices.len() < 2 {
+                // Not worth batching a single trace
+                continue;
+            }
+            let batched_results = evaluate_round0_zerocheck_batched(
+                group_indices,
+                &all_trace_infos,
+                skip_domain,
+                self.pk,
+                &selectors_base,
+                &self.eq_xis,
+                &self.public_values_per_trace,
+                &ctx.per_trace,
+                d_lambda_pows,
+                self.memory_limit_bytes,
+            )?;
+            for (trace_idx, q_evals) in batched_results {
+                let t = &all_trace_infos[trace_idx];
+                let num_cosets_zc = t.num_cosets_zc;
+                if num_cosets_zc == 0 || q_evals.is_empty() {
+                    continue;
+                }
+                // Interpolate q_evals to UnivariatePoly (same logic as Phase 2)
+                let q = {
+                    let mut values = EF::zero_vec(num_cosets_zc << l_skip);
+                    for coset_idx in 0..num_cosets_zc {
+                        for i in 0..1 << l_skip {
+                            values[i * num_cosets_zc + coset_idx] =
+                                q_evals[(coset_idx << l_skip) + i];
+                        }
+                    }
+                    UnivariatePoly::from_geometric_cosets_evals_idft(
+                        RowMajorMatrix::new(values, num_cosets_zc),
+                        t.omega_root,
+                        t.omega_root,
+                    )
+                };
+                let sp_0_deg = sumcheck_round0_deg(l_skip, t.local_constraint_deg);
+                let coeffs = (0..=sp_0_deg)
+                    .map(|i| {
+                        let mut c = -*q.coeffs().get(i).unwrap_or(&EF::ZERO);
+                        if i >= 1 << l_skip {
+                            c += q.coeffs()[i - (1 << l_skip)];
+                        }
+                        c
+                    })
+                    .collect_vec();
+                debug_assert_eq!(
+                    coeffs.iter().step_by(1 << l_skip).copied().sum::<EF>(),
+                    EF::ZERO,
+                    "Batched zerocheck sum is not zero for air_id: {}",
+                    t.air_idx
+                );
+                batch_sp_poly[2 * num_present_airs + trace_idx] = UnivariatePoly::new(coeffs);
+                batched_trace_indices.insert(trace_idx);
+            }
+        }
+        let num_batched = batched_trace_indices.len();
+        if num_batched > 0 {
+            info!(
+                "round0: batched zerocheck for {num_batched}/{num_present_airs} traces across {} groups",
+                groups.values().filter(|g| g.len() >= 2).count()
+            );
+        }
+
         // --- Phase 1: GPU kernel launches ---
         // With many small APC AIRs, launch kernels across multiple OS threads to overlap
         // on separate CUDA streams (enabled by --default-stream=per-thread compilation).
@@ -754,6 +858,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         let per_trace = &ctx.per_trace;
 
         // Process a range of trace indices, launching GPU kernels and returning DeviceBuffers.
+        // Zerocheck is SKIPPED for traces already handled by the batched path above.
         let process_range =
             |start: usize,
              end: usize|
@@ -798,22 +903,28 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     let n_lift = n.max(0) as usize;
                     let eq_xi_tree = &eq_xis_ref[&n_lift];
 
+                    // Skip zerocheck for traces already handled by batched evaluation
                     let num_cosets_zc = local_constraint_deg.saturating_sub(1);
-                    let zc_buffer = evaluate_round0_constraints_gpu(
-                        single_pk,
-                        selectors_cube.buffer(),
-                        &d_main_parts,
-                        public_values,
-                        eq_xi_tree.get_ptr(n_lift),
-                        d_lambda_pows,
-                        1 << l_skip,
-                        1 << n_lift,
-                        height as u32,
-                        num_cosets_zc as u32,
-                        omega_root,
-                        max_temp_bytes,
-                    )?;
+                    let zc_buffer = if batched_trace_indices.contains(&trace_idx) {
+                        DeviceBuffer::new()
+                    } else {
+                        evaluate_round0_constraints_gpu(
+                            single_pk,
+                            selectors_cube.buffer(),
+                            &d_main_parts,
+                            public_values,
+                            eq_xi_tree.get_ptr(n_lift),
+                            d_lambda_pows,
+                            1 << l_skip,
+                            1 << n_lift,
+                            height as u32,
+                            num_cosets_zc as u32,
+                            omega_root,
+                            max_temp_bytes,
+                        )?
+                    };
 
+                    // Logup always runs for all traces
                     let num_cosets_logup = local_constraint_deg;
                     let logup_buffer = evaluate_round0_interactions_gpu(
                         single_pk,

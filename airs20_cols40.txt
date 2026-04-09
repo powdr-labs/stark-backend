@@ -1,0 +1,105 @@
+=== AIR Complexity Benchmark (GPU (CUDA)) ===
+  num_airs:               20
+  cols_per_air:           40
+  constraints_per_col:    1
+  interactions_per_col:   0.25
+  trace_height:           524288 (2^19)
+  trace_cells:            419430400 (1.56x above target)
+  constraints:            800 (exact)
+  bus_interactions:        200 (exact)
+  constraint_instances:   419430400
+  bus_interaction_msgs:   104857600
+
+Keygen...
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;32mINFO    [0m ｉ [info]: BenchmarkAir         | Constraint Deg = 2  | Prep Cols = 0  | Main Cols = [40]     |   40 Constraints |  10 Interactions
+[1;38;2;252;234;160mWARN    [0m 🚧 [warn]: Actual max constraint degree across all AIRs (2) does not match configured max constraint degree (4)
+  time: 1.778567ms
+Proving...
+[1;32mINFO    [0m transport_pk_to_device [ 1.59ms | 100.00% ]
+[1;32mINFO    [0m stark_prove_excluding_trace [ 367ms | 0.01% / 100.00% ] phase: "prover"
+[1;32mINFO    [0m ┝━ ｉ [info]:  | num_airs_present: 20
+[1;32mINFO    [0m ┝━ prover.main_trace_commit [ 150ms | 0.04% / 40.91% ] phase: "prover"
+[1;32mINFO    [0m │  ┝━ stacked_commit [ 150ms | 0.01% / 40.87% ]
+[1;32mINFO    [0m │  │  ┝━ ｉ [info]: GPU mem: used=+0 B, current=1.6 GiB, peak=1.6 GiB, in pool=1.6 GiB (prover.stacked_commit:before stacked_commit)
+[1;32mINFO    [0m │  │  ┝━ ｉ [info]: stacked_matrix_dimensions | height: 2097152 | width: 200
+[1;32mINFO    [0m │  │  ┝━ rs_code_matrix [ 92.6ms | 25.24% ]
+[1;32mINFO    [0m │  │  │  ┕━ ｉ [info]: GPU mem: used=+3.1 GiB, current=4.7 GiB, peak=4.7 GiB, in pool=4.7 GiB (prover.rs_code_matrix)
+[1;32mINFO    [0m │  │  ┝━ merkle_tree [ 57.3ms | 15.62% ]
+[1;32mINFO    [0m │  │  │  ┕━ ｉ [info]: GPU mem: used=+16.0 MiB, current=4.7 GiB, peak=4.7 GiB, in pool=4.7 GiB (prover.merkle_tree)
+[1;32mINFO    [0m │  │  ┕━ ｉ [info]: GPU mem: used=+3.1 GiB, current=4.7 GiB, peak=4.7 GiB, in pool=4.7 GiB (prover.stacked_commit)
+[1;32mINFO    [0m │  ┝━ ｉ [info]: total_trace_cells = 419_430_400 (excluding preprocessed)
+[1;32mINFO    [0m │  ┝━ ｉ [info]: preprocessed_trace_cells = 0
+[1;32mINFO    [0m │  ┝━ ｉ [info]: main_trace_cells = 419_430_400
+[1;32mINFO    [0m │  ┕━ ｉ [info]: perm_trace_cells = 0
+[1;32mINFO    [0m ┝━ prover.rap_constraints [ 183ms | 0.00% / 49.77% ] phase: "prover"
+[1;32mINFO    [0m │  ┝━ prove_zerocheck_and_logup_gpu [ 183ms | 0.01% / 49.77% ]
+[1;32mINFO    [0m │  │  ┝━ prover.rap_constraints.logup_gkr [ 153ms | 0.06% / 41.72% ] phase: "prover"
+[1;32mINFO    [0m │  │  │  ┝━ ｉ [info]:  | n_global: 23 | n_logup: 23
+[1;32mINFO    [0m │  │  │  ┝━ prover.rap_constraints.logup_gkr.input_evals [ 81.5ms | 22.21% ]
+[1;32mINFO    [0m │  │  │  ┕━ fractional_sumcheck_gpu [ 71.4ms | 19.45% ]
+[1;32mINFO    [0m │  │  │     ┝━ ｉ [info]: GPU mem: used=+4.0 GiB, current=8.7 GiB, peak=8.7 GiB, in pool=8.7 GiB (prover.logup_zerocheck_prover:fractional_sumcheck_gkr: after building segment tree)
+[1;32mINFO    [0m │  │  │     ┕━ ｉ [info]: GPU mem: used=+4.1 GiB, current=8.8 GiB, peak=8.8 GiB, in pool=8.8 GiB (prover.logup_zerocheck_prover:after_fractional_sumcheck_gkr)
+[1;32mINFO    [0m │  │  ┝━ prover.rap_constraints.round0 [ 14.6ms | 0.05% / 3.97% ] phase: "prover"
+[1;32mINFO    [0m │  │  │  ┝━ prover.rap_constraints.ple_round0 [ 13.9ms | 3.80% ]
+[1;32mINFO    [0m │  │  │  ┕━ s'_0 -> s_0 cpu interpolations [ 422µs | 0.12% ]
+[1;32mINFO    [0m │  │  ┕━ prover.rap_constraints.mle_rounds [ 15.0ms | 0.50% / 4.07% ] phase: "prover"
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 6.06ms | 1.65% ] round: 1
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 2.31ms | 0.63% ] round: 2
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 1.29ms | 0.35% ] round: 3
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 664µs | 0.18% ] round: 4
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 388µs | 0.11% ] round: 5
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 524µs | 0.14% ] round: 6
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 333µs | 0.09% ] round: 7
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 252µs | 0.07% ] round: 8
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 220µs | 0.06% ] round: 9
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 195µs | 0.05% ] round: 10
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 177µs | 0.05% ] round: 11
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 178µs | 0.05% ] round: 12
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 178µs | 0.05% ] round: 13
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 175µs | 0.05% ] round: 14
+[1;32mINFO    [0m │  │     ┝━ LogupZerocheck::sumcheck_polys_batch_eval [ 176µs | 0.05% ] round: 15
+[1;32mINFO    [0m │  │     ┕━ ｉ [info]: GPU mem: used=+0 B, current=4.7 GiB, peak=6.0 GiB, in pool=8.8 GiB (prover.logup_zerocheck_prover)
+[1;32mINFO    [0m │  ┕━ ｉ [info]: GPU mem: used=+72 B, current=4.7 GiB, peak=6.0 GiB, in pool=8.8 GiB (prover.rap_constraints)
+[1;32mINFO    [0m ┕━ prover.openings [ 34.2ms | 0.00% / 9.32% ] phase: "prover"
+[1;32mINFO    [0m    ┝━ prover.openings.stacked_reduction [ 22.6ms | 0.00% / 6.16% ] phase: "prover"
+[1;32mINFO    [0m    │  ┝━ prover.openings.stacked_reduction.round0 [ 10.1ms | 2.75% ] phase: "prover"
+[1;32mINFO    [0m    │  │  ┕━ ｉ [info]: GPU mem: used=+61.0 MiB, current=4.8 GiB, peak=4.8 GiB, in pool=8.8 GiB (prover.stacked_reduction_new:stacked_reduction_sumcheck round 0)
+[1;32mINFO    [0m    │  ┝━ prover.openings.stacked_reduction.mle_rounds [ 12.5ms | 3.40% ] phase: "prover"
+[1;32mINFO    [0m    │  ┕━ ｉ [info]: GPU mem: used=+0 B, current=4.7 GiB, peak=5.3 GiB, in pool=8.8 GiB (prover.stacked_reduction_new)
+[1;32mINFO    [0m    ┝━ prover.openings.whir [ 11.6ms | 1.76% / 3.16% ] phase: "prover"
+[1;32mINFO    [0m    │  ┝━ ｉ [info]: GPU mem: used=-1.5 GiB, current=3.2 GiB, peak=5.3 GiB, in pool=8.8 GiB (prover.prove_whir_opening:before_whir_rounds)
+[1;32mINFO    [0m    │  ┝━ merkle_tree [ 1.96ms | 0.54% ]
+[1;32mINFO    [0m    │  │  ┕━ ｉ [info]: GPU mem: used=+8.0 MiB, current=3.2 GiB, peak=5.3 GiB, in pool=8.8 GiB (prover.merkle_tree)
+[1;32mINFO    [0m    │  ┝━ batch_open_rows [ 1.96ms | 0.25% / 0.53% ]
+[1;32mINFO    [0m    │  │  ┕━ opened_rows_d2h [ 1.04ms | 0.28% ]
+[1;32mINFO    [0m    │  ┝━ ｉ [info]: GPU mem: used=-4.7 GiB, current=46.3 MiB, peak=5.3 GiB, in pool=8.8 GiB (prover.prove_whir_opening:after_initial_whir_round)
+[1;32mINFO    [0m    │  ┝━ merkle_tree [ 1.14ms | 0.31% ]
+[1;32mINFO    [0m    │  │  ┕━ ｉ [info]: GPU mem: used=+4.0 MiB, current=60.6 MiB, peak=5.3 GiB, in pool=8.8 GiB (prover.merkle_tree)
+[1;32mINFO    [0m    │  ┝━ batch_open_rows [ 23.3µs | 0.00% / 0.01% ]
+[1;32mINFO    [0m    │  │  ┕━ opened_rows_d2h [ 11.8µs | 0.00% ]
+[1;32mINFO    [0m    │  ┝━ batch_open_rows [ 20.6µs | 0.00% / 0.01% ]
+[1;32mINFO    [0m    │  │  ┕━ opened_rows_d2h [ 11.2µs | 0.00% ]
+[1;32mINFO    [0m    │  ┕━ ｉ [info]: GPU mem: used=-4.7 GiB, current=144.4 KiB, peak=5.3 GiB, in pool=8.8 GiB (prover.prove_whir_opening)
+[1;32mINFO    [0m    ┕━ ｉ [info]: GPU mem: used=-4.7 GiB, current=144.4 KiB, peak=144.4 KiB, in pool=8.8 GiB (prover.openings)
+  time: 632.742947ms
+Verifying...
+  time: 76.944435ms
