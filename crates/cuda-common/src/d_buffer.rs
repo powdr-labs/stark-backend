@@ -56,6 +56,19 @@ impl<T> DeviceBuffer<T> {
         DeviceBuffer { ptr, len }
     }
 
+    /// Allocate device memory bypassing the VPMM pool. Uses cudaMallocAsync directly.
+    /// Faster for large allocations (>64MB) because it avoids VPMM contiguous block search.
+    pub fn with_capacity_direct(len: usize) -> Self {
+        assert_ne!(len, 0, "Zero capacity request is wrong");
+        let size_bytes = std::mem::size_of::<T>() * len;
+        let raw_ptr =
+            crate::memory_manager::d_malloc_direct(size_bytes).expect("GPU allocation failed");
+        DeviceBuffer {
+            ptr: raw_ptr as *mut T,
+            len,
+        }
+    }
+
     /// Allocate device memory for `len` elements of type `T`.
     pub fn with_capacity(len: usize) -> Self {
         tracing::debug!(

@@ -111,7 +111,9 @@ pub fn log_gkr_input_evals<HS: GpuHashScheme>(
         return Ok((DeviceBuffer::new(), alpha_logup));
     }
 
-    let leaves = DeviceBuffer::<Frac<EF>>::with_capacity(total_leaves);
+    // Use direct allocation (bypassing VPMM pool) for the large leaves buffer.
+    // The VPMM pool's contiguous block search adds ~300ms overhead for 512MB.
+    let leaves = DeviceBuffer::<Frac<EF>>::with_capacity_direct(total_leaves);
     leaves.fill_zero()?;
     let null_preprocessed = DeviceBuffer::<F>::new();
 

@@ -155,6 +155,28 @@ pub fn prewarm_pool(size: usize) -> Result<(), MemoryError> {
     unsafe { d_free(ptr) }
 }
 
+/// Allocate device memory directly using cudaMallocAsync, bypassing the VPMM pool.
+/// This avoids the VPMM pool's contiguous block search overhead for large allocations.
+/// The allocation is registered for proper cleanup via d_free.
+pub fn d_malloc_direct(size: usize) -> Result<*mut c_void, MemoryError> {
+    let manager = MEMORY_MANAGER.get().unwrap();
+    let mut manager = manager.lock().map_err(|_| MemoryError::LockError)?;
+    let mut ptr: *mut c_void = std::ptr::null_mut();
+    check(unsafe { cudaMallocAsync(&mut ptr, size, cudaStreamPerThread) }).map_err(|e| {
+        tracing::error!("cudaMallocAsync (direct) failed: size={}: {:?}", size, e);
+        MemoryError::from(e)
+    })?;
+    manager.allocated_ptrs.insert(
+        NonNull::new(ptr).expect("BUG: cudaMallocAsync returned null"),
+        size,
+    );
+    manager.current_size += size;
+    if manager.current_size > manager.max_used_size {
+        manager.max_used_size = manager.current_size;
+    }
+    Ok(ptr)
+}
+
 /// # Safety
 /// The pointer `ptr` must be a valid, previously allocated device pointer.
 /// The caller must ensure that `ptr` is not used after this function is called.
