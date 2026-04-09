@@ -762,18 +762,26 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             }
         }
 
+        // Cache selectors by height: traces with the same height share the same selector buffer.
+        // This reduces ~600 allocations to ~20 (number of distinct heights).
+        let mut sels_cache: FxHashMap<usize, DeviceMatrix<F>> = FxHashMap::default();
         self.sels_per_trace_base = self
             .n_per_trace
             .iter()
             .map(|&n| {
                 let n_lift = n.max(0) as usize;
+                if let Some(cached) = sels_cache.get(&n_lift) {
+                    return Ok(cached.clone());
+                }
                 let height = 1 << n_lift;
                 let mut cols = F::zero_vec(3 * height);
                 cols[height..2 * height - 1].fill(F::ONE); // is_transition
                 cols[0] = F::ONE; // is_first
                 cols[2 * height + height - 1] = F::ONE; // is_last
                 let d_cols = cols.to_device()?;
-                Ok(DeviceMatrix::new(Arc::new(d_cols), height, 3))
+                let mat = DeviceMatrix::new(Arc::new(d_cols), height, 3);
+                sels_cache.insert(n_lift, mat.clone());
+                Ok(mat)
             })
             .collect::<Result<Vec<_>, MemCopyError>>()?;
 
