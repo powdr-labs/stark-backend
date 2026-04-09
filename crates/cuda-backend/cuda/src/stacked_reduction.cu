@@ -367,6 +367,77 @@ __global__ void stacked_reduction_sumcheck_mle_round_degenerate_kernel(
     }
 }
 
+// Context for batched degenerate window kernel
+struct DegenerateWindowCtx {
+    const UnstackedSlice *unstacked_cols;
+    const FpExt *lambda_pows;
+    const FpExt *eq_ub_ptr;
+    uint32_t window_len;
+    FpExt eq_r;
+    FpExt k_rot_r;
+};
+
+// Batched version: one block per window, all windows in a single launch.
+__global__ void stacked_reduction_sumcheck_mle_round_degenerate_batched_kernel(
+    const FpExt *__restrict__ const *__restrict__ q_evals,
+    const DegenerateWindowCtx *__restrict__ d_window_ctxs,
+    uint64_t *__restrict__ output,
+    uint32_t q_height,
+    uint32_t shift_factor
+) {
+    extern __shared__ char smem[];
+    FpExt *shared = (FpExt *)smem;
+
+    const DegenerateWindowCtx &ctx = d_window_ctxs[blockIdx.x];
+
+    FpExt local_sums[S_DEG];
+#pragma unroll
+    for (int i = 0; i < S_DEG; i++) {
+        local_sums[i] = FpExt(0);
+    }
+
+    for (uint32_t window_idx = threadIdx.x; window_idx < ctx.window_len; window_idx += blockDim.x) {
+        UnstackedSlice s = ctx.unstacked_cols[window_idx];
+        const FpExt *__restrict__ q = q_evals[s.commit_idx];
+
+        auto col_idx = s.stacked_col_idx;
+        auto row_idx = s.stacked_row_idx;
+        auto row_start = (row_idx >> shift_factor) << 1;
+        auto q_offset = col_idx * q_height + row_start;
+
+        auto q_0 = q[q_offset];
+        auto q_1 = q[q_offset + 1];
+        auto q_c1 = q_1 - q_0;
+
+        uint32_t b_bool = (row_idx >> (shift_factor - 1)) & 1;
+        Fp b = Fp(b_bool);
+
+        auto eq_ub = ctx.eq_ub_ptr[window_idx];
+
+#pragma unroll
+        for (int x_int = 1; x_int <= S_DEG; ++x_int) {
+            Fp x = Fp(x_int);
+            auto eq_ub_x = eq_ub * eq1(x, b);
+            auto eq = ctx.eq_r * eq_ub_x;
+            auto k_rot = ctx.k_rot_r * eq_ub_x;
+
+            auto q_x = q_0 + q_c1 * x;
+
+            local_sums[x_int - 1] +=
+                (ctx.lambda_pows[2 * window_idx] * eq + ctx.lambda_pows[2 * window_idx + 1] * k_rot) * q_x;
+        }
+    }
+
+#pragma unroll
+    for (int idx = 0; idx < S_DEG; idx++) {
+        FpExt reduced = sumcheck::block_reduce_sum(local_sums[idx], shared);
+        if (threadIdx.x == 0) {
+            sumcheck::atomic_add_fpext_to_u64(output + idx * 4, reduced);
+        }
+        __syncthreads();
+    }
+}
+
 // ============================================================================
 // LAUNCHERS
 // ============================================================================
@@ -563,6 +634,32 @@ extern "C" int _stacked_reduction_sumcheck_mle_round_degenerate(
         output,
         q_height,
         window_len,
+        shift_factor
+    );
+
+    return CHECK_KERNEL();
+}
+
+extern "C" int _stacked_reduction_sumcheck_mle_round_degenerate_batched(
+    const FpExt *const *q_evals,
+    const DegenerateWindowCtx *d_window_ctxs,
+    uint64_t *output, // [S_DEG * 4] - atomic accumulator
+    uint32_t q_height,
+    uint32_t num_windows,
+    uint32_t l_skip,
+    uint32_t round
+) {
+    if (num_windows == 0) return 0;
+    auto shift_factor = l_skip + round;
+    dim3 block(256);
+    dim3 grid(num_windows);
+    size_t shmem_bytes = div_ceil(block.x, WARP_SIZE) * sizeof(FpExt);
+
+    stacked_reduction_sumcheck_mle_round_degenerate_batched_kernel<<<grid, block, shmem_bytes>>>(
+        q_evals,
+        d_window_ctxs,
+        output,
+        q_height,
         shift_factor
     );
 

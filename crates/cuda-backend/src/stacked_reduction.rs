@@ -31,8 +31,9 @@ use crate::{
         stacked_reduction::{
             _stacked_reduction_r0_required_temp_buffer_size, initialize_k_rot_from_eq_segments,
             stacked_reduction_fold_ple, stacked_reduction_sumcheck_mle_round,
-            stacked_reduction_sumcheck_mle_round_degenerate, stacked_reduction_sumcheck_round0,
-            NUM_G,
+            stacked_reduction_sumcheck_mle_round_degenerate,
+            stacked_reduction_sumcheck_mle_round_degenerate_batched, DegenerateWindowCtx,
+            stacked_reduction_sumcheck_round0, NUM_G,
         },
         sumcheck::{fold_mle, triangular_fold_mle},
     },
@@ -840,44 +841,31 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
             .fill_zero()
             .map_err(StackedReductionError::FillZero)?;
 
-        // Launch all kernels without per-window synchronization.
+        // Classify windows into degenerate (batched) and non-degenerate (individual).
+        let mut degenerate_ctxs: Vec<DegenerateWindowCtx> = Vec::new();
+        let stacked_height = self.stacked_height(round);
+
         for window in self.ht_diff_idxs.windows(2) {
             let window_len = window[1] - window[0];
-            // SAFETY: in bounds by construction of ht_diff_idxs
             let unstacked_cols_ptr = unsafe { self.d_unstacked_cols.as_ptr().add(window[0]) };
-            // 2 per column for (eq, k_rot)
-            // SAFETY: in bounds by construction of lambda_pows
             let lambda_pows_ptr = unsafe { self.d_lambda_pows.as_ptr().add(2 * window[0]) };
-
             let log_height = self.unstacked_cols[window[0]].log_height as usize;
 
             if log_height < l_skip + round {
                 let eq_r = self.eq_stable[log_height];
                 let k_rot_r = self.k_rot_stable[log_height];
-                // Use offset into pre-uploaded d_eq_ub buffer
                 let eq_ub_ptr = unsafe { self.d_eq_ub.as_ptr().add(window[0]) };
-                let stacked_height = self.stacked_height(round);
-                unsafe {
-                    stacked_reduction_sumcheck_mle_round_degenerate(
-                        &self.d_q_eval_ptrs,
-                        eq_ub_ptr,
-                        eq_r,
-                        k_rot_r,
-                        unstacked_cols_ptr,
-                        lambda_pows_ptr,
-                        &mut self.d_accum,
-                        stacked_height,
-                        window_len,
-                        l_skip,
-                        round,
-                    )
-                    .map_err(StackedReductionError::SumcheckMleRoundDegenerate)?;
-                }
+                degenerate_ctxs.push(DegenerateWindowCtx {
+                    unstacked_cols: unstacked_cols_ptr,
+                    lambda_pows: lambda_pows_ptr,
+                    eq_ub_ptr,
+                    window_len: window_len as u32,
+                    eq_r,
+                    k_rot_r,
+                });
             } else {
                 let hypercube_dim = log_height - l_skip - round;
                 let num_y = 1 << hypercube_dim;
-
-                let stacked_height = self.stacked_height(round);
                 unsafe {
                     stacked_reduction_sumcheck_mle_round(
                         &self.d_q_eval_ptrs,
@@ -893,6 +881,24 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
                     )
                     .map_err(StackedReductionError::SumcheckMleRound)?;
                 };
+            }
+        }
+
+        // Launch all degenerate windows in a single batched kernel.
+        if !degenerate_ctxs.is_empty() {
+            let num_degenerate = degenerate_ctxs.len();
+            let d_ctxs = degenerate_ctxs.to_device()?;
+            unsafe {
+                stacked_reduction_sumcheck_mle_round_degenerate_batched(
+                    &self.d_q_eval_ptrs,
+                    &d_ctxs,
+                    &mut self.d_accum,
+                    stacked_height,
+                    num_degenerate,
+                    l_skip,
+                    round,
+                )
+                .map_err(StackedReductionError::SumcheckMleRoundDegenerate)?;
             }
         }
 
