@@ -29,6 +29,32 @@ pub struct AirDataGpu {
     pub zerocheck_mle: ConstraintOnlyRules<false>,
     pub zerocheck_monomials: Option<ZerocheckMonomials>,
     pub interaction_monomials: Option<InteractionMonomials>,
+    /// Cached logup round-0 rule structure (DAG + compiled rules + mapping).
+    /// `None` if the AIR has no interactions.
+    pub logup_round0: Option<LogupRound0Rules>,
+}
+
+/// Per-interaction static metadata cached at keygen for logup round-0 weight scattering.
+pub struct InteractionStaticMeta {
+    /// Length of the interaction message (number of field elements)
+    pub message_len: usize,
+    /// `bus_index + 1`, precomputed for the `denom_sum_init` term
+    pub bus_index_plus_one: u32,
+}
+
+/// Cached logup round-0 rule structure per AIR.
+/// The DAG, encoded rules, and mapping are AIR-level and don't change per trace.
+/// Only the weights (numer_weights, denom_weights, denom_sum_init) are trace-specific.
+pub struct LogupRound0Rules {
+    pub d_rules: DeviceBuffer<u128>,
+    pub buffer_size: u32,
+    pub num_rules: usize,
+    /// `count_rule_idxs[interaction_idx]` = rule_idx for the count expression
+    pub count_rule_idxs: Vec<usize>,
+    /// `message_rule_idxs[interaction_idx][message_idx]` = rule_idx for that message field
+    pub message_rule_idxs: Vec<Vec<usize>>,
+    /// Per-interaction static factors for `denom_sum_init` computation
+    pub interaction_meta: Vec<InteractionStaticMeta>,
 }
 
 /// Used for GKR input evaluation and logup MLE sumcheck rounds.
@@ -105,12 +131,82 @@ impl AirDataGpu {
         } else {
             None
         };
+        let logup_round0 = if !symbolic_constraints.interactions.is_empty() {
+            Some(LogupRound0Rules::new(&symbolic_constraints)?)
+        } else {
+            None
+        };
         Ok(Self {
             interaction_rules,
             zerocheck_round0,
             zerocheck_mle,
             zerocheck_monomials,
             interaction_monomials,
+            logup_round0,
+        })
+    }
+}
+
+impl LogupRound0Rules {
+    pub fn new(symbolic: &SymbolicConstraints<F>) -> Result<Self, MemCopyError> {
+        let mut dag_builder = SymbolicDagBuilder::new();
+        let mut sorted_used_dag_idxs = Vec::new();
+        let mut count_dag_idxs = Vec::new();
+        let mut message_dag_idxs: Vec<Vec<usize>> = Vec::new();
+        let mut interaction_meta = Vec::new();
+
+        for interaction in &symbolic.interactions {
+            let count = dag_builder.add_expr(&interaction.count);
+            count_dag_idxs.push(count);
+            sorted_used_dag_idxs.push(count);
+            let msg_idxs: Vec<usize> = interaction
+                .message
+                .iter()
+                .map(|field_expr| {
+                    let idx = dag_builder.add_expr(field_expr);
+                    sorted_used_dag_idxs.push(idx);
+                    idx
+                })
+                .collect();
+            message_dag_idxs.push(msg_idxs);
+            interaction_meta.push(InteractionStaticMeta {
+                message_len: interaction.message.len(),
+                bus_index_plus_one: interaction.bus_index as u32 + 1,
+            });
+        }
+        sorted_used_dag_idxs.sort();
+        sorted_used_dag_idxs.dedup();
+        let dag = SymbolicExpressionDag {
+            nodes: dag_builder.nodes,
+            constraint_idx: sorted_used_dag_idxs,
+        };
+        let rules = SymbolicRulesGpu::new(&dag, true);
+
+        let count_rule_idxs: Vec<usize> = count_dag_idxs
+            .iter()
+            .map(|&dag_idx| rules.dag_idx_to_rule_idx[&dag_idx])
+            .collect();
+        let message_rule_idxs: Vec<Vec<usize>> = message_dag_idxs
+            .iter()
+            .map(|msg_idxs| {
+                msg_idxs
+                    .iter()
+                    .map(|&dag_idx| rules.dag_idx_to_rule_idx[&dag_idx])
+                    .collect()
+            })
+            .collect();
+
+        let num_rules = rules.rules.len();
+        let encoded_rules: Vec<u128> = rules.rules.iter().map(|c| c.encode()).collect();
+        let d_rules = to_device_or_empty(&encoded_rules)?;
+
+        Ok(Self {
+            d_rules,
+            buffer_size: rules.buffer_size.try_into().unwrap(),
+            num_rules,
+            count_rule_idxs,
+            message_rule_idxs,
+            interaction_meta,
         })
     }
 }

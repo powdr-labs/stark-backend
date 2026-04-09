@@ -1045,7 +1045,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             } else {
             let sum = evaluate_round0_interactions_gpu(
                 single_pk,
-                &single_air_constraints,
                 selectors_cube.buffer(),
                 &d_main_parts,
                 public_values,

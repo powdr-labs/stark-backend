@@ -1,15 +1,9 @@
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 use openvm_cuda_common::{copy::MemCopyH2D, d_buffer::DeviceBuffer};
-use openvm_stark_backend::{
-    air_builders::symbolic::{
-        symbolic_expression::SymbolicExpression, SymbolicConstraints, SymbolicDagBuilder,
-        SymbolicExpressionDag,
-    },
-    prover::{
-        fractional_sumcheck_gkr::Frac, AirProvingContext, DeviceMultiStarkProvingKey,
-        DeviceStarkProvingKey,
-    },
+use openvm_stark_backend::prover::{
+    fractional_sumcheck_gkr::Frac, AirProvingContext, DeviceMultiStarkProvingKey,
+    DeviceStarkProvingKey,
 };
 use p3_field::PrimeCharacteristicRing;
 use tracing::{debug, warn};
@@ -24,7 +18,7 @@ use crate::{
     },
     gpu_backend::GenericGpuBackend,
     hash_scheme::GpuHashScheme,
-    logup_zerocheck::rules::{codec::Codec, SymbolicRulesGpu},
+    pkey::LogupRound0Rules,
     poly::EqEvalLayers,
     prelude::{EF, F},
 };
@@ -137,7 +131,6 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
 #[allow(clippy::too_many_arguments)]
 pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
     pk: &DeviceStarkProvingKey<GenericGpuBackend<HS>>,
-    symbolic: &SymbolicConstraints<F>,
     selectors_cube: &DeviceBuffer<F>,
     main_parts: &DeviceBuffer<*const F>,
     public_values: &DeviceBuffer<F>,
@@ -157,65 +150,15 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
     }
     let large_domain = num_cosets * skip_domain;
 
-    // We create a new "interactions DAG" where the new .constraints are the interaction [count,
-    // message_0, message_1, ..] expressions themselves, while the .interactions are empty
-    // We track the indices with InteractionNode
+    // Use cached AIR-level logup rules if available
+    let cached = pk
+        .other_data
+        .logup_round0
+        .as_ref()
+        .expect("logup_round0 must be cached for traces with interactions");
+    let rs = build_logup_weights(cached, eq_3bs, beta_pows)?;
 
-    // Copied from build_symbolic_constraints_dag to handle sorting of constraints
-    // NOTE: For logup round0, the kernel uses weights indexed by rule_idx, not constraint_idx.
-    // So we deduplicate constraint_idx and use dag_idx_to_rule_idx for weight mapping.
-    let (rules, d_numer_weights, d_denom_weights, denom_sum_init) = {
-        let mut dag_builder = SymbolicDagBuilder::new();
-        let mut sorted_used_dag_idxs = Vec::new();
-        for interaction in &symbolic.interactions {
-            let count = dag_builder.add_expr(&interaction.count);
-            sorted_used_dag_idxs.push(count);
-            sorted_used_dag_idxs.extend(
-                interaction
-                    .message
-                    .iter()
-                    .map(|field_expr| dag_builder.add_expr(field_expr)),
-            );
-        }
-        sorted_used_dag_idxs.sort();
-        // Deduplicate for the dag since logup round0 kernel doesn't use used_nodes
-        sorted_used_dag_idxs.dedup();
-        let dag = SymbolicExpressionDag {
-            nodes: dag_builder.nodes,
-            constraint_idx: sorted_used_dag_idxs,
-        };
-        let rules = SymbolicRulesGpu::new(&dag, true);
-        let mut numer_weights = vec![EF::ZERO; rules.rules.len()];
-        let mut denom_weights = vec![EF::ZERO; rules.rules.len()];
-        let mut denom_sum_init = EF::ZERO;
-        for (interaction_idx, interaction) in symbolic.interactions.iter().enumerate() {
-            // CAUTION: an expression node could be used in multiple interactions, and might even be
-            // used as `count` in one, but message field in another. We only care about their
-            // weighted sum with eq_3b, so we compute the weights ahead of time.
-            let count_dag_idx =
-                dag_builder.expr_to_idx[&(&interaction.count as *const SymbolicExpression<_>)];
-            let count_rule_idx = rules.dag_idx_to_rule_idx[&count_dag_idx];
-            numer_weights[count_rule_idx] += eq_3bs[interaction_idx];
-            denom_sum_init += eq_3bs[interaction_idx]
-                * beta_pows[interaction.message.len()]
-                * F::from_u32(interaction.bus_index as u32 + 1);
-
-            for (message_idx, message) in interaction.message.iter().enumerate() {
-                let message_dag_idx =
-                    dag_builder.expr_to_idx[&(message as *const SymbolicExpression<_>)];
-                let message_rule_idx = rules.dag_idx_to_rule_idx[&message_dag_idx];
-                denom_weights[message_rule_idx] += eq_3bs[interaction_idx] * beta_pows[message_idx];
-            }
-        }
-        let d_numer_weights = numer_weights.to_device()?;
-        let d_denom_weights = denom_weights.to_device()?;
-        (rules, d_numer_weights, d_denom_weights, denom_sum_init)
-    };
-
-    let encoded_rules = rules.rules.iter().map(|c| c.encode()).collect_vec();
-    let d_rules = encoded_rules.to_device()?;
-
-    let buffer_size: u32 = rules.buffer_size.try_into().unwrap();
+    let buffer_size = rs.buffer_size;
     let intermed_capacity = unsafe {
         _logup_r0_intermediates_buffer_size(
             buffer_size,
@@ -262,10 +205,10 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
             main_parts,
             eq_cube,
             public_values,
-            &d_numer_weights,
-            &d_denom_weights,
-            denom_sum_init,
-            &d_rules,
+            &rs.d_numer_weights,
+            &rs.d_denom_weights,
+            rs.denom_sum_init,
+            &cached.d_rules,
             buffer_size,
             &mut intermediates,
             skip_domain,
@@ -593,73 +536,47 @@ pub fn evaluate_round0_zerocheck_batched<HS: GpuHashScheme>(
 /// Per-trace logup ruleset built at proving time.
 /// Owns the device buffers for rules and weights.
 struct LogupRuleset {
-    d_rules: DeviceBuffer<u128>,
+    d_rules_ptr: *const std::ffi::c_void, // borrowed from LogupRound0Rules.d_rules
+    rules_len: usize,
     d_numer_weights: DeviceBuffer<EF>,
     d_denom_weights: DeviceBuffer<EF>,
     denom_sum_init: EF,
     buffer_size: u32,
 }
 
-/// Build the logup ruleset for a single trace (CPU rule compilation + H2D upload).
-/// This is the same logic as `evaluate_round0_interactions_gpu` L167-216, extracted.
-fn build_logup_ruleset<HS: GpuHashScheme>(
-    pk_air: &DeviceStarkProvingKey<GenericGpuBackend<HS>>,
+/// Build per-trace logup weights using cached AIR-level rules.
+/// Only computes the trace-specific numer/denom weights and denom_sum_init.
+fn build_logup_weights(
+    cached: &LogupRound0Rules,
     eq_3bs: &[EF],
     beta_pows: &[EF],
 ) -> Result<LogupRuleset, Round0EvalError> {
-    use p3_field::Field;
-
-    let symbolic = SymbolicConstraints::from(&pk_air.vk.symbolic_constraints);
-    let mut dag_builder = SymbolicDagBuilder::new();
-    let mut sorted_used_dag_idxs = Vec::new();
-    for interaction in &symbolic.interactions {
-        let count = dag_builder.add_expr(&interaction.count);
-        sorted_used_dag_idxs.push(count);
-        sorted_used_dag_idxs.extend(
-            interaction
-                .message
-                .iter()
-                .map(|field_expr| dag_builder.add_expr(field_expr)),
-        );
-    }
-    sorted_used_dag_idxs.sort();
-    sorted_used_dag_idxs.dedup();
-    let dag = SymbolicExpressionDag {
-        nodes: dag_builder.nodes,
-        constraint_idx: sorted_used_dag_idxs,
-    };
-    let rules = SymbolicRulesGpu::new(&dag, true);
-    let mut numer_weights = vec![EF::ZERO; rules.rules.len()];
-    let mut denom_weights = vec![EF::ZERO; rules.rules.len()];
+    let mut numer_weights = vec![EF::ZERO; cached.num_rules];
+    let mut denom_weights = vec![EF::ZERO; cached.num_rules];
     let mut denom_sum_init = EF::ZERO;
-    for (interaction_idx, interaction) in symbolic.interactions.iter().enumerate() {
-        let count_dag_idx =
-            dag_builder.expr_to_idx[&(&interaction.count as *const SymbolicExpression<_>)];
-        let count_rule_idx = rules.dag_idx_to_rule_idx[&count_dag_idx];
-        numer_weights[count_rule_idx] += eq_3bs[interaction_idx];
-        denom_sum_init += eq_3bs[interaction_idx]
-            * beta_pows[interaction.message.len()]
-            * F::from_u32(interaction.bus_index as u32 + 1);
 
-        for (message_idx, message) in interaction.message.iter().enumerate() {
-            let message_dag_idx =
-                dag_builder.expr_to_idx[&(message as *const SymbolicExpression<_>)];
-            let message_rule_idx = rules.dag_idx_to_rule_idx[&message_dag_idx];
-            denom_weights[message_rule_idx] += eq_3bs[interaction_idx] * beta_pows[message_idx];
+    for (interaction_idx, meta) in cached.interaction_meta.iter().enumerate() {
+        numer_weights[cached.count_rule_idxs[interaction_idx]] += eq_3bs[interaction_idx];
+        denom_sum_init += eq_3bs[interaction_idx]
+            * beta_pows[meta.message_len]
+            * F::from_u32(meta.bus_index_plus_one);
+        for (message_idx, &rule_idx) in
+            cached.message_rule_idxs[interaction_idx].iter().enumerate()
+        {
+            denom_weights[rule_idx] += eq_3bs[interaction_idx] * beta_pows[message_idx];
         }
     }
-    let encoded_rules = rules.rules.iter().map(|c| c.encode()).collect_vec();
-    let d_rules = encoded_rules.to_device().map_err(Round0EvalError::Copy)?;
+
     let d_numer_weights = numer_weights.to_device().map_err(Round0EvalError::Copy)?;
     let d_denom_weights = denom_weights.to_device().map_err(Round0EvalError::Copy)?;
-    let buffer_size: u32 = rules.buffer_size.try_into().unwrap();
 
     Ok(LogupRuleset {
-        d_rules,
+        d_rules_ptr: cached.d_rules.as_raw_ptr(),
+        rules_len: cached.d_rules.len(),
         d_numer_weights,
         d_denom_weights,
         denom_sum_init,
-        buffer_size,
+        buffer_size: cached.buffer_size,
     })
 }
 
@@ -699,14 +616,18 @@ pub fn evaluate_round0_logup_batched<HS: GpuHashScheme>(
     let d_frac = num_cosets * skip_domain; // in FracExt units
     let d_fpext = 2 * d_frac; // in FpExt units (for reduction)
 
-    // Pre-build all rulesets (CPU work, GPU is idle)
+    // Build per-trace weights using cached AIR-level rules
     let rulesets: Vec<LogupRuleset> = group
         .iter()
         .map(|&i| {
             let t = &all_traces[i];
-            let pk_air = &pk.per_air[t.air_idx];
+            let cached = pk.per_air[t.air_idx]
+                .other_data
+                .logup_round0
+                .as_ref()
+                .expect("logup_round0 must be cached for traces with interactions");
             let eq_3bs = &eq_3b_per_trace[t.trace_idx];
-            build_logup_ruleset(pk_air, eq_3bs, beta_pows)
+            build_logup_weights(cached, eq_3bs, beta_pows)
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -838,8 +759,8 @@ pub fn evaluate_round0_logup_batched<HS: GpuHashScheme>(
                 numer_weights: rs.d_numer_weights.as_ptr(),
                 denom_weights: rs.d_denom_weights.as_ptr(),
                 denom_sum_init: rs.denom_sum_init,
-                d_rules: rs.d_rules.as_raw_ptr(),
-                rules_len: rs.d_rules.len(),
+                d_rules: rs.d_rules_ptr,
+                rules_len: rs.rules_len,
                 buffer_size: rs.buffer_size,
                 d_intermediates,
             });
