@@ -1,24 +1,23 @@
 # GPU Prover Optimization Ideas
 
-Current best APC300 STARK excl. trace: **~1573ms** (baseline 2491ms, **-36.9%**)
-Target (<1084ms): gap ~489ms, dominated by GKR (~593ms) + Trace Commit (~417ms).
+Current best APC300 STARK excl. trace: **~1558ms** (baseline 2491ms, **-37.5%**)
+Target (<1084ms): gap ~474ms.
 
-## Still to try
+## Key bottleneck: GKR input eval seg0 overhead (316ms vs 2ms seg1)
+The 314ms difference comes from VPMM pool management for the first 512MB
+allocation (finding/splitting contiguous free regions). This is structural
+to the VPMM design and requires allocator-level changes to fix.
 
-### 1. Batch d_eq_3b uploads into single transfer
-600 per-trace H2D transfers for eq_3b → single concatenated upload with offset tracking.
-Expected: ~3-5ms.
+## Remaining ideas
 
-### 2. Overlap eq_xis construction with d_eq_3b upload
-eq_xis and d_eq_3b upload are independent. Run on separate threads/streams.
-Expected: ~2-3ms overlap.
+### 1. Custom allocator for GKR leaves buffer
+Bypass VPMM entirely for the leaves buffer: allocate a persistent buffer
+once and reuse across segments. Requires changing log_gkr_input_evals to
+accept a pre-allocated buffer.
 
-### 3. Batch non-degenerate stacked reduction MLE kernel (5076 launches, 21.7ms)
-Similar to degenerate batching. Expected: ~15ms.
+### 2. Batch non-degenerate stacked reduction MLE kernel (5076 launches, 21ms)
 
-### 4. Pre-allocate GKR leaves buffer before STARK span
-Move the 512MB VPMM allocation cost (~170ms for seg0) outside of STARK excl trace.
-Challenge: fragmentation for APC000. Needs size-aware approach.
+### 3. SP1-inspired slope-based interpolation in sumcheck
+Fixed evaluation points with precomputed slopes could reduce per-round overhead.
 
-### 5. Investigate GPU occupancy for hot kernels
-Use ncu to check if any kernel has low occupancy that could be improved with launch bounds.
+### 4. Profile-guided kernel occupancy tuning with ncu
