@@ -626,39 +626,66 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         let num_present_airs = ctx.per_trace.len();
         debug_assert_eq!(num_present_airs, self.n_per_trace.len());
 
-        self.eq_3b_per_trace = ctx
-            .per_trace
-            .iter()
-            .enumerate()
-            .map(|(trace_idx, (air_idx, _))| {
-                let vk = &self.pk.per_air[*air_idx].vk;
+        // Compute eq_3b weights per trace. Parallelized for many traces since eval_eq_mle
+        // is CPU-intensive for large n_logup.
+        {
+            let pk = self.pk;
+            let xi_ref = &self.xi;
+            let n_per_trace = &self.n_per_trace;
+            let layout = &self.interactions_layout;
+            let per_trace = &ctx.per_trace;
+            let num = per_trace.len();
+
+            let compute_eq3b = |trace_idx: usize| -> Vec<EF> {
+                let (air_idx, _) = &per_trace[trace_idx];
+                let vk = &pk.per_air[*air_idx].vk;
                 let num_interactions = vk.num_interactions();
-                if num_interactions > 0 {
-                    let n = self.n_per_trace[trace_idx];
-                    let n_lift = n.max(0) as usize;
-                    let mut b_vec = vec![F::ZERO; n_logup - n_lift];
-                    let mut weights = Vec::with_capacity(num_interactions);
-                    for interaction_idx in 0..num_interactions {
-                        let stacked_idx = self
-                            .interactions_layout
-                            .get(trace_idx, interaction_idx)
-                            .unwrap()
-                            .row_idx;
-                        let mut b_int = stacked_idx >> (l_skip + n_lift);
-                        for bit in &mut b_vec {
-                            *bit = F::from_bool(b_int & 1 == 1);
-                            b_int >>= 1;
-                        }
-                        let weight =
-                            eval_eq_mle(&self.xi[l_skip + n_lift..l_skip + n_logup], &b_vec);
-                        weights.push(weight);
-                    }
-                    weights
-                } else {
-                    vec![]
+                if num_interactions == 0 {
+                    return vec![];
                 }
-            })
-            .collect_vec();
+                let n = n_per_trace[trace_idx];
+                let n_lift = n.max(0) as usize;
+                let mut b_vec = vec![F::ZERO; n_logup - n_lift];
+                let mut weights = Vec::with_capacity(num_interactions);
+                for interaction_idx in 0..num_interactions {
+                    let stacked_idx = layout.get(trace_idx, interaction_idx).unwrap().row_idx;
+                    let mut b_int = stacked_idx >> (l_skip + n_lift);
+                    for bit in &mut b_vec {
+                        *bit = F::from_bool(b_int & 1 == 1);
+                        b_int >>= 1;
+                    }
+                    weights.push(eval_eq_mle(&xi_ref[l_skip + n_lift..l_skip + n_logup], &b_vec));
+                }
+                weights
+            };
+
+            self.eq_3b_per_trace = if num > 100 {
+                let num_threads = 8.min(num);
+                std::thread::scope(|s| {
+                    let handles: Vec<_> = (0..num_threads)
+                        .map(|tid| {
+                            s.spawn(move || {
+                                let mut results = Vec::new();
+                                let mut idx = tid;
+                                while idx < num {
+                                    results.push((idx, compute_eq3b(idx)));
+                                    idx += num_threads;
+                                }
+                                results
+                            })
+                        })
+                        .collect();
+                    let mut all: Vec<(usize, Vec<EF>)> = handles
+                        .into_iter()
+                        .flat_map(|h| h.join().unwrap())
+                        .collect();
+                    all.sort_by_key(|(idx, _)| *idx);
+                    all.into_iter().map(|(_, v)| v).collect()
+                })
+            } else {
+                (0..num).map(compute_eq3b).collect()
+            };
+        }
         self.d_eq_3b_per_trace = self
             .eq_3b_per_trace
             .iter()
