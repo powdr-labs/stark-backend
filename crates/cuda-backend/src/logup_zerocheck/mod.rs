@@ -929,6 +929,173 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             }
         }
 
+        // ====================================================================
+        // Batched lockstep round 0 for large traces.
+        // ====================================================================
+        use crate::logup_zerocheck::round0::{
+            evaluate_round0_zerocheck_lockstep_batched,
+            evaluate_round0_logup_lockstep_batched,
+            group_lockstep_zc_traces,
+            group_lockstep_logup_traces,
+        };
+        {
+
+            // Lockstep zerocheck
+            let lockstep_zc_groups = group_lockstep_zc_traces(&trace_infos, skip_domain);
+            if !lockstep_zc_groups.is_empty() {
+                let lockstep_start = std::time::Instant::now();
+                let mut total_lockstep = 0usize;
+                for (_key, group_indices) in &lockstep_zc_groups {
+                    let results = evaluate_round0_zerocheck_lockstep_batched(
+                        group_indices,
+                        &trace_infos,
+                        skip_domain,
+                        self.pk,
+                        &selectors_base,
+                        &self.eq_xis,
+                        &self.public_values_per_trace,
+                        &ctx.per_trace,
+                        d_lambda_pows,
+                        self.memory_limit_bytes,
+                    )
+                    .map_err(LogupZerocheckError::Round0Eval)?;
+
+                    let zc_entries: Vec<(usize, Vec<EF>)> = results
+                        .into_iter()
+                        .filter_map(|(trace_idx, q_evals)| {
+                            let t = &trace_infos[trace_idx];
+                            let num_cosets_zc = t.num_cosets_zc;
+                            if num_cosets_zc == 0 {
+                                return None;
+                            }
+                            let omega_root = t.omega_root;
+                            let mut values = EF::zero_vec(num_cosets_zc << l_skip);
+                            for coset_idx in 0..num_cosets_zc {
+                                for i in 0..1 << l_skip {
+                                    values[i * num_cosets_zc + coset_idx] =
+                                        q_evals[(coset_idx << l_skip) + i];
+                                }
+                            }
+                            let q = UnivariatePoly::from_geometric_cosets_evals_idft(
+                                RowMajorMatrix::new(values, num_cosets_zc),
+                                omega_root,
+                                omega_root,
+                            );
+                            let local_sp_0_deg =
+                                sumcheck_round0_deg(l_skip, t.local_constraint_deg);
+                            let coeffs = (0..=local_sp_0_deg)
+                                .map(|i| {
+                                    let mut c = -*q.coeffs().get(i).unwrap_or(&EF::ZERO);
+                                    if i >= 1 << l_skip {
+                                        c += q.coeffs()[i - (1 << l_skip)];
+                                    }
+                                    c
+                                })
+                                .collect_vec();
+                            Some((trace_idx, coeffs))
+                        })
+                        .collect();
+                    for (trace_idx, coeffs) in zc_entries {
+                        batch_sp_poly[2 * num_present_airs + trace_idx] =
+                            UnivariatePoly::new(coeffs);
+                        zc_batched[trace_idx] = true;
+                    }
+                    total_lockstep += group_indices.len();
+                }
+                info!(
+                    "batched lockstep zerocheck round0: {total_lockstep} traces in {} groups, {:.1}ms",
+                    lockstep_zc_groups.len(),
+                    lockstep_start.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
+
+            // Lockstep logup
+            let lockstep_logup_groups = group_lockstep_logup_traces(
+                &trace_infos, skip_domain, &self.eq_3b_per_trace,
+            );
+            if !lockstep_logup_groups.is_empty() {
+                let lockstep_logup_start = std::time::Instant::now();
+                let mut total_lockstep_logup = 0usize;
+                let n_per_trace = &self.n_per_trace;
+                for (_key, group_indices) in &lockstep_logup_groups {
+                    let results = evaluate_round0_logup_lockstep_batched(
+                        group_indices,
+                        &trace_infos,
+                        skip_domain,
+                        self.pk,
+                        &selectors_base,
+                        &self.eq_xis,
+                        &self.public_values_per_trace,
+                        &ctx.per_trace,
+                        &self.eq_3b_per_trace,
+                        &self.beta_pows,
+                        self.memory_limit_bytes,
+                    )
+                    .map_err(LogupZerocheckError::Round0Eval)?;
+
+                    let logup_entries: Vec<(usize, Vec<EF>, Vec<EF>)> = results
+                        .into_iter()
+                        .map(|(trace_idx, frac_evals)| {
+                            let t = &trace_infos[trace_idx];
+                            let num_cosets_logup = t.local_constraint_deg;
+                            let omega_root = t.omega_root;
+                            let n = n_per_trace[trace_idx];
+
+                            let (mut numer, denom): (Vec<EF>, Vec<EF>) =
+                                frac_evals.into_iter().map(|frac| (frac.p, frac.q)).unzip();
+
+                            if n.is_negative() {
+                                let norm_factor =
+                                    F::from_u32(1 << n.unsigned_abs()).inverse();
+                                for s in &mut numer {
+                                    *s *= norm_factor;
+                                }
+                            }
+
+                            let mut numer_values = EF::zero_vec(num_cosets_logup << l_skip);
+                            let mut denom_values = EF::zero_vec(num_cosets_logup << l_skip);
+                            for coset_idx in 0..num_cosets_logup {
+                                for i in 0..1 << l_skip {
+                                    let src = (coset_idx << l_skip) + i;
+                                    let dst = i * num_cosets_logup + coset_idx;
+                                    numer_values[dst] = numer[src];
+                                    denom_values[dst] = denom[src];
+                                }
+                            }
+                            let numer_coeffs =
+                                UnivariatePoly::from_geometric_cosets_evals_idft(
+                                    RowMajorMatrix::new(numer_values, num_cosets_logup),
+                                    omega_root,
+                                    F::ONE,
+                                )
+                                .into_coeffs();
+                            let denom_coeffs =
+                                UnivariatePoly::from_geometric_cosets_evals_idft(
+                                    RowMajorMatrix::new(denom_values, num_cosets_logup),
+                                    omega_root,
+                                    F::ONE,
+                                )
+                                .into_coeffs();
+                            (trace_idx, numer_coeffs, denom_coeffs)
+                        })
+                        .collect();
+                    for (trace_idx, numer_coeffs, denom_coeffs) in logup_entries {
+                        batch_sp_poly[2 * trace_idx] =
+                            UnivariatePoly::new(numer_coeffs);
+                        batch_sp_poly[2 * trace_idx + 1] =
+                            UnivariatePoly::new(denom_coeffs);
+                        logup_batched[trace_idx] = true;
+                    }
+                    total_lockstep_logup += group_indices.len();
+                }
+                info!(
+                    "batched lockstep logup round0: {total_lockstep_logup} traces in {} groups, {:.1}ms",
+                    lockstep_logup_groups.len(),
+                    lockstep_logup_start.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
+        }
+
         // Loop through one AIR at a time for:
         // - zerocheck: only non-batched traces
         // - logup: only non-batched traces

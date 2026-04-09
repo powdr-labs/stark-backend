@@ -438,6 +438,36 @@ extern "C" {
         out_block_x: *mut u32,
     );
 
+    // logup_round0.cu (batched lockstep)
+    fn _logup_r0_lockstep_batched(
+        num_cosets: u32,
+        is_global: bool,
+        needs_shmem: bool,
+        tmp_sums_buffer: *mut Frac<EF>,
+        output: *mut EF,
+        d_block_ctxs: *const LogupRound0BlockCtx,
+        d_trace_ctxs: *const Round0LogupCtx,
+        segment_offsets: *const u32,
+        skip_domain: u32,
+        num_x: u32,
+        height: u32,
+        blocks_per_trace: u32,
+        g_shift: F,
+        total_blocks: u32,
+        threads_per_block: u32,
+        num_segments: u32,
+    ) -> i32;
+
+    fn _logup_r0_lockstep_launch_params(
+        buffer_size: u32,
+        skip_domain: u32,
+        num_x: u32,
+        num_cosets: u32,
+        max_temp_bytes: usize,
+        out_grid_x: *mut u32,
+        out_block_x: *mut u32,
+    );
+
     // gkr_input.cu (batched)
     fn _gkr_input_eval_batched(
         is_global: bool,
@@ -519,6 +549,37 @@ extern "C" {
     ) -> i32;
 
     fn _zerocheck_r0_batched_launch_params(
+        buffer_size: u32,
+        skip_domain: u32,
+        num_x: u32,
+        num_cosets: u32,
+        max_temp_bytes: usize,
+        out_grid_x: *mut u32,
+        out_block_x: *mut u32,
+    );
+
+    // zerocheck_round0.cu (batched lockstep)
+    fn _zerocheck_r0_lockstep_batched(
+        num_cosets: u32,
+        is_global: bool,
+        needs_shmem: bool,
+        tmp_sums_buffer: *mut EF,
+        output: *mut EF,
+        d_block_ctxs: *const Round0BlockCtx,
+        d_trace_ctxs: *const Round0ZerocheckCtx,
+        d_lambda_pows: *const EF,
+        segment_offsets: *const u32,
+        skip_domain: u32,
+        num_x: u32,
+        height: u32,
+        blocks_per_trace: u32,
+        g_shift: F,
+        total_blocks: u32,
+        threads_per_block: u32,
+        num_segments: u32,
+    ) -> i32;
+
+    fn _zerocheck_r0_lockstep_launch_params(
         buffer_size: u32,
         skip_domain: u32,
         num_x: u32,
@@ -1671,6 +1732,140 @@ pub fn logup_r0_batched_launch_params(
     let mut block_x: u32 = 0;
     unsafe {
         _logup_r0_batched_launch_params(
+            buffer_size,
+            skip_domain,
+            num_x,
+            num_cosets,
+            max_temp_bytes,
+            &mut grid_x,
+            &mut block_x,
+        );
+    }
+    (grid_x, block_x)
+}
+
+// ============================================================================
+// Batched lockstep round-0 zerocheck
+// ============================================================================
+
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn zerocheck_r0_lockstep_batched(
+    num_cosets: u32,
+    is_global: bool,
+    needs_shmem: bool,
+    tmp_sums_buffer: &mut DeviceBuffer<EF>,
+    output: &mut DeviceBuffer<EF>,
+    d_block_ctxs: &DeviceBuffer<Round0BlockCtx>,
+    d_trace_ctxs: &DeviceBuffer<Round0ZerocheckCtx>,
+    d_lambda_pows: &DeviceBuffer<EF>,
+    segment_offsets: &DeviceBuffer<u32>,
+    skip_domain: u32,
+    num_x: u32,
+    height: u32,
+    blocks_per_trace: u32,
+    g_shift: F,
+    total_blocks: u32,
+    threads_per_block: u32,
+    num_segments: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_zerocheck_r0_lockstep_batched(
+        num_cosets,
+        is_global,
+        needs_shmem,
+        tmp_sums_buffer.as_mut_ptr(),
+        output.as_mut_ptr(),
+        d_block_ctxs.as_ptr(),
+        d_trace_ctxs.as_ptr(),
+        d_lambda_pows.as_ptr(),
+        segment_offsets.as_ptr(),
+        skip_domain,
+        num_x,
+        height,
+        blocks_per_trace,
+        g_shift,
+        total_blocks,
+        threads_per_block,
+        num_segments,
+    ))
+}
+
+pub fn zerocheck_r0_lockstep_launch_params(
+    buffer_size: u32,
+    skip_domain: u32,
+    num_x: u32,
+    num_cosets: u32,
+    max_temp_bytes: usize,
+) -> (u32, u32) {
+    let mut grid_x: u32 = 0;
+    let mut block_x: u32 = 0;
+    unsafe {
+        _zerocheck_r0_lockstep_launch_params(
+            buffer_size,
+            skip_domain,
+            num_x,
+            num_cosets,
+            max_temp_bytes,
+            &mut grid_x,
+            &mut block_x,
+        );
+    }
+    (grid_x, block_x)
+}
+
+// ============================================================================
+// Batched lockstep round-0 logup
+// ============================================================================
+
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn logup_r0_lockstep_batched(
+    num_cosets: u32,
+    is_global: bool,
+    needs_shmem: bool,
+    tmp_sums_buffer: &mut DeviceBuffer<Frac<EF>>,
+    output: &mut DeviceBuffer<EF>,
+    d_block_ctxs: &DeviceBuffer<LogupRound0BlockCtx>,
+    d_trace_ctxs: &DeviceBuffer<Round0LogupCtx>,
+    segment_offsets: &DeviceBuffer<u32>,
+    skip_domain: u32,
+    num_x: u32,
+    height: u32,
+    blocks_per_trace: u32,
+    g_shift: F,
+    total_blocks: u32,
+    threads_per_block: u32,
+    num_segments: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_logup_r0_lockstep_batched(
+        num_cosets,
+        is_global,
+        needs_shmem,
+        tmp_sums_buffer.as_mut_ptr(),
+        output.as_mut_ptr(),
+        d_block_ctxs.as_ptr(),
+        d_trace_ctxs.as_ptr(),
+        segment_offsets.as_ptr(),
+        skip_domain,
+        num_x,
+        height,
+        blocks_per_trace,
+        g_shift,
+        total_blocks,
+        threads_per_block,
+        num_segments,
+    ))
+}
+
+pub fn logup_r0_lockstep_launch_params(
+    buffer_size: u32,
+    skip_domain: u32,
+    num_x: u32,
+    num_cosets: u32,
+    max_temp_bytes: usize,
+) -> (u32, u32) {
+    let mut grid_x: u32 = 0;
+    let mut block_x: u32 = 0;
+    unsafe {
+        _logup_r0_lockstep_launch_params(
             buffer_size,
             skip_domain,
             num_x,

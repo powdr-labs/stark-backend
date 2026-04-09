@@ -1008,4 +1008,267 @@ extern "C" void _zerocheck_r0_batched_launch_params(
     *out_block_x = block.x;
 }
 
+// ============================================================================
+// Batched lockstep round-0 zerocheck
+// ============================================================================
+
+// Lockstep batched kernel: same evaluation as the single-trace lockstep kernel
+// but reads per-trace data from context arrays. NUM_COSETS > 1 per block.
+template <uint32_t NUM_COSETS, bool GLOBAL, bool NEEDS_SHMEM>
+__global__ void zerocheck_r0_lockstep_batched_kernel(
+    FpExt *__restrict__ tmp_sums_buffer,       // [total_spatial_rows][NUM_COSETS * skip_domain]
+    const Round0BlockCtx *__restrict__ d_block_ctxs,
+    const Round0ZerocheckCtx *__restrict__ d_trace_ctxs,
+    const FpExt *__restrict__ d_lambda_pows,
+    uint32_t skip_domain,
+    uint32_t num_x,
+    uint32_t height,
+    uint32_t blocks_per_trace,
+    Fp g_shift
+) {
+    extern __shared__ char smem[];
+    FpExt *shared_sum = reinterpret_cast<FpExt *>(smem);
+    Fp *ntt_buffers_base =
+        NEEDS_SHMEM ? reinterpret_cast<Fp *>(smem + blockDim.x * sizeof(FpExt)) : nullptr;
+
+    // Read per-block and per-trace context
+    Round0BlockCtx const bctx = d_block_ctxs[blockIdx.x];
+    Round0ZerocheckCtx const ctx = d_trace_ctxs[bctx.air_idx];
+
+    uint32_t const l_skip = __ffs(skip_domain) - 1;
+
+    uint32_t const x_int_in_block = threadIdx.x >> l_skip;
+    Fp *ntt_buffer = NEEDS_SHMEM ? (ntt_buffers_base + x_int_in_block * skip_domain) : nullptr;
+
+    // Use local_block_idx_x for spatial indexing within this trace
+    uint32_t const tidx = threadIdx.x + bctx.local_block_idx_x * blockDim.x;
+    uint32_t const ntt_idx = tidx & (skip_domain - 1);
+    uint32_t const x_int_base = tidx >> l_skip;
+
+    uint32_t const ntt_idx_rev = rev_len(ntt_idx, l_skip);
+
+    uint32_t const log_height_total = __ffs(height) - 1;
+    uint32_t const log_segment = min(l_skip, log_height_total);
+    uint32_t const segment_size = 1u << log_segment;
+    uint32_t const log_stride = l_skip - log_segment;
+
+    Fp is_first_mult[NUM_COSETS];
+    Fp is_last_mult[NUM_COSETS];
+    Fp const eta = TWO_ADIC_GENERATORS[l_skip - log_stride];
+    Fp const omega_skip_ntt =
+        (l_skip == 0) ? Fp::one() : device_ntt::get_twiddle(l_skip, ntt_idx);
+
+    Fp g_coset = g_shift;
+#pragma unroll
+    for (uint32_t c = 0; c < NUM_COSETS; c++) {
+        Fp eval_point = g_coset * omega_skip_ntt;
+        Fp omega = exp_power_of_2(eval_point, log_stride);
+        is_first_mult[c] = avg_gp(omega, segment_size);
+        is_last_mult[c] = avg_gp(omega * eta, segment_size);
+        g_coset *= g_shift;
+    }
+
+    // Intermediate buffer setup
+    Fp local_buffer[GLOBAL ? 1 : BUFFER_THRESHOLD * NUM_COSETS];
+    Fp *inter_buffer;
+    uint32_t buffer_stride;
+    if constexpr (GLOBAL) {
+        inter_buffer = ctx.d_intermediates + tidx * NUM_COSETS;
+        buffer_stride = blocks_per_trace * blockDim.x * NUM_COSETS;
+    } else {
+        inter_buffer = local_buffer;
+        buffer_stride = NUM_COSETS;
+    }
+
+    FpExt sums[NUM_COSETS] = {};
+
+    // Stride uses blocks_per_trace (not gridDim.x, which covers all traces)
+    uint32_t const x_int_stride = (blocks_per_trace * blockDim.x) >> l_skip;
+
+    NttEvalContext<NUM_COSETS> eval_ctx{
+        ctx.preprocessed,
+        ctx.main_parts,
+        ctx.public_values,
+        inter_buffer,
+        ntt_buffer,
+        {},
+        skip_domain,
+        height,
+        buffer_stride,
+        ctx.buffer_size,
+        ntt_idx,
+    };
+    Fp const omega_shift_base = pow(g_shift, ntt_idx_rev);
+    Fp omega_shift = omega_shift_base;
+#pragma unroll
+    for (uint32_t c = 0; c < NUM_COSETS; c++) {
+        eval_ctx.omega_shifts[c] = omega_shift;
+        omega_shift *= omega_shift_base;
+    }
+
+    for (uint32_t x_int = x_int_base; x_int < num_x; x_int += x_int_stride) {
+        Fp is_first[NUM_COSETS];
+        Fp is_last[NUM_COSETS];
+#pragma unroll
+        for (uint32_t c = 0; c < NUM_COSETS; c++) {
+            is_first[c] = is_first_mult[c] * ctx.selectors_cube[x_int];
+            is_last[c] = is_last_mult[c] * ctx.selectors_cube[2 * num_x + x_int];
+        }
+
+        FpExt constraint_sums[NUM_COSETS];
+        acc_constraints<NUM_COSETS, NEEDS_SHMEM>(
+            constraint_sums,
+            eval_ctx,
+            is_first,
+            is_last,
+            x_int,
+            d_lambda_pows,
+            ctx.d_rules,
+            ctx.rules_len,
+            ctx.d_used_nodes,
+            ctx.used_nodes_len,
+            ctx.lambda_len
+        );
+
+        FpExt eq = ctx.eq_cube[x_int];
+#pragma unroll
+        for (uint32_t c = 0; c < NUM_COSETS; c++) {
+            sums[c] += constraint_sums[c] * eq;
+        }
+    }
+
+    // Reduction: one coset at a time
+    g_coset = g_shift;
+#pragma unroll
+    for (uint32_t c = 0; c < NUM_COSETS; c++) {
+        Fp eval_point = g_coset * omega_skip_ntt;
+        Fp zerofier = exp_power_of_2(eval_point, l_skip) - Fp::one();
+
+        shared_sum[threadIdx.x] = sums[c] * inv(zerofier);
+        __syncthreads();
+
+        if (threadIdx.x < skip_domain) {
+            FpExt tile_sum = shared_sum[threadIdx.x];
+            for (uint32_t lane = 1; lane < (blockDim.x >> l_skip); ++lane) {
+                tile_sum += shared_sum[(lane << l_skip) + threadIdx.x];
+            }
+            uint32_t const d = NUM_COSETS * skip_domain;
+            uint32_t const row_idx = bctx.row_base + bctx.local_block_idx_x;
+            tmp_sums_buffer[row_idx * d + c * skip_domain + ntt_idx] = tile_sum;
+        }
+        __syncthreads();
+        g_coset *= g_shift;
+    }
+}
+
+// Batched lockstep launcher
+template <uint32_t NUM_COSETS, bool GLOBAL, bool NEEDS_SHMEM>
+int launch_zerocheck_r0_lockstep_batched(
+    FpExt *tmp_sums_buffer,
+    FpExt *output,
+    const Round0BlockCtx *d_block_ctxs,
+    const Round0ZerocheckCtx *d_trace_ctxs,
+    const FpExt *d_lambda_pows,
+    const uint32_t *segment_offsets,
+    uint32_t skip_domain,
+    uint32_t num_x,
+    uint32_t height,
+    uint32_t blocks_per_trace,
+    Fp g_shift,
+    uint32_t total_blocks,
+    uint32_t threads_per_block,
+    uint32_t num_segments
+) {
+    uint32_t const d = NUM_COSETS * skip_domain;
+
+    size_t shared_sum_size = sizeof(FpExt) * threads_per_block;
+    size_t ntt_buffers_size = NEEDS_SHMEM ? sizeof(Fp) * threads_per_block : 0;
+    size_t shmem_bytes = shared_sum_size + ntt_buffers_size;
+
+    zerocheck_r0_lockstep_batched_kernel<NUM_COSETS, GLOBAL, NEEDS_SHMEM>
+        <<<total_blocks, threads_per_block, shmem_bytes>>>(
+            tmp_sums_buffer,
+            d_block_ctxs,
+            d_trace_ctxs,
+            d_lambda_pows,
+            skip_domain,
+            num_x,
+            height,
+            blocks_per_trace,
+            g_shift
+        );
+    int err = CHECK_KERNEL();
+    if (err != 0) return err;
+
+    // Segmented reduction
+    auto [reduce_grid_1d, reduce_block] = kernel_launch_params(blocks_per_trace);
+    unsigned int reduce_warps = div_ceil(reduce_block.x, WARP_SIZE);
+    size_t reduce_shmem = std::max(1u, reduce_warps) * sizeof(FpExt);
+    dim3 reduce_grid(num_segments, d);
+    sumcheck::batched_final_reduce_block_sums<<<reduce_grid, reduce_block, reduce_shmem>>>(
+        tmp_sums_buffer, output, segment_offsets, d
+    );
+
+    return CHECK_KERNEL();
+}
+
+DEFINE_DISPATCH_N_B1_B2(dispatch_zerocheck_lockstep_batched, launch_zerocheck_r0_lockstep_batched, 4)
+
+extern "C" int _zerocheck_r0_lockstep_batched(
+    uint32_t num_cosets,
+    bool is_global,
+    bool needs_shmem,
+    FpExt *tmp_sums_buffer,
+    FpExt *output,
+    const Round0BlockCtx *d_block_ctxs,
+    const Round0ZerocheckCtx *d_trace_ctxs,
+    const FpExt *d_lambda_pows,
+    const uint32_t *segment_offsets,
+    uint32_t skip_domain,
+    uint32_t num_x,
+    uint32_t height,
+    uint32_t blocks_per_trace,
+    Fp g_shift,
+    uint32_t total_blocks,
+    uint32_t threads_per_block,
+    uint32_t num_segments
+) {
+    return dispatch_zerocheck_lockstep_batched(
+        num_cosets,
+        is_global,
+        needs_shmem,
+        tmp_sums_buffer,
+        output,
+        d_block_ctxs,
+        d_trace_ctxs,
+        d_lambda_pows,
+        segment_offsets,
+        skip_domain,
+        num_x,
+        height,
+        blocks_per_trace,
+        g_shift,
+        total_blocks,
+        threads_per_block,
+        num_segments
+    );
+}
+
+// Lockstep launch-param helper
+extern "C" void _zerocheck_r0_lockstep_launch_params(
+    uint32_t buffer_size,
+    uint32_t skip_domain,
+    uint32_t num_x,
+    uint32_t num_cosets,
+    size_t max_temp_bytes,
+    uint32_t *out_grid_x,
+    uint32_t *out_block_x
+) {
+    auto [grid, block] = coset_round0_config::eval_constraints_launch_params(
+        buffer_size, skip_domain, num_x, num_cosets, max_temp_bytes, BUFFER_THRESHOLD, MAX_THREADS
+    );
+    *out_grid_x = grid.x;
+    *out_block_x = block.x;
+}
+
 } // namespace zerocheck_round0
