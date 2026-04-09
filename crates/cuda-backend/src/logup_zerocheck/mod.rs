@@ -929,6 +929,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     let logup_buffer = evaluate_round0_interactions_gpu(
                         single_pk,
                         &single_air_constraints,
+                        single_pk.other_data.round0_logup.as_ref(),
                         selectors_cube.buffer(),
                         &d_main_parts,
                         public_values,

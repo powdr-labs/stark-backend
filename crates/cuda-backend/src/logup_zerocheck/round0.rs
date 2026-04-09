@@ -26,6 +26,7 @@ use crate::{
     gpu_backend::GenericGpuBackend,
     hash_scheme::GpuHashScheme,
     logup_zerocheck::rules::{codec::Codec, SymbolicRulesGpu},
+    pkey::Round0LogupCached,
     prelude::{EF, F},
 };
 
@@ -138,6 +139,7 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
 pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
     pk: &DeviceStarkProvingKey<GenericGpuBackend<HS>>,
     symbolic: &SymbolicConstraints<F>,
+    cached: Option<&Round0LogupCached>,
     selectors_cube: &DeviceBuffer<F>,
     main_parts: &DeviceBuffer<*const F>,
     public_values: &DeviceBuffer<F>,
@@ -157,14 +159,39 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
     }
     let large_domain = num_cosets * skip_domain;
 
-    // We create a new "interactions DAG" where the new .constraints are the interaction [count,
-    // message_0, message_1, ..] expressions themselves, while the .interactions are empty
-    // We track the indices with InteractionNode
+    // Build weights and resolve rules. When `cached` is `Some`, reuse the pre-built DAG/rules
+    // from the proving key. Otherwise rebuild from scratch (fallback).
+    struct Round0Setup {
+        d_rules_owned: Option<DeviceBuffer<u128>>,
+        buffer_size: u32,
+        d_numer_weights: DeviceBuffer<EF>,
+        d_denom_weights: DeviceBuffer<EF>,
+        denom_sum_init: EF,
+    }
 
-    // Copied from build_symbolic_constraints_dag to handle sorting of constraints
-    // NOTE: For logup round0, the kernel uses weights indexed by rule_idx, not constraint_idx.
-    // So we deduplicate constraint_idx and use dag_idx_to_rule_idx for weight mapping.
-    let (rules, d_numer_weights, d_denom_weights, denom_sum_init) = {
+    let setup = if let Some(c) = cached {
+        // Fast path: reuse cached DAG/rules, only compute per-proof weights.
+        let mut numer_weights = vec![EF::ZERO; c.num_rules];
+        let mut denom_weights = vec![EF::ZERO; c.num_rules];
+        let mut denom_sum_init = EF::ZERO;
+        for (interaction_idx, info) in c.interaction_info.iter().enumerate() {
+            numer_weights[info.count_rule_idx] += eq_3bs[interaction_idx];
+            denom_sum_init += eq_3bs[interaction_idx]
+                * beta_pows[info.message_len]
+                * F::from_u32(info.bus_index + 1);
+            for (message_idx, &rule_idx) in info.message_rule_idxs.iter().enumerate() {
+                denom_weights[rule_idx] += eq_3bs[interaction_idx] * beta_pows[message_idx];
+            }
+        }
+        Round0Setup {
+            d_rules_owned: None,
+            buffer_size: c.buffer_size,
+            d_numer_weights: numer_weights.to_device()?,
+            d_denom_weights: denom_weights.to_device()?,
+            denom_sum_init,
+        }
+    } else {
+        // Fallback: rebuild DAG and rules from symbolic constraints.
         let mut dag_builder = SymbolicDagBuilder::new();
         let mut sorted_used_dag_idxs = Vec::new();
         for interaction in &symbolic.interactions {
@@ -178,7 +205,6 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
             );
         }
         sorted_used_dag_idxs.sort();
-        // Deduplicate for the dag since logup round0 kernel doesn't use used_nodes
         sorted_used_dag_idxs.dedup();
         let dag = SymbolicExpressionDag {
             nodes: dag_builder.nodes,
@@ -189,9 +215,6 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
         let mut denom_weights = vec![EF::ZERO; rules.rules.len()];
         let mut denom_sum_init = EF::ZERO;
         for (interaction_idx, interaction) in symbolic.interactions.iter().enumerate() {
-            // CAUTION: an expression node could be used in multiple interactions, and might even be
-            // used as `count` in one, but message field in another. We only care about their
-            // weighted sum with eq_3b, so we compute the weights ahead of time.
             let count_dag_idx =
                 dag_builder.expr_to_idx[&(&interaction.count as *const SymbolicExpression<_>)];
             let count_rule_idx = rules.dag_idx_to_rule_idx[&count_dag_idx];
@@ -199,23 +222,31 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
             denom_sum_init += eq_3bs[interaction_idx]
                 * beta_pows[interaction.message.len()]
                 * F::from_u32(interaction.bus_index as u32 + 1);
-
             for (message_idx, message) in interaction.message.iter().enumerate() {
                 let message_dag_idx =
                     dag_builder.expr_to_idx[&(message as *const SymbolicExpression<_>)];
                 let message_rule_idx = rules.dag_idx_to_rule_idx[&message_dag_idx];
-                denom_weights[message_rule_idx] += eq_3bs[interaction_idx] * beta_pows[message_idx];
+                denom_weights[message_rule_idx] +=
+                    eq_3bs[interaction_idx] * beta_pows[message_idx];
             }
         }
-        let d_numer_weights = numer_weights.to_device()?;
-        let d_denom_weights = denom_weights.to_device()?;
-        (rules, d_numer_weights, d_denom_weights, denom_sum_init)
+        let encoded_rules = rules.rules.iter().map(|c| c.encode()).collect_vec();
+        Round0Setup {
+            d_rules_owned: Some(encoded_rules.to_device()?),
+            buffer_size: rules.buffer_size.try_into().unwrap(),
+            d_numer_weights: numer_weights.to_device()?,
+            d_denom_weights: denom_weights.to_device()?,
+            denom_sum_init,
+        }
     };
 
-    let encoded_rules = rules.rules.iter().map(|c| c.encode()).collect_vec();
-    let d_rules = encoded_rules.to_device()?;
-
-    let buffer_size: u32 = rules.buffer_size.try_into().unwrap();
+    // Resolve d_rules reference: either from cache or from the owned buffer in setup.
+    let d_rules_ref = match (cached, &setup.d_rules_owned) {
+        (Some(c), _) => &c.d_rules,
+        (_, Some(owned)) => owned,
+        _ => unreachable!("d_rules_owned must be Some when cached is None"),
+    };
+    let buffer_size: u32 = setup.buffer_size;
     let intermed_capacity = unsafe {
         _logup_r0_intermediates_buffer_size(
             buffer_size,
@@ -262,10 +293,10 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
             main_parts,
             eq_cube,
             public_values,
-            &d_numer_weights,
-            &d_denom_weights,
-            denom_sum_init,
-            &d_rules,
+            &setup.d_numer_weights,
+            &setup.d_denom_weights,
+            setup.denom_sum_init,
+            d_rules_ref,
             buffer_size,
             &mut intermediates,
             skip_domain,
