@@ -727,71 +727,165 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             .as_ref()
             .expect("lambda powers must be set before round-0 evaluation");
 
-        // Loop through one AIR at a time; it is more efficient to do everything for one AIR
-        // together
-        for (trace_idx, ((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs)) in izip!(
-            &ctx.per_trace,
-            &self.n_per_trace,
-            &selectors_base,
-            &self.public_values_per_trace,
-            &self.eq_3b_per_trace,
-        )
-        .enumerate()
-        {
-            debug!("starting batch constraints for air_idx={air_idx} (trace_idx={trace_idx})");
-            let single_pk = &self.pk.per_air[*air_idx];
-            // Includes both plain AIR constraints and symbolic interactions
-            let single_air_constraints =
-                SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
-            let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
-            debug_assert_eq!(
-                single_air_constraints.max_constraint_degree(),
-                local_constraint_deg
-            );
-            assert!(
-                local_constraint_deg <= self.constraint_degree,
-                "Max constraint degree ({local_constraint_deg}) of AIR {air_idx} exceeds the global maximum {}",
-                self.constraint_degree
-            );
+        // --- Phase 1: GPU kernel launches ---
+        // With many small APC AIRs, launch kernels across multiple OS threads to overlap
+        // on separate CUDA streams (enabled by --default-stream=per-thread compilation).
+        // D2H transfers and CPU postprocessing happen after all kernels complete.
 
-            let log_large_domain = log2_ceil_usize(local_constraint_deg << l_skip);
-            let omega_root = F::two_adic_generator(log_large_domain);
+        // Holds GPU-side outputs from Round 0 evaluation of a single AIR.
+        struct Round0GpuOutput {
+            trace_idx: usize,
+            n: isize,
+            local_constraint_deg: usize,
+            omega_root: F,
+            zc_buffer: DeviceBuffer<EF>,
+            logup_buffer: DeviceBuffer<Frac<EF>>,
+        }
 
-            assert!(!xi.is_empty(), "xi vector must not be empty");
+        // Extract immutable refs for the parallel phase (self is &mut but loop body only reads)
+        let pk_per_air = &self.pk.per_air;
+        let eq_xis_ref = &self.eq_xis;
+        let beta_pows_ref = &self.beta_pows;
+        let constraint_degree = self.constraint_degree;
+        let max_temp_bytes = self.memory_limit_bytes;
+        let n_per_trace = &self.n_per_trace;
+        let public_values_per_trace = &self.public_values_per_trace;
+        let eq_3b_per_trace = &self.eq_3b_per_trace;
+        let per_trace = &ctx.per_trace;
 
-            let height = air_ctx.common_main.height();
-            let mut main_parts = Vec::with_capacity(air_ctx.cached_mains.len() + 1);
-            for committed in &air_ctx.cached_mains {
-                main_parts.push(committed.trace.buffer().as_ptr());
-            }
-            main_parts.push(air_ctx.common_main.buffer().as_ptr());
-            let d_main_parts = main_parts.to_device()?;
+        // Process a range of trace indices, launching GPU kernels and returning DeviceBuffers.
+        let process_range =
+            |start: usize,
+             end: usize|
+             -> Result<Vec<Round0GpuOutput>, LogupZerocheckError> {
+                let mut results = Vec::with_capacity(end - start);
+                for trace_idx in start..end {
+                    let (air_idx, air_ctx) = &per_trace[trace_idx];
+                    let n = n_per_trace[trace_idx];
+                    let selectors_cube = &selectors_base[trace_idx];
+                    let public_values = &public_values_per_trace[trace_idx];
+                    let eq_3bs = &eq_3b_per_trace[trace_idx];
 
-            let n_lift = n.max(0) as usize;
-            let eq_xi_tree = &self.eq_xis[&n_lift];
-            let max_temp_bytes = self.memory_limit_bytes;
-            // local_constraint_deg = 0 means no constraints. The only way that linear constraints
-            // on trace polynomials could vanish on 2^l_skip points is if the constraint polynomial
-            // is identically zero. Thus for local_constraint_deg = 0 or 1, we must have `s'_0 = 0`.
-            let num_cosets_zc = local_constraint_deg.saturating_sub(1);
-            let sum_buffer = evaluate_round0_constraints_gpu(
-                single_pk,
-                selectors_cube.buffer(),
-                &d_main_parts,
-                public_values,
-                eq_xi_tree.get_ptr(n_lift),
-                d_lambda_pows,
-                1 << l_skip,
-                1 << n_lift,
-                height as u32,
-                num_cosets_zc as u32,
+                    debug!(
+                        "starting batch constraints for air_idx={air_idx} (trace_idx={trace_idx})"
+                    );
+                    let single_pk = &pk_per_air[*air_idx];
+                    let single_air_constraints =
+                        SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
+                    let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
+                    debug_assert_eq!(
+                        single_air_constraints.max_constraint_degree(),
+                        local_constraint_deg
+                    );
+                    assert!(
+                        local_constraint_deg <= constraint_degree,
+                        "Max constraint degree ({local_constraint_deg}) of AIR {air_idx} exceeds \
+                         the global maximum {constraint_degree}"
+                    );
+
+                    let log_large_domain = log2_ceil_usize(local_constraint_deg << l_skip);
+                    let omega_root = F::two_adic_generator(log_large_domain);
+                    assert!(!xi.is_empty(), "xi vector must not be empty");
+
+                    let height = air_ctx.common_main.height();
+                    let mut main_parts = Vec::with_capacity(air_ctx.cached_mains.len() + 1);
+                    for committed in &air_ctx.cached_mains {
+                        main_parts.push(committed.trace.buffer().as_ptr());
+                    }
+                    main_parts.push(air_ctx.common_main.buffer().as_ptr());
+                    let d_main_parts = main_parts.to_device()?;
+
+                    let n_lift = n.max(0) as usize;
+                    let eq_xi_tree = &eq_xis_ref[&n_lift];
+
+                    let num_cosets_zc = local_constraint_deg.saturating_sub(1);
+                    let zc_buffer = evaluate_round0_constraints_gpu(
+                        single_pk,
+                        selectors_cube.buffer(),
+                        &d_main_parts,
+                        public_values,
+                        eq_xi_tree.get_ptr(n_lift),
+                        d_lambda_pows,
+                        1 << l_skip,
+                        1 << n_lift,
+                        height as u32,
+                        num_cosets_zc as u32,
+                        omega_root,
+                        max_temp_bytes,
+                    )?;
+
+                    let num_cosets_logup = local_constraint_deg;
+                    let logup_buffer = evaluate_round0_interactions_gpu(
+                        single_pk,
+                        &single_air_constraints,
+                        selectors_cube.buffer(),
+                        &d_main_parts,
+                        public_values,
+                        eq_xi_tree.get_ptr(n_lift),
+                        beta_pows_ref,
+                        eq_3bs,
+                        1 << l_skip,
+                        1 << n_lift,
+                        height as u32,
+                        num_cosets_logup as u32,
+                        omega_root,
+                        max_temp_bytes,
+                    )?;
+
+                    results.push(Round0GpuOutput {
+                        trace_idx,
+                        n,
+                        local_constraint_deg,
+                        omega_root,
+                        zc_buffer,
+                        logup_buffer,
+                    });
+                }
+                Ok(results)
+            };
+
+        // Gate parallelism on AIR count: many small AIRs benefit from stream overlap.
+        const PARALLEL_STREAMS_THRESHOLD: usize = 100;
+        const NUM_ROUND0_THREADS: usize = 4;
+
+        let gpu_outputs: Vec<Round0GpuOutput> = if num_present_airs > PARALLEL_STREAMS_THRESHOLD {
+            let num_threads = NUM_ROUND0_THREADS.min(num_present_airs);
+            let chunk_size = (num_present_airs + num_threads - 1) / num_threads;
+            std::thread::scope(|s| {
+                let handles: Vec<_> = (0..num_present_airs)
+                    .step_by(chunk_size)
+                    .map(|start| {
+                        let end = (start + chunk_size).min(num_present_airs);
+                        s.spawn(move || process_range(start, end))
+                    })
+                    .collect();
+                let mut all_results = Vec::with_capacity(num_present_airs);
+                for handle in handles {
+                    let thread_result =
+                        handle.join().unwrap_or_else(|e| std::panic::resume_unwind(e));
+                    all_results.extend(thread_result?);
+                }
+                Ok::<_, LogupZerocheckError>(all_results)
+            })?
+        } else {
+            process_range(0, num_present_airs)?
+        };
+
+        // --- Phase 2: D2H transfers + CPU postprocessing (sequential) ---
+        for output in gpu_outputs {
+            let Round0GpuOutput {
+                trace_idx,
+                n,
+                local_constraint_deg,
                 omega_root,
-                max_temp_bytes,
-            )?;
-            if !sum_buffer.is_empty() {
-                let q_evals = sum_buffer.to_host()?;
+                zc_buffer,
+                logup_buffer,
+            } = output;
+            let num_cosets_zc = local_constraint_deg.saturating_sub(1);
+
+            if !zc_buffer.is_empty() {
+                let q_evals = zc_buffer.to_host()?;
                 let q = {
-                    // Make q_evals row-major, with columns <> cosets
                     let mut values = EF::zero_vec(num_cosets_zc << l_skip);
                     for coset_idx in 0..num_cosets_zc {
                         for i in 0..1 << l_skip {
@@ -805,7 +899,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                         omega_root,
                     )
                 };
-                // sp_0 = (Z^{2^l_skip} - 1) * q
                 let sp_0_deg = sumcheck_round0_deg(l_skip, local_constraint_deg);
                 let coeffs = (0..=sp_0_deg)
                     .map(|i| {
@@ -822,34 +915,15 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     "Zerocheck sum is not zero for air_id: {}",
                     ctx.per_trace[trace_idx].0
                 );
-
                 batch_sp_poly[2 * num_present_airs + trace_idx] = UnivariatePoly::new(coeffs);
             }
 
-            // PERF: we could use an interaction-specific constraint degree here
             let num_cosets_logup = local_constraint_deg;
-            let sum = evaluate_round0_interactions_gpu(
-                single_pk,
-                &single_air_constraints,
-                selectors_cube.buffer(),
-                &d_main_parts,
-                public_values,
-                eq_xi_tree.get_ptr(n_lift),
-                &self.beta_pows,
-                eq_3bs,
-                1 << l_skip,
-                1 << n_lift,
-                height as u32,
-                num_cosets_logup as u32,
-                omega_root,
-                max_temp_bytes,
-            )?;
-            if !sum.is_empty() {
-                let evals = sum.to_host()?;
+            if !logup_buffer.is_empty() {
+                let evals = logup_buffer.to_host()?;
                 let (mut numer, denom): (Vec<EF>, Vec<EF>) =
                     evals.into_iter().map(|frac| (frac.p, frac.q)).unzip();
                 if n.is_negative() {
-                    // normalize for lifting
                     let norm_factor = F::from_u32(1 << n.unsigned_abs()).inverse();
                     for s in &mut numer {
                         *s *= norm_factor;
@@ -865,17 +939,17 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                         denom_values[dst] = denom[src];
                     }
                 }
-                // Logup uses cosets 1, g^1, g^2, ... (init = 1, shift = omega_root)
                 batch_sp_poly[2 * trace_idx] = UnivariatePoly::from_geometric_cosets_evals_idft(
                     RowMajorMatrix::new(numer_values, num_cosets_logup),
                     omega_root,
-                    F::ONE, // init = 1 for identity coset
+                    F::ONE,
                 );
-                batch_sp_poly[2 * trace_idx + 1] = UnivariatePoly::from_geometric_cosets_evals_idft(
-                    RowMajorMatrix::new(denom_values, num_cosets_logup),
-                    omega_root,
-                    F::ONE, // init = 1 for identity coset
-                );
+                batch_sp_poly[2 * trace_idx + 1] =
+                    UnivariatePoly::from_geometric_cosets_evals_idft(
+                        RowMajorMatrix::new(denom_values, num_cosets_logup),
+                        omega_root,
+                        F::ONE,
+                    );
             }
         }
         self.mem
