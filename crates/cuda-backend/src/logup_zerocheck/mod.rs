@@ -846,7 +846,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
 
         // Gate parallelism on AIR count: many small AIRs benefit from stream overlap.
         const PARALLEL_STREAMS_THRESHOLD: usize = 100;
-        const NUM_ROUND0_THREADS: usize = 4;
+        const NUM_ROUND0_THREADS: usize = 8;
 
         let gpu_outputs: Vec<Round0GpuOutput> = if num_present_airs > PARALLEL_STREAMS_THRESHOLD {
             let num_threads = NUM_ROUND0_THREADS.min(num_present_airs);
