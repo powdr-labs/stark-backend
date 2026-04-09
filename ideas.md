@@ -1,36 +1,24 @@
 # GPU Prover Optimization Ideas
 
-Current best APC300 STARK excl. trace: **~1612ms** (baseline 2491ms, **-35.3%**)
-Target (<1084ms): gap ~528ms. This gap is structurally limited:
-- GKR fractional sumcheck: ~400ms (sequential Fiat-Shamir, cannot pipeline)
-- Trace Commit: ~419ms (Poseidon2 cryptographic hashing)
-- These alone: ~819ms, leaving only 265ms for everything else
+Current best APC300 STARK excl. trace: **~1573ms** (baseline 2491ms, **-36.9%**)
+Target (<1084ms): gap ~489ms, dominated by GKR (~593ms) + Trace Commit (~417ms).
 
-Reaching the 2x target requires either protocol-level changes or faster
-cryptographic primitives, both out of scope.
+## Still to try
 
-APC300 breakdown: GKR 602ms | Trace Commit 417ms | Round 0 216ms | MLE 179ms | Stacked 88ms | WHIR 100ms
+### 1. Batch d_eq_3b uploads into single transfer
+600 per-trace H2D transfers for eq_3b → single concatenated upload with offset tracking.
+Expected: ~3-5ms.
 
-## Remaining practical ideas (diminishing returns)
+### 2. Overlap eq_xis construction with d_eq_3b upload
+eq_xis and d_eq_3b upload are independent. Run on separate threads/streams.
+Expected: ~2-3ms overlap.
 
-### 1. Reduce MLE fold allocation count
-Pre-allocate output buffers for fold_mle_evals (ping-pong pattern).
-~5000 allocations through VPMM mutex per proof. Expected: ~10-20ms.
+### 3. Batch non-degenerate stacked reduction MLE kernel (5076 launches, 21.7ms)
+Similar to degenerate batching. Expected: ~15ms.
 
-### 2. Logup Round 0 kernel batching (CUDA kernel)
-Need new batched CUDA kernel for barycentric/NTT logup evaluation.
-Expected: ~30-50ms.
+### 4. Pre-allocate GKR leaves buffer before STARK span
+Move the 512MB VPMM allocation cost (~170ms for seg0) outside of STARK excl trace.
+Challenge: fragmentation for APC000. Needs size-aware approach.
 
-### 3. VPMM page pre-commitment
-GKR input eval segment 0 pays 170ms cuMemSetAccess penalty for first
-large allocation. Pre-warming during commit (outside STARK span)
-helps APC300 but hurts APC000 (fragmentation). Needs size-aware pre-warming.
-Expected: ~100-170ms for APC300 STARK, negative impact on APC000.
-
-### 4. Investigate Poseidon2 kernel optimization
-231ms for row hashing. Check if there's a faster compression approach
-for narrow stacked matrices (27 columns per row for APC300).
-
-### 5. Multi-GPU distribution
-Use 2+ GPUs to parallelize segment processing. Each GPU handles one
-segment independently. Expected: ~2x speedup for 2 segments.
+### 5. Investigate GPU occupancy for hot kernels
+Use ncu to check if any kernel has low occupancy that could be improved with launch bounds.
