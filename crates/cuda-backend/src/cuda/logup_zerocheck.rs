@@ -96,6 +96,28 @@ pub struct LogupMonomialCtx {
 }
 // end of types for batch MLE
 
+// Types for round-0 GPU postprocess (evals → coefficients):
+
+/// Per-trace context for zerocheck GPU postprocess.
+/// Must match CUDA `ZcPostprocessCtx` in `round0_postprocess.cu`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ZcPostprocessCtx {
+    pub eval_offset: u32,
+    pub coeff_offset: u32,
+}
+
+/// Per-trace context for logup GPU postprocess.
+/// Must match CUDA `LogupPostprocessCtx` in `round0_postprocess.cu`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct LogupPostprocessCtx {
+    pub eval_offset: u32,
+    pub numer_offset: u32,
+    pub denom_offset: u32,
+    pub norm_factor: F,
+}
+
 // Types for batched round-0 zerocheck:
 
 /// Per-trace context for batched round-0 zerocheck evaluation.
@@ -437,6 +459,30 @@ extern "C" {
         out_grid_x: *mut u32,
         out_block_x: *mut u32,
     );
+
+    // round0_postprocess.cu
+    fn _round0_zc_postprocess(
+        d_evals: *const EF,
+        d_coeffs: *mut EF,
+        ctxs: *const ZcPostprocessCtx,
+        lagrange_basis: *const EF,
+        shift_inv: *const EF,
+        skip_domain: u32,
+        num_cosets: u32,
+        num_traces: u32,
+    ) -> i32;
+
+    fn _round0_logup_postprocess(
+        d_evals: *const EF,
+        d_numer_coeffs: *mut EF,
+        d_denom_coeffs: *mut EF,
+        ctxs: *const LogupPostprocessCtx,
+        lagrange_basis: *const EF,
+        shift_inv: *const EF,
+        skip_domain: u32,
+        num_cosets: u32,
+        num_traces: u32,
+    ) -> i32;
 
     // gkr_input.cu (batched)
     fn _gkr_input_eval_batched(
@@ -1684,6 +1730,58 @@ pub fn logup_r0_batched_launch_params(
 }
 
 // ============================================================================
+// ============================================================================
+// Round-0 GPU postprocess (evals → coefficients)
+// ============================================================================
+
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn round0_zc_postprocess(
+    d_evals: &DeviceBuffer<EF>,
+    d_coeffs: &mut DeviceBuffer<EF>,
+    d_ctxs: &DeviceBuffer<ZcPostprocessCtx>,
+    d_lagrange: &DeviceBuffer<EF>,
+    d_shift_inv: &DeviceBuffer<EF>,
+    skip_domain: u32,
+    num_cosets: u32,
+    num_traces: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_round0_zc_postprocess(
+        d_evals.as_ptr(),
+        d_coeffs.as_mut_ptr(),
+        d_ctxs.as_ptr(),
+        d_lagrange.as_ptr(),
+        d_shift_inv.as_ptr(),
+        skip_domain,
+        num_cosets,
+        num_traces,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn round0_logup_postprocess(
+    d_evals: &DeviceBuffer<EF>,
+    d_numer_coeffs: &mut DeviceBuffer<EF>,
+    d_denom_coeffs: &mut DeviceBuffer<EF>,
+    d_ctxs: &DeviceBuffer<LogupPostprocessCtx>,
+    d_lagrange: &DeviceBuffer<EF>,
+    d_shift_inv: &DeviceBuffer<EF>,
+    skip_domain: u32,
+    num_cosets: u32,
+    num_traces: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_round0_logup_postprocess(
+        d_evals.as_ptr(),
+        d_numer_coeffs.as_mut_ptr(),
+        d_denom_coeffs.as_mut_ptr(),
+        d_ctxs.as_ptr(),
+        d_lagrange.as_ptr(),
+        d_shift_inv.as_ptr(),
+        skip_domain,
+        num_cosets,
+        num_traces,
+    ))
+}
+
 // Batched GKR input evaluation
 // ============================================================================
 
