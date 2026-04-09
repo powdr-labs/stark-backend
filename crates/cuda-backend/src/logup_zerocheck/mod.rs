@@ -787,39 +787,8 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     )
                     .map_err(LogupZerocheckError::Round0Eval)?;
 
-                    // Post-process: interpolate q_evals to polynomials
-                    for (trace_idx, q_evals) in results {
-                        let t = &trace_infos[trace_idx];
-                        let num_cosets_zc = t.num_cosets_zc;
-                        if num_cosets_zc == 0 {
-                            continue;
-                        }
-                        let omega_root = t.omega_root;
-                        // Rearrange q_evals from [coset][ntt_idx] to row-major
-                        let mut values = EF::zero_vec(num_cosets_zc << l_skip);
-                        for coset_idx in 0..num_cosets_zc {
-                            for i in 0..1 << l_skip {
-                                values[i * num_cosets_zc + coset_idx] =
-                                    q_evals[(coset_idx << l_skip) + i];
-                            }
-                        }
-                        let q = UnivariatePoly::from_geometric_cosets_evals_idft(
-                            RowMajorMatrix::new(values, num_cosets_zc),
-                            omega_root,
-                            omega_root,
-                        );
-                        // sp_0 = (Z^{2^l_skip} - 1) * q
-                        let sp_0_deg =
-                            sumcheck_round0_deg(l_skip, t.local_constraint_deg);
-                        let coeffs = (0..=sp_0_deg)
-                            .map(|i| {
-                                let mut c = -*q.coeffs().get(i).unwrap_or(&EF::ZERO);
-                                if i >= 1 << l_skip {
-                                    c += q.coeffs()[i - (1 << l_skip)];
-                                }
-                                c
-                            })
-                            .collect_vec();
+                    // GPU postprocess already produced sp_0 coefficients — just wrap
+                    for (trace_idx, coeffs) in results {
                         batch_sp_poly[2 * num_present_airs + trace_idx] =
                             UnivariatePoly::new(coeffs);
                         zc_batched[trace_idx] = true;
@@ -872,51 +841,16 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                         &self.eq_3b_per_trace,
                         &self.beta_pows,
                         self.memory_limit_bytes,
+                        &self.n_per_trace,
                     )
                     .map_err(LogupZerocheckError::Round0Eval)?;
 
-                    // Post-process: rearrange and interpolate
-                    for (trace_idx, frac_evals) in results {
-                        let t = &trace_infos[trace_idx];
-                        let num_cosets_logup = t.local_constraint_deg;
-                        let omega_root = t.omega_root;
-                        let n = self.n_per_trace[trace_idx];
-
-                        let (mut numer, denom): (Vec<EF>, Vec<EF>) =
-                            frac_evals.into_iter().map(|frac| (frac.p, frac.q)).unzip();
-
-                        // Normalize numerator for lifted traces
-                        if n.is_negative() {
-                            let norm_factor =
-                                F::from_u32(1 << n.unsigned_abs()).inverse();
-                            for s in &mut numer {
-                                *s *= norm_factor;
-                            }
-                        }
-
-                        let mut numer_values = EF::zero_vec(num_cosets_logup << l_skip);
-                        let mut denom_values = EF::zero_vec(num_cosets_logup << l_skip);
-                        for coset_idx in 0..num_cosets_logup {
-                            for i in 0..1 << l_skip {
-                                let src = (coset_idx << l_skip) + i;
-                                let dst = i * num_cosets_logup + coset_idx;
-                                numer_values[dst] = numer[src];
-                                denom_values[dst] = denom[src];
-                            }
-                        }
-                        // Logup uses cosets 1, g^1, g^2, ... (init = 1, shift = omega_root)
+                    // GPU postprocess already produced numer/denom coefficients
+                    for (trace_idx, numer_coeffs, denom_coeffs) in results {
                         batch_sp_poly[2 * trace_idx] =
-                            UnivariatePoly::from_geometric_cosets_evals_idft(
-                                RowMajorMatrix::new(numer_values, num_cosets_logup),
-                                omega_root,
-                                F::ONE,
-                            );
+                            UnivariatePoly::new(numer_coeffs);
                         batch_sp_poly[2 * trace_idx + 1] =
-                            UnivariatePoly::from_geometric_cosets_evals_idft(
-                                RowMajorMatrix::new(denom_values, num_cosets_logup),
-                                omega_root,
-                                F::ONE,
-                            );
+                            UnivariatePoly::new(denom_coeffs);
                         logup_batched[trace_idx] = true;
                     }
                     total_logup_batched += group_indices.len();

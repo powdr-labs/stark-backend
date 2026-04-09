@@ -5,7 +5,8 @@ use openvm_stark_backend::prover::{
     fractional_sumcheck_gkr::Frac, AirProvingContext, DeviceMultiStarkProvingKey,
     DeviceStarkProvingKey,
 };
-use p3_field::PrimeCharacteristicRing;
+use p3_field::{Field, PrimeCharacteristicRing, TwoAdicField};
+use p3_util::log2_strict_usize;
 use tracing::{debug, warn};
 
 use super::errors::Round0EvalError;
@@ -509,14 +510,48 @@ pub fn evaluate_round0_zerocheck_batched<HS: GpuHashScheme>(
             .map_err(Round0EvalError::Cuda)?;
         }
 
-        // Single D2H for the sub-batch
-        let all_q_evals = d_output.to_host().map_err(Round0EvalError::Copy)?;
+        // GPU postprocess: coset evals → polynomial coefficients
+        use crate::cuda::logup_zerocheck::{round0_zc_postprocess, ZcPostprocessCtx};
 
-        // Collect results
+        let sp_0_len = (num_cosets + 1) * skip_domain; // per-trace output length
+        let pp_ctxs: Vec<ZcPostprocessCtx> = (0..num_traces)
+            .map(|i| ZcPostprocessCtx {
+                eval_offset: (i * d) as u32,
+                coeff_offset: (i * sp_0_len) as u32,
+            })
+            .collect();
+        let d_pp_ctxs = pp_ctxs.to_device().map_err(Round0EvalError::Copy)?;
+
+        // Precompute Lagrange basis + shift_inv for this group
+        // Zerocheck uses init = omega_root, shift = omega_root
+        let (lagrange_flat, shift_inv) =
+            precompute_postprocess_basis(omega_root, omega_root, num_cosets, skip_domain);
+        let d_lagrange = lagrange_flat.to_device().map_err(Round0EvalError::Copy)?;
+        let d_shift_inv = shift_inv.to_device().map_err(Round0EvalError::Copy)?;
+
+        let mut d_coeffs = DeviceBuffer::<EF>::with_capacity(num_traces * sp_0_len);
+
+        unsafe {
+            round0_zc_postprocess(
+                &d_output,
+                &mut d_coeffs,
+                &d_pp_ctxs,
+                &d_lagrange,
+                &d_shift_inv,
+                skip_domain as u32,
+                num_cosets as u32,
+                num_traces as u32,
+            )?;
+        }
+
+        // Single D2H for coefficients
+        let all_coeffs = d_coeffs.to_host().map_err(Round0EvalError::Copy)?;
+
+        // Collect results: each trace gets sp_0 coefficients directly
         for (i, &trace_global_idx) in sub_batch.iter().enumerate() {
-            let offset = i * d;
-            let q_evals = all_q_evals[offset..offset + d].to_vec();
-            all_results.push((all_traces[trace_global_idx].trace_idx, q_evals));
+            let offset = i * sp_0_len;
+            let coeffs = all_coeffs[offset..offset + sp_0_len].to_vec();
+            all_results.push((all_traces[trace_global_idx].trace_idx, coeffs));
         }
 
         // Drop keepalive buffers (safe: to_host synced the stream)
@@ -527,6 +562,113 @@ pub fn evaluate_round0_zerocheck_batched<HS: GpuHashScheme>(
     }
 
     Ok(all_results)
+}
+
+// ============================================================================
+// GPU postprocess: precompute Lagrange basis + shift inverse
+// ============================================================================
+
+/// Precompute the Lagrange basis matrix and shift inverse factors needed by the
+/// GPU postprocess kernels for coset-eval-to-coefficient conversion.
+///
+/// Returns (lagrange_basis_flat, shift_inv) where:
+/// - lagrange_basis_flat: [num_cosets * num_cosets] in row-major (basis[c][k])
+/// - shift_inv: [num_cosets] shift inverse factors
+///
+/// `shift`: the coset shift (omega_root for both zc and logup)
+/// `init`: F::ONE for logup (identity coset), omega_root for zerocheck
+pub fn precompute_postprocess_basis(
+    shift: F,
+    init: F,
+    num_cosets: usize,
+    skip_domain: usize,
+) -> (Vec<EF>, Vec<EF>) {
+    let log_height = log2_strict_usize(skip_domain);
+
+    // Compute shift_inv[c] = (init * shift^c)^{-1}
+    let shift_inv_f = shift.inverse();
+    let init_inv_f = init.inverse();
+    let shift_inv: Vec<EF> = {
+        let mut factors = Vec::with_capacity(num_cosets);
+        let mut pow = init_inv_f;
+        for _ in 0..num_cosets {
+            factors.push(EF::from(pow));
+            pow *= shift_inv_f;
+        }
+        factors
+    };
+
+    // Compute Lagrange basis for interpolation across cosets.
+    // Points: init^skip_domain, init^skip_domain * shift^skip_domain, ...
+    let coset_base = shift.exp_power_of_2(log_height);
+    let init_base = init.exp_power_of_2(log_height);
+
+    // Build basis as Vec<Vec<F>> then flatten to Vec<EF>
+    let basis = lagrange_basis_from_geometric_points(coset_base, num_cosets, init_base);
+    let mut flat = Vec::with_capacity(num_cosets * num_cosets);
+    for c in 0..num_cosets {
+        for k in 0..num_cosets {
+            flat.push(EF::from(basis[c][k]));
+        }
+    }
+
+    (flat, shift_inv)
+}
+
+/// Lagrange basis polynomials for interpolation at geometric points.
+/// Points: init, init * base, init * base^2, ..., init * base^{width-1}
+/// Returns basis[i] = coefficients of the i-th Lagrange polynomial.
+fn lagrange_basis_from_geometric_points(base: F, width: usize, init: F) -> Vec<Vec<F>> {
+    if width == 0 {
+        return Vec::new();
+    }
+    if width == 1 {
+        return vec![vec![F::ONE]];
+    }
+
+    let points: Vec<F> = {
+        let mut v = Vec::with_capacity(width);
+        let mut pow = init;
+        for _ in 0..width {
+            v.push(pow);
+            pow *= base;
+        }
+        v
+    };
+
+    // Build monic polynomial P(x) = prod(x - points[i])
+    let mut root_poly = vec![F::ONE];
+    for &x in &points {
+        root_poly.push(F::ZERO);
+        for k in (1..root_poly.len()).rev() {
+            let prev = root_poly[k - 1];
+            root_poly[k] = prev - x * root_poly[k];
+        }
+        root_poly[0] = -x * root_poly[0];
+    }
+
+    // For each point, compute the Lagrange basis polynomial
+    points
+        .iter()
+        .enumerate()
+        .map(|(i, &xi)| {
+            // Divide root_poly by (x - xi) to get q(x)
+            let mut q = vec![F::ZERO; width];
+            q[width - 1] = root_poly[width]; // leading coeff of root_poly
+            for k in (0..width - 1).rev() {
+                q[k] = root_poly[k + 1] + xi * q[k + 1];
+            }
+            // Scale by 1/prod_{j != i}(xi - xj)
+            let mut denom = F::ONE;
+            for (j, &xj) in points.iter().enumerate() {
+                if j != i {
+                    denom *= xi - xj;
+                }
+            }
+            let scale = denom.inverse();
+            q.iter().map(|&c| c * scale).collect()
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -597,7 +739,8 @@ pub fn evaluate_round0_logup_batched<HS: GpuHashScheme>(
     eq_3b_per_trace: &[Vec<EF>],
     beta_pows: &[EF],
     memory_limit_bytes: usize,
-) -> Result<Vec<(usize, Vec<Frac<EF>>)>, Round0EvalError> {
+    n_per_trace: &[isize],
+) -> Result<Vec<(usize, Vec<EF>, Vec<EF>)>, Round0EvalError> {
     use crate::cuda::logup_zerocheck::{
         logup_r0_batched, logup_r0_batched_launch_params, LogupRound0BlockCtx, Round0LogupCtx,
     };
@@ -802,20 +945,67 @@ pub fn evaluate_round0_logup_batched<HS: GpuHashScheme>(
             .map_err(Round0EvalError::Cuda)?;
         }
 
-        // Single D2H
-        let all_evals_fpext = d_output.to_host().map_err(Round0EvalError::Copy)?;
+        // GPU postprocess: interleaved FracExt evals → separate numer/denom coefficients
+        use crate::cuda::logup_zerocheck::{round0_logup_postprocess, LogupPostprocessCtx};
 
-        // Reconstruct Frac<EF> from interleaved FpExt pairs
+        let coeffs_per_trace = num_cosets * skip_domain; // per numer and per denom
+        let pp_ctxs: Vec<LogupPostprocessCtx> = sub_batch_indices
+            .iter()
+            .zip(sub_batch_rulesets.iter())
+            .enumerate()
+            .map(|(i, (&trace_global_idx, _rs))| {
+                let n = n_per_trace[all_traces[trace_global_idx].trace_idx];
+                let norm_factor = if n.is_negative() {
+                    F::from_u32(1 << n.unsigned_abs()).inverse()
+                } else {
+                    F::ONE
+                };
+                LogupPostprocessCtx {
+                    eval_offset: (i * d_fpext) as u32,
+                    numer_offset: (i * coeffs_per_trace) as u32,
+                    denom_offset: (i * coeffs_per_trace) as u32,
+                    norm_factor,
+                }
+            })
+            .collect();
+        let d_pp_ctxs = pp_ctxs.to_device().map_err(Round0EvalError::Copy)?;
+
+        // Logup uses init = F::ONE, shift = omega_root
+        let (lagrange_flat, shift_inv) =
+            precompute_postprocess_basis(omega_root, F::ONE, num_cosets, skip_domain);
+        let d_lagrange = lagrange_flat.to_device().map_err(Round0EvalError::Copy)?;
+        let d_shift_inv = shift_inv.to_device().map_err(Round0EvalError::Copy)?;
+
+        let mut d_numer_coeffs = DeviceBuffer::<EF>::with_capacity(num_traces * coeffs_per_trace);
+        let mut d_denom_coeffs = DeviceBuffer::<EF>::with_capacity(num_traces * coeffs_per_trace);
+
+        unsafe {
+            round0_logup_postprocess(
+                &d_output,
+                &mut d_numer_coeffs,
+                &mut d_denom_coeffs,
+                &d_pp_ctxs,
+                &d_lagrange,
+                &d_shift_inv,
+                skip_domain as u32,
+                num_cosets as u32,
+                num_traces as u32,
+            )?;
+        }
+
+        // D2H
+        let h_numer = d_numer_coeffs.to_host().map_err(Round0EvalError::Copy)?;
+        let h_denom = d_denom_coeffs.to_host().map_err(Round0EvalError::Copy)?;
+
         for (i, &trace_global_idx) in sub_batch_indices.iter().enumerate() {
-            let offset = i * d_fpext;
-            let fpext_slice = &all_evals_fpext[offset..offset + d_fpext];
-            let frac_evals: Vec<Frac<EF>> = (0..d_frac)
-                .map(|j| Frac {
-                    p: fpext_slice[2 * j],
-                    q: fpext_slice[2 * j + 1],
-                })
-                .collect();
-            all_results.push((all_traces[trace_global_idx].trace_idx, frac_evals));
+            let off = i * coeffs_per_trace;
+            let numer_coeffs = h_numer[off..off + coeffs_per_trace].to_vec();
+            let denom_coeffs = h_denom[off..off + coeffs_per_trace].to_vec();
+            all_results.push((
+                all_traces[trace_global_idx].trace_idx,
+                numer_coeffs,
+                denom_coeffs,
+            ));
         }
 
         drop(intermediates_keepalive);
