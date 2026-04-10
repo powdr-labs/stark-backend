@@ -33,6 +33,15 @@ struct UnstackedSlice {
     uint32_t stacked_col_idx;
 };
 
+struct DegenerateWindowMeta {
+    uint32_t col_offset;
+    uint32_t eq_ub_offset;
+    uint32_t window_len;
+    uint32_t _pad;
+    FpExt eq_r;
+    FpExt k_rot_r;
+};
+
 struct UnstackedPleFoldPacket {
     const Fp *__restrict__ src;
     FpExt *__restrict__ dst;
@@ -367,6 +376,77 @@ __global__ void stacked_reduction_sumcheck_mle_round_degenerate_kernel(
     }
 }
 
+// Batched degenerate case: one block per window, all atomically accumulate into shared output.
+__global__ void stacked_reduction_sumcheck_mle_round_degenerate_batched_kernel(
+    const FpExt *__restrict__ const *__restrict__ q_evals,
+    const FpExt *__restrict__ eq_ub_all,
+    const UnstackedSlice *__restrict__ unstacked_cols_global,
+    const FpExt *__restrict__ lambda_pows_global,
+    const DegenerateWindowMeta *__restrict__ metas,
+    uint64_t *__restrict__ output,
+    uint32_t q_height,
+    uint32_t shift_factor
+) {
+    extern __shared__ char smem[];
+    FpExt *shared = (FpExt *)smem;
+
+    // Each block handles one degenerate window
+    DegenerateWindowMeta meta = metas[blockIdx.x];
+    FpExt eq_r = meta.eq_r;
+    FpExt k_rot_r = meta.k_rot_r;
+    const UnstackedSlice *unstacked_cols = unstacked_cols_global + meta.col_offset;
+    const FpExt *lambda_pows = lambda_pows_global + 2 * meta.col_offset;
+    const FpExt *eq_ub_ptr = eq_ub_all + meta.eq_ub_offset;
+    uint32_t window_len = meta.window_len;
+
+    FpExt local_sums[S_DEG];
+#pragma unroll
+    for (int i = 0; i < S_DEG; i++) {
+        local_sums[i] = FpExt(0);
+    }
+
+    for (uint32_t window_idx = threadIdx.x; window_idx < window_len; window_idx += blockDim.x) {
+        UnstackedSlice s = unstacked_cols[window_idx];
+        const FpExt *__restrict__ q = q_evals[s.commit_idx];
+
+        auto col_idx = s.stacked_col_idx;
+        auto row_idx = s.stacked_row_idx;
+        auto row_start = (row_idx >> shift_factor) << 1;
+        auto q_offset = col_idx * q_height + row_start;
+
+        auto q_0 = q[q_offset];
+        auto q_1 = q[q_offset + 1];
+        auto q_c1 = q_1 - q_0;
+
+        uint32_t b_bool = (row_idx >> (shift_factor - 1)) & 1;
+        Fp b = Fp(b_bool);
+
+        auto eq_ub = eq_ub_ptr[window_idx];
+
+#pragma unroll
+        for (int x_int = 1; x_int <= S_DEG; ++x_int) {
+            Fp x = Fp(x_int);
+            auto eq_ub_x = eq_ub * eq1(x, b);
+            auto eq = eq_r * eq_ub_x;
+            auto k_rot = k_rot_r * eq_ub_x;
+
+            auto q_x = q_0 + q_c1 * x;
+
+            local_sums[x_int - 1] +=
+                (lambda_pows[2 * window_idx] * eq + lambda_pows[2 * window_idx + 1] * k_rot) * q_x;
+        }
+    }
+
+#pragma unroll
+    for (int idx = 0; idx < S_DEG; idx++) {
+        FpExt reduced = sumcheck::block_reduce_sum(local_sums[idx], shared);
+        if (threadIdx.x == 0) {
+            sumcheck::atomic_add_fpext_to_u64(output + idx * 4, reduced);
+        }
+        __syncthreads();
+    }
+}
+
 // ============================================================================
 // LAUNCHERS
 // ============================================================================
@@ -564,6 +644,31 @@ extern "C" int _stacked_reduction_sumcheck_mle_round_degenerate(
         q_height,
         window_len,
         shift_factor
+    );
+
+    return CHECK_KERNEL();
+}
+
+extern "C" int _stacked_reduction_sumcheck_mle_round_degenerate_batched(
+    const FpExt *const *q_evals,
+    const FpExt *eq_ub_all,
+    const UnstackedSlice *unstacked_cols,
+    const FpExt *lambda_pows,
+    const DegenerateWindowMeta *metas,
+    uint64_t *output,
+    uint32_t q_height,
+    uint32_t num_windows,
+    uint32_t shift_factor
+) {
+    if (num_windows == 0) return 0;
+
+    dim3 block(256);
+    dim3 grid(num_windows);
+    size_t shmem_bytes = div_ceil(block.x, WARP_SIZE) * sizeof(FpExt);
+
+    stacked_reduction_sumcheck_mle_round_degenerate_batched_kernel<<<grid, block, shmem_bytes>>>(
+        q_evals, eq_ub_all, unstacked_cols, lambda_pows, metas,
+        output, q_height, shift_factor
     );
 
     return CHECK_KERNEL();

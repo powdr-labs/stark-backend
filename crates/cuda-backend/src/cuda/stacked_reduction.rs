@@ -6,7 +6,7 @@ use openvm_cuda_common::{
 use crate::{
     poly::EqEvalSegments,
     prelude::{D_EF, EF, F},
-    stacked_reduction::{UnstackedSlice, STACKED_REDUCTION_S_DEG},
+    stacked_reduction::{DegenerateWindowMeta, UnstackedSlice, STACKED_REDUCTION_S_DEG},
 };
 
 /// Number of G outputs per z in round 0: G0, G1, G2
@@ -75,6 +75,18 @@ extern "C" {
         window_len: u32,
         l_skip: u32,
         round: u32,
+    ) -> i32;
+
+    fn _stacked_reduction_sumcheck_mle_round_degenerate_batched(
+        q_evals: *const *const EF,
+        eq_ub_all: *const EF,
+        unstacked_cols: *const UnstackedSlice,
+        lambda_pows: *const EF,
+        metas: *const DegenerateWindowMeta,
+        output: *mut u64,
+        q_height: u32,
+        num_windows: u32,
+        shift_factor: u32,
     ) -> i32;
 }
 
@@ -269,5 +281,36 @@ pub unsafe fn stacked_reduction_sumcheck_mle_round_degenerate(
         window_len as u32,
         l_skip as u32,
         round as u32,
+    ))
+}
+
+/// Batched degenerate case: launches one block per degenerate window, all atomically
+/// accumulating into a single output buffer. The caller must zero-initialize `output`
+/// before calling.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn stacked_reduction_sumcheck_mle_round_degenerate_batched(
+    q_evals: &DeviceBuffer<*const EF>,
+    eq_ub_all: &DeviceBuffer<EF>,
+    unstacked_cols: &DeviceBuffer<UnstackedSlice>,
+    lambda_pows: &DeviceBuffer<EF>,
+    metas: &DeviceBuffer<DegenerateWindowMeta>,
+    output: &mut DeviceBuffer<u64>,
+    q_height: usize,
+    num_windows: usize,
+    l_skip: usize,
+    round: usize,
+) -> Result<(), CudaError> {
+    debug_assert!(output.len() >= STACKED_REDUCTION_S_DEG * D_EF);
+
+    check(_stacked_reduction_sumcheck_mle_round_degenerate_batched(
+        q_evals.as_ptr(),
+        eq_ub_all.as_ptr(),
+        unstacked_cols.as_ptr(),
+        lambda_pows.as_ptr(),
+        metas.as_ptr(),
+        output.as_mut_ptr(),
+        q_height as u32,
+        num_windows as u32,
+        (l_skip + round) as u32,
     ))
 }

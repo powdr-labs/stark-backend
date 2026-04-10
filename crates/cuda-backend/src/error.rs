@@ -50,6 +50,8 @@ pub enum StackedReductionError {
     SumcheckMleRoundDegenerate(CudaError),
     #[error("sumcheck_mle_round: {0}")]
     SumcheckMleRound(CudaError),
+    #[error("sumcheck_mle_round_degenerate_batched: {0}")]
+    SumcheckMleRoundDegenerateBatched(CudaError),
     #[error("fold_mle: {0}")]
     FoldMle(CudaError),
     #[error("triangular_fold_mle: {0}")]

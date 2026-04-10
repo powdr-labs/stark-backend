@@ -1,4 +1,4 @@
-use std::{array::from_fn, cmp::max, ffi::c_void, iter::zip, mem, sync::Arc};
+use std::{cmp::max, ffi::c_void, iter::zip, mem, sync::Arc};
 
 use itertools::{zip_eq, Itertools};
 use openvm_cuda_common::{
@@ -31,8 +31,8 @@ use crate::{
         stacked_reduction::{
             _stacked_reduction_r0_required_temp_buffer_size, initialize_k_rot_from_eq_segments,
             stacked_reduction_fold_ple, stacked_reduction_sumcheck_mle_round,
-            stacked_reduction_sumcheck_mle_round_degenerate, stacked_reduction_sumcheck_round0,
-            NUM_G,
+            stacked_reduction_sumcheck_mle_round_degenerate_batched,
+            stacked_reduction_sumcheck_round0, NUM_G,
         },
         sumcheck::{fold_mle, triangular_fold_mle},
     },
@@ -154,6 +154,20 @@ pub(crate) struct UnstackedSlice {
     log_height: u32,
     stacked_row_idx: u32,
     stacked_col_idx: u32,
+}
+
+/// Per-window metadata for the batched degenerate kernel.
+/// Must match the CUDA-side `DegenerateWindowMeta` layout exactly.
+/// Layout: [col_offset:4][eq_ub_offset:4][window_len:4][_pad:4][eq_r:16][k_rot_r:16] = 48 bytes.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct DegenerateWindowMeta {
+    col_offset: u32,
+    eq_ub_offset: u32,
+    window_len: u32,
+    _pad: u32,
+    eq_r: EF,
+    k_rot_r: EF,
 }
 
 impl<D> StackedReductionGpu<D> {
@@ -829,86 +843,112 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
                 self.k_rot_stable.push(tmp[0]);
             }
         }
-        let mut s_evals_batch = Vec::with_capacity(self.ht_diff_idxs.len() - 1);
+        // Phase 1: Classify windows into degenerate vs non-degenerate
+        let mut degen_metas: Vec<DegenerateWindowMeta> = Vec::new();
+        let mut degen_eq_ub: Vec<EF> = Vec::new();
+        let mut non_degen_windows: Vec<[usize; 2]> = Vec::new();
+
         for window in self.ht_diff_idxs.windows(2) {
-            let window_len = window[1] - window[0];
-            // SAFETY: in bounds by construction of ht_diff_idxs
-            let unstacked_cols_ptr = unsafe { self.d_unstacked_cols.as_ptr().add(window[0]) };
-            // 2 per column for (eq, k_rot)
-            // SAFETY: in bounds by construction of lambda_pows
-            let lambda_pows_ptr = unsafe { self.d_lambda_pows.as_ptr().add(2 * window[0]) };
+            let window_start = window[0];
+            let window_end = window[1];
+            let window_len = window_end - window_start;
+            let log_height = self.unstacked_cols[window_start].log_height as usize;
 
-            let log_height = self.unstacked_cols[window[0]].log_height as usize;
+            if log_height < l_skip + round {
+                let eq_ub_offset = degen_eq_ub.len();
+                degen_eq_ub.extend_from_slice(&self.eq_ub_per_trace[window_start..window_end]);
+                degen_metas.push(DegenerateWindowMeta {
+                    col_offset: window_start as u32,
+                    eq_ub_offset: eq_ub_offset as u32,
+                    window_len: window_len as u32,
+                    _pad: 0,
+                    eq_r: self.eq_stable[log_height],
+                    k_rot_r: self.k_rot_stable[log_height],
+                });
+            } else {
+                non_degen_windows.push([window_start, window_end]);
+            }
+        }
 
-            // Zero-initialize accumulator for atomic adds
+        // Phase 2: Batch launch all degenerate windows
+        let mut total_evals = [EF::ZERO; STACKED_REDUCTION_S_DEG];
+
+        if !degen_metas.is_empty() {
             self.d_accum
                 .fill_zero()
                 .map_err(StackedReductionError::FillZero)?;
 
-            if log_height < l_skip + round {
-                // We are in the eq, k_rot stable regime
-                // This includes all n < 0 cases
-                // In this case, the `s` poly contribution is a constant and we don't need to
-                // interpolate
-                let eq_r = self.eq_stable[log_height];
-                let k_rot_r = self.k_rot_stable[log_height];
-                // PERF[jpw]: most of eq_ub can be incorporated into eq_stable, k_rot_stable, so
-                // this transfer can be minimized.
-                let eq_ub_slice = &self.eq_ub_per_trace[window[0]..window[1]];
-                if eq_ub_slice.len() > self.d_eq_ub.len() {
-                    self.d_eq_ub = DeviceBuffer::with_capacity(eq_ub_slice.len());
-                }
-                eq_ub_slice.copy_to(&mut self.d_eq_ub)?;
-                let stacked_height = self.stacked_height(round);
-                unsafe {
-                    stacked_reduction_sumcheck_mle_round_degenerate(
-                        &self.d_q_eval_ptrs,
-                        &self.d_eq_ub,
-                        eq_r,
-                        k_rot_r,
-                        unstacked_cols_ptr,
-                        lambda_pows_ptr,
-                        &mut self.d_accum,
-                        stacked_height,
-                        window_len,
-                        l_skip,
-                        round,
-                    )
-                    .map_err(StackedReductionError::SumcheckMleRoundDegenerate)?;
-                }
-            } else {
-                let hypercube_dim = log_height - l_skip - round;
-                let num_y = 1 << hypercube_dim;
-                // Allow the CUDA launcher to auto-tune grid.y (thread_window_stride) based on
-                // (num_y, window_len) and device SM count.
+            // Upload metadata
+            let d_metas = degen_metas.to_device()?;
 
-                let stacked_height = self.stacked_height(round);
-                unsafe {
-                    stacked_reduction_sumcheck_mle_round(
-                        &self.d_q_eval_ptrs,
-                        &self.eq_r_ns,
-                        &self.k_rot_ns,
-                        unstacked_cols_ptr,
-                        lambda_pows_ptr,
-                        &mut self.d_accum,
-                        stacked_height,
-                        window_len,
-                        num_y,
-                        self.sm_count,
-                    )
-                    .map_err(StackedReductionError::SumcheckMleRound)?;
-                };
+            // Upload concatenated eq_ub values
+            if degen_eq_ub.len() > self.d_eq_ub.len() {
+                self.d_eq_ub = DeviceBuffer::with_capacity(degen_eq_ub.len());
+            }
+            degen_eq_ub.copy_to(&mut self.d_eq_ub)?;
+
+            let stacked_height = self.stacked_height(round);
+            unsafe {
+                stacked_reduction_sumcheck_mle_round_degenerate_batched(
+                    &self.d_q_eval_ptrs,
+                    &self.d_eq_ub,
+                    &self.d_unstacked_cols,
+                    &self.d_lambda_pows,
+                    &d_metas,
+                    &mut self.d_accum,
+                    stacked_height,
+                    degen_metas.len(),
+                    l_skip,
+                    round,
+                )
+                .map_err(StackedReductionError::SumcheckMleRoundDegenerateBatched)?;
             }
 
-            // D2H copy and reduce modulo P
             let h_accum = self.d_accum.to_host()?;
-            let evals = reduce_raw_u64_to_ef(&h_accum);
-            s_evals_batch.push(evals);
+            let degen_evals = reduce_raw_u64_to_ef(&h_accum);
+            for i in 0..STACKED_REDUCTION_S_DEG {
+                total_evals[i] += degen_evals[i];
+            }
         }
 
-        Ok(from_fn(|i| {
-            s_evals_batch.iter().map(|evals| evals[i]).sum::<EF>()
-        }))
+        // Phase 3: Per-window non-degenerate launches (keep existing logic)
+        for &[window_start, window_end] in &non_degen_windows {
+            let window_len = window_end - window_start;
+            let unstacked_cols_ptr = unsafe { self.d_unstacked_cols.as_ptr().add(window_start) };
+            let lambda_pows_ptr = unsafe { self.d_lambda_pows.as_ptr().add(2 * window_start) };
+            let log_height = self.unstacked_cols[window_start].log_height as usize;
+            let hypercube_dim = log_height - l_skip - round;
+            let num_y = 1 << hypercube_dim;
+
+            self.d_accum
+                .fill_zero()
+                .map_err(StackedReductionError::FillZero)?;
+
+            let stacked_height = self.stacked_height(round);
+            unsafe {
+                stacked_reduction_sumcheck_mle_round(
+                    &self.d_q_eval_ptrs,
+                    &self.eq_r_ns,
+                    &self.k_rot_ns,
+                    unstacked_cols_ptr,
+                    lambda_pows_ptr,
+                    &mut self.d_accum,
+                    stacked_height,
+                    window_len,
+                    num_y,
+                    self.sm_count,
+                )
+                .map_err(StackedReductionError::SumcheckMleRound)?;
+            };
+
+            let h_accum = self.d_accum.to_host()?;
+            let evals = reduce_raw_u64_to_ef(&h_accum);
+            for i in 0..STACKED_REDUCTION_S_DEG {
+                total_evals[i] += evals[i];
+            }
+        }
+
+        Ok(total_evals)
     }
 
     #[instrument("stacked_reduction_fold_mle", level = "debug", skip_all, fields(round = round))]
