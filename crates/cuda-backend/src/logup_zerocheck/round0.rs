@@ -20,7 +20,6 @@ use crate::{
     gpu_backend::GenericGpuBackend,
     hash_scheme::GpuHashScheme,
     logup_zerocheck::rules::{codec::Codec, SymbolicRulesGpu},
-    pkey::Round0InteractionRules,
     prelude::{EF, F},
 };
 
@@ -129,7 +128,7 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
 ///
 /// `constraints` includes interaction expressions for the AIR.
 /// See [`crate::logup_zerocheck`] module docs for async-free/peak memory behavior.
-#[allow(dead_code, clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
     pk: &DeviceStarkProvingKey<GenericGpuBackend<HS>>,
     symbolic: &SymbolicConstraints<F>,
@@ -261,94 +260,6 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
             &d_denom_weights,
             denom_sum_init,
             &d_rules,
-            buffer_size,
-            &mut intermediates,
-            skip_domain,
-            num_x,
-            height,
-            num_cosets,
-            g_shift,
-            max_temp_bytes,
-        )?;
-    }
-
-    Ok(s_evals)
-}
-
-/// Launch the Round 0 logup kernel with pre-computed rules and weights.
-/// This is the runtime-only portion of evaluate_round0_interactions_gpu:
-/// buffer allocation and kernel launch, using rules pre-compiled at keygen time.
-#[allow(clippy::too_many_arguments)]
-pub fn launch_round0_logup_kernel<HS: GpuHashScheme>(
-    pk: &DeviceStarkProvingKey<GenericGpuBackend<HS>>,
-    round0_rules: &Round0InteractionRules,
-    d_numer_weights: &DeviceBuffer<EF>,
-    d_denom_weights: &DeviceBuffer<EF>,
-    denom_sum_init: EF,
-    selectors_cube: &DeviceBuffer<F>,
-    main_parts: &DeviceBuffer<*const F>,
-    public_values: &DeviceBuffer<F>,
-    eq_cube: *const EF,
-    skip_domain: u32,
-    num_x: u32,
-    height: u32,
-    num_cosets: u32,
-    g_shift: F,
-    max_temp_bytes: usize,
-) -> Result<DeviceBuffer<Frac<EF>>, Round0EvalError> {
-    let large_domain = num_cosets * skip_domain;
-    let buffer_size = round0_rules.buffer_size;
-
-    let intermed_capacity = unsafe {
-        _logup_r0_intermediates_buffer_size(
-            buffer_size,
-            skip_domain,
-            num_x,
-            num_cosets,
-            max_temp_bytes,
-        )
-    };
-    let mut intermediates = if intermed_capacity > 0 {
-        debug!("logup_r0:intermediates_capacity={intermed_capacity}");
-        DeviceBuffer::<F>::with_capacity(intermed_capacity)
-    } else {
-        DeviceBuffer::<F>::new()
-    };
-
-    let temp_sums_buffer_capacity = unsafe {
-        _logup_r0_temp_sums_buffer_size(buffer_size, skip_domain, num_x, num_cosets, max_temp_bytes)
-    };
-    debug!("logup_r0:tmp_sums_buffer_capacity={temp_sums_buffer_capacity}");
-    let mut temp_sums_buffer = DeviceBuffer::<Frac<EF>>::with_capacity(temp_sums_buffer_capacity);
-    let used_temp_bytes =
-        intermed_capacity * size_of::<F>() + temp_sums_buffer_capacity * size_of::<Frac<EF>>();
-    if used_temp_bytes > max_temp_bytes {
-        warn!(
-            "logup_round0 used_temp_bytes ({used_temp_bytes}) > max_temp_bytes ({max_temp_bytes})"
-        );
-    }
-
-    let preprocessed_ptr = pk
-        .preprocessed_data
-        .as_ref()
-        .map(|cd| cd.trace.buffer().as_ptr())
-        .unwrap_or(std::ptr::null());
-
-    let mut s_evals = DeviceBuffer::<Frac<EF>>::with_capacity(large_domain as usize);
-
-    unsafe {
-        logup_bary_eval_interactions_round0(
-            &mut temp_sums_buffer,
-            &mut s_evals,
-            selectors_cube,
-            preprocessed_ptr,
-            main_parts,
-            eq_cube,
-            public_values,
-            d_numer_weights,
-            d_denom_weights,
-            denom_sum_init,
-            &round0_rules.d_rules,
             buffer_size,
             &mut intermediates,
             skip_domain,
