@@ -18,7 +18,7 @@ use crate::{
         ExpandedInteractionMonomials, ExpandedMonomials, InteractionMonomialTerm, LambdaTerm,
         MonomialHeader, PackedVar,
     },
-    prelude::F,
+    prelude::{EF, F},
 };
 
 pub struct AirDataGpu {
@@ -29,6 +29,37 @@ pub struct AirDataGpu {
     pub zerocheck_mle: ConstraintOnlyRules<false>,
     pub zerocheck_monomials: Option<ZerocheckMonomials>,
     pub interaction_monomials: Option<InteractionMonomials>,
+    /// Pre-computed Round 0 logup interaction rules.
+    /// `None` for AIRs with no interactions.
+    pub round0_interaction_rules: Option<Round0InteractionRules>,
+}
+
+/// Pre-computed Round 0 logup interaction rules.
+/// The DAG structure and compiled rules depend only on the AIR's symbolic constraints
+/// (fixed at keygen time). Only the weights (which depend on runtime eq_3b and beta_pows)
+/// need recomputation at proving time.
+pub struct Round0InteractionRules {
+    /// Encoded rules on device, compiled with buffer_vars=true for Round 0 kernel.
+    pub(crate) d_rules: DeviceBuffer<u128>,
+    /// Buffer size for GPU intermediate values.
+    pub(crate) buffer_size: u32,
+    /// Number of compiled rules. Used to allocate weight vectors at runtime.
+    pub(crate) num_rules: usize,
+    /// Per-interaction metadata for fast weight computation at runtime.
+    pub(crate) weight_map: Round0WeightMap,
+}
+
+/// Maps interaction indices to rule indices for runtime weight computation.
+/// Replaces the expensive DAG pointer lookups with direct array indexing.
+pub struct Round0WeightMap {
+    /// count_rule_idxs[i] = rule index for interaction i's count expression.
+    pub count_rule_idxs: Vec<usize>,
+    /// message_offsets[i]..message_offsets[i+1] indexes into message_rule_idxs.
+    pub message_offsets: Vec<usize>,
+    /// Flat array of rule indices for all message fields across all interactions.
+    pub message_rule_idxs: Vec<usize>,
+    /// bus_indices[i] = bus index for interaction i.
+    pub bus_indices: Vec<u16>,
 }
 
 /// Used for GKR input evaluation and logup MLE sumcheck rounds.
@@ -105,12 +136,18 @@ impl AirDataGpu {
         } else {
             None
         };
+        let round0_interaction_rules = if !symbolic_constraints.interactions.is_empty() {
+            Some(Round0InteractionRules::new(&symbolic_constraints)?)
+        } else {
+            None
+        };
         Ok(Self {
             interaction_rules,
             zerocheck_round0,
             zerocheck_mle,
             zerocheck_monomials,
             interaction_monomials,
+            round0_interaction_rules,
         })
     }
 }
@@ -323,5 +360,113 @@ impl EvalRules {
             d_used_nodes: DeviceBuffer::new(),
             buffer_size: 0,
         }
+    }
+}
+
+impl Round0InteractionRules {
+    /// Build pre-computed Round 0 logup interaction rules from symbolic constraints.
+    /// This performs the same DAG construction + rule compilation as
+    /// `evaluate_round0_interactions_gpu` lines 162-210, but runs once at keygen time.
+    pub fn new(symbolic_constraints: &SymbolicConstraints<F>) -> Result<Self, MemCopyError> {
+        let interactions = &symbolic_constraints.interactions;
+        assert!(!interactions.is_empty());
+
+        // Build the interaction-only DAG (same as round0.rs:162-180)
+        let mut dag_builder = SymbolicDagBuilder::new();
+        let mut interaction_dag_idxs: Vec<(usize, Vec<usize>)> =
+            Vec::with_capacity(interactions.len());
+        let mut sorted_used_dag_idxs = Vec::new();
+
+        for interaction in interactions {
+            let count_idx = dag_builder.add_expr(&interaction.count);
+            sorted_used_dag_idxs.push(count_idx);
+            let message_idxs: Vec<usize> = interaction
+                .message
+                .iter()
+                .map(|field_expr| {
+                    let idx = dag_builder.add_expr(field_expr);
+                    sorted_used_dag_idxs.push(idx);
+                    idx
+                })
+                .collect();
+            interaction_dag_idxs.push((count_idx, message_idxs));
+        }
+
+        sorted_used_dag_idxs.sort();
+        sorted_used_dag_idxs.dedup();
+        let dag = SymbolicExpressionDag {
+            nodes: dag_builder.nodes,
+            constraint_idx: sorted_used_dag_idxs,
+        };
+        let rules = SymbolicRulesGpu::new(&dag, true);
+
+        // Build the weight map using dag_idx_to_rule_idx
+        let num_interactions = interactions.len();
+        let mut count_rule_idxs = Vec::with_capacity(num_interactions);
+        let mut message_offsets = Vec::with_capacity(num_interactions + 1);
+        let mut message_rule_idxs = Vec::new();
+        let mut bus_indices = Vec::with_capacity(num_interactions);
+
+        for (i, (count_dag_idx, msg_dag_idxs)) in interaction_dag_idxs.iter().enumerate() {
+            count_rule_idxs.push(rules.dag_idx_to_rule_idx[count_dag_idx]);
+            message_offsets.push(message_rule_idxs.len());
+            for msg_dag_idx in msg_dag_idxs {
+                message_rule_idxs.push(rules.dag_idx_to_rule_idx[msg_dag_idx]);
+            }
+            bus_indices.push(interactions[i].bus_index);
+        }
+        message_offsets.push(message_rule_idxs.len());
+
+        let num_rules = rules.rules.len();
+        let encoded_rules: Vec<u128> = rules.rules.iter().map(|c| c.encode()).collect();
+        let d_rules = encoded_rules.to_device()?;
+
+        Ok(Self {
+            d_rules,
+            buffer_size: rules
+                .buffer_size
+                .try_into()
+                .expect("buffer_size exceeds u32"),
+            num_rules,
+            weight_map: Round0WeightMap {
+                count_rule_idxs,
+                message_offsets,
+                message_rule_idxs,
+                bus_indices,
+            },
+        })
+    }
+
+    /// Compute runtime-dependent weights for the Round 0 logup kernel.
+    /// Uses the pre-computed weight map for direct array indexing instead of
+    /// FxHashMap lookups through dag_builder.expr_to_idx and rules.dag_idx_to_rule_idx.
+    pub fn compute_weights(
+        &self,
+        eq_3bs: &[EF],
+        beta_pows: &[EF],
+    ) -> Result<(DeviceBuffer<EF>, DeviceBuffer<EF>, EF), MemCopyError> {
+        let map = &self.weight_map;
+        let mut numer_weights = vec![EF::ZERO; self.num_rules];
+        let mut denom_weights = vec![EF::ZERO; self.num_rules];
+        let mut denom_sum_init = EF::ZERO;
+
+        for i in 0..map.count_rule_idxs.len() {
+            numer_weights[map.count_rule_idxs[i]] += eq_3bs[i];
+
+            let msg_start = map.message_offsets[i];
+            let msg_end = map.message_offsets[i + 1];
+            let msg_len = msg_end - msg_start;
+
+            denom_sum_init +=
+                eq_3bs[i] * beta_pows[msg_len] * F::from_u32(map.bus_indices[i] as u32 + 1);
+
+            for (j, &rule_idx) in map.message_rule_idxs[msg_start..msg_end].iter().enumerate() {
+                denom_weights[rule_idx] += eq_3bs[i] * beta_pows[j];
+            }
+        }
+
+        let d_numer = numer_weights.to_device()?;
+        let d_denom = denom_weights.to_device()?;
+        Ok((d_numer, d_denom, denom_sum_init))
     }
 }
