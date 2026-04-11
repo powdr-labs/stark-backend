@@ -23,64 +23,6 @@ use crate::{
     prelude::{EF, F},
 };
 
-/// BUFFER_THRESHOLD matching the CUDA-side constant.
-pub(crate) const BUFFER_THRESHOLD: u32 = 16;
-/// COSET_PARALLEL_THRESHOLD matching the CUDA-side constant.
-pub(crate) const COSET_PARALLEL_THRESHOLD: u32 = 32768;
-/// MAX_THREADS matching the CUDA-side constant for coset-parallel kernels.
-pub(crate) const MAX_THREADS_ROUND0: u32 = 128;
-
-/// Per-AIR metadata for batched zerocheck coset-parallel evaluation.
-/// Must match the C struct `ZerocheckBatchMeta` in zerocheck_round0.cu exactly.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct ZerocheckBatchMeta {
-    pub selectors_cube: *const F,
-    pub preprocessed: *const F,
-    pub main_parts: *const *const F,
-    pub eq_cube: *const EF,
-    pub public_values: *const F,
-    pub d_rules: *const std::ffi::c_void,
-    pub d_used_nodes: *const usize,
-    pub rules_len: usize,
-    pub used_nodes_len: usize,
-    pub buffer_size: u32,
-    pub num_x: u32,
-    pub height: u32,
-    pub num_cosets: u32,
-    pub g_shift: F,
-}
-
-// SAFETY: All pointers refer to device memory managed by DeviceBuffer kept alive
-// until stream sync.
-unsafe impl Send for ZerocheckBatchMeta {}
-
-/// Per-AIR metadata for batched logup coset-parallel evaluation.
-/// Must match the C struct `LogupBatchMeta` in logup_round0.cu exactly.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct LogupBatchMeta {
-    pub selectors_cube: *const F,
-    pub preprocessed: *const F,
-    pub main_parts: *const *const F,
-    pub eq_cube: *const EF,
-    pub public_values: *const F,
-    pub numer_weights: *const EF,
-    pub denom_weights: *const EF,
-    pub d_rules: *const std::ffi::c_void,
-    pub rules_len: usize,
-    pub denom_sum_init: EF,
-    pub buffer_size: u32,
-    pub num_x: u32,
-    pub height: u32,
-    pub num_cosets: u32,
-    pub g_shift: F,
-}
-
-// SAFETY: All pointers refer to device memory managed by DeviceBuffer kept alive
-// until stream sync.
-unsafe impl Send for LogupBatchMeta {}
-
 /// Evaluate plain AIR constraints (not interactions) for a single AIR, given prepared trace input.
 ///
 /// `num_cosets` should equal `constraint_degree - 1` because we evaluate the quotient polynomial.

@@ -85,10 +85,7 @@ use batch_mle_monomial::{
 pub use errors::*;
 pub use fractional::{fractional_sumcheck_gpu, make_synthetic_leaves};
 use gkr_input::{collect_trace_interactions, log_gkr_input_evals};
-use round0::{
-    evaluate_round0_constraints_gpu, LogupBatchMeta, ZerocheckBatchMeta, BUFFER_THRESHOLD,
-    COSET_PARALLEL_THRESHOLD, MAX_THREADS_ROUND0,
-};
+use round0::evaluate_round0_constraints_gpu;
 
 /// When `num_monomials >= DAG_FALLBACK_MONOMIAL_RATIO * rules_len`, use DAG evaluation
 /// instead of the monomial kernel for high num_y traces.
@@ -740,54 +737,16 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             local_constraint_deg: usize,
             omega_root: F,
             n: isize,
-            // For individual (non-batched) launches:
             zc_result: DeviceBuffer<EF>,
             logup_result: DeviceBuffer<Frac<EF>>,
-            // For batched launches (index within the batch, None if individual):
-            zc_batch_idx: Option<usize>,
-            logup_batch_idx: Option<usize>,
         }
 
-        let skip_domain: u32 = 1 << l_skip;
-        let block_x = skip_domain.max(MAX_THREADS_ROUND0);
-
-        // Pre-check: disable batching if skip_domain is large enough that batch
-        // temp buffers would exceed the memory budget. Each batched block contributes
-        // max_num_cosets * skip_domain * sizeof(T) to the temp buffer. With ~600
-        // AIRs and ~8 blocks each, the total can reach hundreds of MB.
-        // Conservative estimate: if d * num_airs * max_blocks_per_air * sizeof(Frac<EF>) > 128 MB,
-        // skip batching. This typically triggers for skip_domain >= 256.
-        const BATCH_TMP_BUDGET: usize = 128 * 1024 * 1024;
-        let max_cosets_estimate = self.constraint_degree; // upper bound
-        let d_estimate = max_cosets_estimate * skip_domain as usize;
-        let blocks_per_air_estimate = skip_domain.div_ceil(block_x) as usize;
-        let estimated_batch_tmp = num_present_airs
-            * blocks_per_air_estimate
-            * d_estimate
-            * std::mem::size_of::<Frac<EF>>();
-        let batching_enabled = estimated_batch_tmp <= BATCH_TMP_BUDGET;
-        debug!(
-            "Round 0: l_skip={l_skip}, skip_domain={skip_domain}, batching_enabled={batching_enabled}, estimated_tmp={estimated_batch_tmp}"
-        );
-
-        // Phase 1: Classify AIRs, collect metadata for batching, launch kernels.
+        // Phase 1: Launch all GPU kernels without blocking D2H transfers.
+        // Collect result buffers and metadata for Phase 2 processing.
         let mut pending: Vec<Round0Pending<F, EF>> = Vec::with_capacity(num_present_airs);
-        let mut d_main_parts_vec: Vec<DeviceBuffer<*const F>> =
-            Vec::with_capacity(num_present_airs);
+        // Collect d_main_parts to keep them alive until all kernels complete.
+        let mut d_main_parts_vec: Vec<DeviceBuffer<*const F>> = Vec::with_capacity(num_present_airs);
 
-        // Batched zerocheck metadata
-        let mut zc_batch_metas: Vec<ZerocheckBatchMeta> = Vec::new();
-        let mut zc_batch_x_blocks: Vec<u32> = Vec::new();
-
-        // Batched logup metadata + keep-alive buffers for per-AIR device data
-        let mut logup_batch_metas: Vec<LogupBatchMeta> = Vec::new();
-        let mut logup_batch_x_blocks: Vec<u32> = Vec::new();
-        // Keep per-AIR logup device buffers alive until stream sync
-        let mut logup_keepalive_rules: Vec<DeviceBuffer<u128>> = Vec::new();
-        let mut logup_keepalive_numer_w: Vec<DeviceBuffer<EF>> = Vec::new();
-        let mut logup_keepalive_denom_w: Vec<DeviceBuffer<EF>> = Vec::new();
-
-        // Sub-phase A: Classify AIRs and collect metadata
         for (trace_idx, ((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs)) in izip!(
             &ctx.per_trace,
             &self.n_per_trace,
@@ -799,6 +758,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         {
             debug!("starting batch constraints for air_idx={air_idx} (trace_idx={trace_idx})");
             let single_pk = &self.pk.per_air[*air_idx];
+            // Includes both plain AIR constraints and symbolic interactions
             let single_air_constraints =
                 SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
             let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
@@ -814,6 +774,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
 
             let log_large_domain = log2_ceil_usize(local_constraint_deg << l_skip);
             let omega_root = F::two_adic_generator(log_large_domain);
+
             assert!(!xi.is_empty(), "xi vector must not be empty");
 
             let height = air_ctx.common_main.height();
@@ -825,194 +786,45 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             let d_main_parts = main_parts.to_device()?;
 
             let n_lift = n.max(0) as usize;
-            let num_x: u32 = 1 << n_lift;
             let eq_xi_tree = &self.eq_xis[&n_lift];
             let max_temp_bytes = self.memory_limit_bytes;
+            // local_constraint_deg = 0 means no constraints. The only way that linear constraints
+            // on trace polynomials could vanish on 2^l_skip points is if the constraint polynomial
+            // is identically zero. Thus for local_constraint_deg = 0 or 1, we must have `s'_0 = 0`.
             let num_cosets_zc = local_constraint_deg.saturating_sub(1);
+            let zc_result = evaluate_round0_constraints_gpu(
+                single_pk,
+                selectors_cube.buffer(),
+                &d_main_parts,
+                public_values,
+                eq_xi_tree.get_ptr(n_lift),
+                d_lambda_pows,
+                1 << l_skip,
+                1 << n_lift,
+                height as u32,
+                num_cosets_zc as u32,
+                omega_root,
+                max_temp_bytes,
+            )?;
+
+            // PERF: we could use an interaction-specific constraint degree here
             let num_cosets_logup = local_constraint_deg;
-
-            let is_coset_parallel = (num_x * skip_domain) < COSET_PARALLEL_THRESHOLD;
-
-            // --- Zerocheck classification ---
-            let constraints_dag = &single_pk.vk.symbolic_constraints;
-            let has_constraints =
-                !constraints_dag.constraints.constraint_idx.is_empty() && num_cosets_zc > 0;
-
-            let zc_buffer_size = if has_constraints {
-                single_pk.other_data.zerocheck_round0.inner.buffer_size
-            } else {
-                0
-            };
-            let zc_batch_eligible = batching_enabled
-                && has_constraints
-                && is_coset_parallel
-                && zc_buffer_size <= BUFFER_THRESHOLD;
-
-            let (zc_result, zc_batch_idx) = if zc_batch_eligible {
-                let idx = zc_batch_metas.len();
-                let preprocessed_ptr = single_pk
-                    .preprocessed_data
-                    .as_ref()
-                    .map(|cd| cd.trace.buffer().as_ptr())
-                    .unwrap_or(std::ptr::null());
-                let rules = &single_pk.other_data.zerocheck_round0.inner;
-                zc_batch_metas.push(ZerocheckBatchMeta {
-                    selectors_cube: selectors_cube.buffer().as_ptr(),
-                    preprocessed: preprocessed_ptr,
-                    main_parts: d_main_parts.as_ptr(),
-                    eq_cube: eq_xi_tree.get_ptr(n_lift),
-                    public_values: public_values.as_ptr(),
-                    d_rules: rules.d_rules.as_raw_ptr(),
-                    d_used_nodes: rules.d_used_nodes.as_ptr(),
-                    rules_len: rules.d_rules.len(),
-                    used_nodes_len: rules.d_used_nodes.len(),
-                    buffer_size: zc_buffer_size,
-                    num_x,
-                    height: height as u32,
-                    num_cosets: num_cosets_zc as u32,
-                    g_shift: omega_root,
-                });
-                let x_blocks = (num_x * skip_domain).div_ceil(block_x);
-                zc_batch_x_blocks.push(x_blocks);
-                (DeviceBuffer::new(), Some(idx))
-            } else {
-                // Individual launch
-                let result = evaluate_round0_constraints_gpu(
-                    single_pk,
-                    selectors_cube.buffer(),
-                    &d_main_parts,
-                    public_values,
-                    eq_xi_tree.get_ptr(n_lift),
-                    d_lambda_pows,
-                    skip_domain,
-                    num_x,
-                    height as u32,
-                    num_cosets_zc as u32,
-                    omega_root,
-                    max_temp_bytes,
-                )?;
-                (result, None)
-            };
-
-            // --- Logup classification ---
-            let has_interactions = !eq_3bs.is_empty();
-            let (logup_result, logup_batch_idx) = if has_interactions {
-                // Per-AIR CPU work: build symbolic DAG, compute weights
-                use openvm_stark_backend::air_builders::symbolic::{
-                    symbolic_expression::SymbolicExpression, SymbolicExpressionDag,
-                };
-
-                use crate::logup_zerocheck::rules::{codec::Codec, SymbolicRulesGpu};
-
-                let mut dag_builder =
-                    openvm_stark_backend::air_builders::symbolic::SymbolicDagBuilder::new();
-                let mut sorted_used_dag_idxs = Vec::new();
-                for interaction in &single_air_constraints.interactions {
-                    let count = dag_builder.add_expr(&interaction.count);
-                    sorted_used_dag_idxs.push(count);
-                    sorted_used_dag_idxs.extend(
-                        interaction
-                            .message
-                            .iter()
-                            .map(|field_expr| dag_builder.add_expr(field_expr)),
-                    );
-                }
-                sorted_used_dag_idxs.sort();
-                sorted_used_dag_idxs.dedup();
-                let dag = SymbolicExpressionDag {
-                    nodes: dag_builder.nodes,
-                    constraint_idx: sorted_used_dag_idxs,
-                };
-                let rules = SymbolicRulesGpu::new(&dag, true);
-                let mut numer_weights = vec![EF::ZERO; rules.rules.len()];
-                let mut denom_weights = vec![EF::ZERO; rules.rules.len()];
-                let mut denom_sum_init = EF::ZERO;
-                for (interaction_idx, interaction) in
-                    single_air_constraints.interactions.iter().enumerate()
-                {
-                    let count_dag_idx = dag_builder.expr_to_idx
-                        [&(&interaction.count as *const SymbolicExpression<_>)];
-                    let count_rule_idx = rules.dag_idx_to_rule_idx[&count_dag_idx];
-                    numer_weights[count_rule_idx] += eq_3bs[interaction_idx];
-                    denom_sum_init += eq_3bs[interaction_idx]
-                        * self.beta_pows[interaction.message.len()]
-                        * F::from_u32(interaction.bus_index as u32 + 1);
-
-                    for (message_idx, message) in interaction.message.iter().enumerate() {
-                        let message_dag_idx =
-                            dag_builder.expr_to_idx[&(message as *const SymbolicExpression<_>)];
-                        let message_rule_idx = rules.dag_idx_to_rule_idx[&message_dag_idx];
-                        denom_weights[message_rule_idx] +=
-                            eq_3bs[interaction_idx] * self.beta_pows[message_idx];
-                    }
-                }
-
-                let logup_buffer_size: u32 = rules.buffer_size.try_into().unwrap();
-                let logup_batch_eligible =
-                    batching_enabled && is_coset_parallel && logup_buffer_size <= BUFFER_THRESHOLD;
-
-                if logup_batch_eligible {
-                    let encoded_rules = rules.rules.iter().map(|c| c.encode()).collect_vec();
-                    let d_rules = encoded_rules.to_device()?;
-                    let d_numer_weights = numer_weights.to_device()?;
-                    let d_denom_weights = denom_weights.to_device()?;
-
-                    let preprocessed_ptr = single_pk
-                        .preprocessed_data
-                        .as_ref()
-                        .map(|cd| cd.trace.buffer().as_ptr())
-                        .unwrap_or(std::ptr::null());
-
-                    let idx = logup_batch_metas.len();
-                    logup_batch_metas.push(LogupBatchMeta {
-                        selectors_cube: selectors_cube.buffer().as_ptr(),
-                        preprocessed: preprocessed_ptr,
-                        main_parts: d_main_parts.as_ptr(),
-                        eq_cube: eq_xi_tree.get_ptr(n_lift),
-                        public_values: public_values.as_ptr(),
-                        numer_weights: d_numer_weights.as_ptr(),
-                        denom_weights: d_denom_weights.as_ptr(),
-                        d_rules: d_rules.as_raw_ptr(),
-                        rules_len: d_rules.len(),
-                        denom_sum_init,
-                        buffer_size: logup_buffer_size,
-                        num_x,
-                        height: height as u32,
-                        num_cosets: num_cosets_logup as u32,
-                        g_shift: omega_root,
-                    });
-                    let x_blocks = (num_x * skip_domain).div_ceil(block_x);
-                    logup_batch_x_blocks.push(x_blocks);
-
-                    // Keep device buffers alive
-                    logup_keepalive_rules.push(d_rules);
-                    logup_keepalive_numer_w.push(d_numer_weights);
-                    logup_keepalive_denom_w.push(d_denom_weights);
-
-                    (DeviceBuffer::new(), Some(idx))
-                } else {
-                    // Individual launch via existing function
-                    let result = evaluate_round0_interactions_gpu(
-                        single_pk,
-                        &single_air_constraints,
-                        selectors_cube.buffer(),
-                        &d_main_parts,
-                        public_values,
-                        eq_xi_tree.get_ptr(n_lift),
-                        &self.beta_pows,
-                        eq_3bs,
-                        skip_domain,
-                        num_x,
-                        height as u32,
-                        num_cosets_logup as u32,
-                        omega_root,
-                        max_temp_bytes,
-                    )?;
-                    (result, None)
-                }
-            } else {
-                (DeviceBuffer::new(), None)
-            };
+            let logup_result = evaluate_round0_interactions_gpu(
+                single_pk,
+                &single_air_constraints,
+                selectors_cube.buffer(),
+                &d_main_parts,
+                public_values,
+                eq_xi_tree.get_ptr(n_lift),
+                &self.beta_pows,
+                eq_3bs,
+                1 << l_skip,
+                1 << n_lift,
+                height as u32,
+                num_cosets_logup as u32,
+                omega_root,
+                max_temp_bytes,
+            )?;
 
             d_main_parts_vec.push(d_main_parts);
             pending.push(Round0Pending {
@@ -1025,176 +837,18 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 n,
                 zc_result,
                 logup_result,
-                zc_batch_idx,
-                logup_batch_idx,
             });
-        }
-
-        // Sub-phase B: Batched launches
-        let num_zc_batched = zc_batch_metas.len();
-        let num_logup_batched = logup_batch_metas.len();
-        debug!(
-            "Round 0 batching: zerocheck={num_zc_batched}/{num_present_airs}, logup={num_logup_batched}/{num_present_airs}, skip_domain={skip_domain}"
-        );
-
-        // Helper to build batch launch data structures
-        fn build_batch_arrays(x_blocks: &[u32]) -> (Vec<u32>, Vec<u32>) {
-            let total: u32 = x_blocks.iter().sum();
-            let mut seg_offsets = Vec::with_capacity(x_blocks.len() + 1);
-            seg_offsets.push(0u32);
-            let mut acc = 0u32;
-            for &xb in x_blocks {
-                acc += xb;
-                seg_offsets.push(acc);
-            }
-            let mut air_for_block = Vec::with_capacity(total as usize);
-            for (air_idx, &xb) in x_blocks.iter().enumerate() {
-                for _ in 0..xb {
-                    air_for_block.push(air_idx as u32);
-                }
-            }
-            (seg_offsets, air_for_block)
-        }
-
-        // Zerocheck batch output
-        let mut d_zc_batch_output: DeviceBuffer<EF> = DeviceBuffer::new();
-        let zc_max_num_cosets: u32 = zc_batch_metas
-            .iter()
-            .map(|m| m.num_cosets)
-            .max()
-            .unwrap_or(0);
-        let zc_d: usize = (zc_max_num_cosets * skip_domain) as usize;
-
-        if !zc_batch_metas.is_empty() {
-            let zc_total_x_blocks: u32 = zc_batch_x_blocks.iter().sum();
-            let (zc_seg_offsets, zc_air_for_block) = build_batch_arrays(&zc_batch_x_blocks);
-
-            let d_zc_metas_bytes: DeviceBuffer<u8> = unsafe {
-                let bytes = std::slice::from_raw_parts(
-                    zc_batch_metas.as_ptr() as *const u8,
-                    zc_batch_metas.len() * std::mem::size_of::<ZerocheckBatchMeta>(),
-                );
-                bytes.to_device()?
-            };
-            let d_zc_air_for_block = zc_air_for_block.to_device()?;
-            let d_zc_seg_offsets = zc_seg_offsets.to_device()?;
-
-            let mut d_zc_tmp = DeviceBuffer::<EF>::with_capacity(zc_total_x_blocks as usize * zc_d);
-            d_zc_tmp
-                .fill_zero()
-                .map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
-            d_zc_batch_output = DeviceBuffer::<EF>::with_capacity(num_zc_batched * zc_d);
-
-            unsafe {
-                crate::cuda::logup_zerocheck::zerocheck_ntt_eval_constraints_batched(
-                    &mut d_zc_tmp,
-                    &mut d_zc_batch_output,
-                    &d_zc_metas_bytes,
-                    &d_zc_air_for_block,
-                    &d_zc_seg_offsets,
-                    d_lambda_pows,
-                    num_zc_batched as u32,
-                    zc_total_x_blocks,
-                    zc_max_num_cosets,
-                    skip_domain,
-                )
-                .map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
-            }
-            // Drop tmp buffer immediately to free device memory for logup batch
-            drop(d_zc_tmp);
-        }
-
-        // Logup batch output
-        let mut d_logup_batch_output: DeviceBuffer<Frac<EF>> = DeviceBuffer::new();
-        let logup_max_num_cosets: u32 = logup_batch_metas
-            .iter()
-            .map(|m| m.num_cosets)
-            .max()
-            .unwrap_or(0);
-        let logup_d: usize = (logup_max_num_cosets * skip_domain) as usize;
-
-        if !logup_batch_metas.is_empty() {
-            let logup_total_x_blocks: u32 = logup_batch_x_blocks.iter().sum();
-            let (logup_seg_offsets, logup_air_for_block) =
-                build_batch_arrays(&logup_batch_x_blocks);
-
-            let d_logup_metas_bytes: DeviceBuffer<u8> = unsafe {
-                let bytes = std::slice::from_raw_parts(
-                    logup_batch_metas.as_ptr() as *const u8,
-                    logup_batch_metas.len() * std::mem::size_of::<LogupBatchMeta>(),
-                );
-                bytes.to_device()?
-            };
-            let d_logup_air_for_block = logup_air_for_block.to_device()?;
-            let d_logup_seg_offsets = logup_seg_offsets.to_device()?;
-
-            let mut d_logup_tmp =
-                DeviceBuffer::<Frac<EF>>::with_capacity(logup_total_x_blocks as usize * logup_d);
-            d_logup_tmp
-                .fill_zero()
-                .map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
-            d_logup_batch_output =
-                DeviceBuffer::<Frac<EF>>::with_capacity(num_logup_batched * logup_d);
-
-            unsafe {
-                crate::cuda::logup_zerocheck::logup_bary_eval_interactions_round0_batched(
-                    &mut d_logup_tmp,
-                    &mut d_logup_batch_output,
-                    &d_logup_metas_bytes,
-                    &d_logup_air_for_block,
-                    &d_logup_seg_offsets,
-                    num_logup_batched as u32,
-                    logup_total_x_blocks,
-                    logup_max_num_cosets,
-                    skip_domain,
-                )
-                .map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
-            }
-            // Drop tmp buffer immediately to free device memory
-            drop(d_logup_tmp);
         }
 
         // Phase 2: Explicit stream sync, then D2H transfers + CPU polynomial construction.
         current_stream_sync().map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
 
-        // Release keep-alive buffers now that all kernels have completed
+        // Release d_main_parts now that all kernels have completed
         drop(d_main_parts_vec);
-        drop(logup_keepalive_rules);
-        drop(logup_keepalive_numer_w);
-        drop(logup_keepalive_denom_w);
-
-        // D2H batched outputs, then release device memory immediately
-        let h_zc_batch_output = if !d_zc_batch_output.is_empty() {
-            let h = d_zc_batch_output.to_host()?;
-            drop(d_zc_batch_output);
-            h
-        } else {
-            drop(d_zc_batch_output);
-            vec![]
-        };
-        let h_logup_batch_output = if !d_logup_batch_output.is_empty() {
-            let h = d_logup_batch_output.to_host()?;
-            drop(d_logup_batch_output);
-            h
-        } else {
-            drop(d_logup_batch_output);
-            vec![]
-        };
 
         for entry in pending {
-            // Process zerocheck result
-            let q_evals: Option<Vec<EF>> = if let Some(batch_idx) = entry.zc_batch_idx {
-                // Extract from batched output
-                let offset = batch_idx * zc_d;
-                let len = entry.num_cosets_zc * (1 << l_skip);
-                Some(h_zc_batch_output[offset..offset + len].to_vec())
-            } else if !entry.zc_result.is_empty() {
-                Some(entry.zc_result.to_host()?)
-            } else {
-                None
-            };
-
-            if let Some(q_evals) = q_evals {
+            if !entry.zc_result.is_empty() {
+                let q_evals = entry.zc_result.to_host()?;
                 let q = {
                     // Make q_evals row-major, with columns <> cosets
                     let mut values = EF::zero_vec(entry.num_cosets_zc << l_skip);
@@ -1228,23 +882,12 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     entry.air_idx
                 );
 
-                batch_sp_poly[2 * num_present_airs + entry.trace_idx] = UnivariatePoly::new(coeffs);
+                batch_sp_poly[2 * num_present_airs + entry.trace_idx] =
+                    UnivariatePoly::new(coeffs);
             }
 
-            // Process logup result
-            let logup_evals: Option<Vec<Frac<EF>>> = if let Some(batch_idx) = entry.logup_batch_idx
-            {
-                // Extract from batched output
-                let offset = batch_idx * logup_d;
-                let len = entry.num_cosets_logup * (1 << l_skip);
-                Some(h_logup_batch_output[offset..offset + len].to_vec())
-            } else if !entry.logup_result.is_empty() {
-                Some(entry.logup_result.to_host()?)
-            } else {
-                None
-            };
-
-            if let Some(evals) = logup_evals {
+            if !entry.logup_result.is_empty() {
+                let evals = entry.logup_result.to_host()?;
                 let (mut numer, denom): (Vec<EF>, Vec<EF>) =
                     evals.into_iter().map(|frac| (frac.p, frac.q)).unzip();
                 if entry.n.is_negative() {
