@@ -460,6 +460,278 @@ __global__ void logup_r0_ntt_eval_interactions_coset_parallel_kernel(
 }
 
 // ============================================================================
+// BATCHED COSET-PARALLEL
+// ============================================================================
+
+// Per-AIR metadata for batched coset-parallel logup evaluation (GLOBAL=false).
+struct LogupBatchMeta {
+    const Fp *selectors_cube;
+    const Fp *preprocessed;
+    const Fp *const *main_parts;
+    const FpExt *eq_cube;
+    const Fp *public_values;
+    const FpExt *numer_weights;
+    const FpExt *denom_weights;
+    const Rule *d_rules;
+    size_t rules_len;
+    FpExt denom_sum_init;
+    uint32_t buffer_size;
+    uint32_t num_x;
+    uint32_t height;
+    uint32_t num_cosets;
+    Fp g_shift;
+};
+
+// Per-AIR metadata for batched coset-parallel logup evaluation (GLOBAL=true).
+struct LogupBatchMetaGlobal {
+    const Fp *selectors_cube;
+    const Fp *preprocessed;
+    const Fp *const *main_parts;
+    const FpExt *eq_cube;
+    const Fp *public_values;
+    const FpExt *numer_weights;
+    const FpExt *denom_weights;
+    const Rule *d_rules;
+    size_t rules_len;
+    FpExt denom_sum_init;
+    uint32_t buffer_size;
+    uint32_t num_x;
+    uint32_t height;
+    uint32_t num_cosets;
+    Fp g_shift;
+    Fp *intermediates;
+};
+
+// Batched coset-parallel logup kernel (GLOBAL=false).
+template <bool NEEDS_SHMEM>
+__global__ void logup_r0_ntt_eval_interactions_coset_parallel_batched_kernel(
+    FracExt *__restrict__ tmp_sums_buffer,
+    const LogupBatchMeta *__restrict__ air_metas,
+    const uint32_t *__restrict__ air_for_block,
+    const uint32_t *__restrict__ segment_offsets,
+    uint32_t skip_domain,
+    uint32_t d
+) {
+    extern __shared__ char smem[];
+    FracExt *shared_sum = reinterpret_cast<FracExt *>(smem);
+    Fp *ntt_buffers_base =
+        NEEDS_SHMEM ? reinterpret_cast<Fp *>(smem + blockDim.x * sizeof(FracExt)) : nullptr;
+
+    uint32_t const l_skip = __ffs(skip_domain) - 1;
+
+    uint32_t const air_idx = air_for_block[blockIdx.x];
+    LogupBatchMeta const meta = air_metas[air_idx];
+    uint32_t const local_block_x = blockIdx.x - segment_offsets[air_idx];
+    uint32_t const coset_idx = blockIdx.y;
+
+    if (coset_idx >= meta.num_cosets) return;
+
+    bool const is_identity_coset = (coset_idx == 0);
+
+    uint32_t const x_int_in_block = threadIdx.x >> l_skip;
+    Fp *ntt_buffer = NEEDS_SHMEM ? (ntt_buffers_base + x_int_in_block * skip_domain) : nullptr;
+
+    uint32_t const tidx = threadIdx.x + local_block_x * blockDim.x;
+    uint32_t const ntt_idx = tidx & (skip_domain - 1);
+    uint32_t const x_int_base = tidx >> l_skip;
+
+    uint32_t const ntt_idx_rev = rev_len(ntt_idx, l_skip);
+    Fp const omega_skip = TWO_ADIC_GENERATORS[l_skip];
+
+    uint32_t const log_height_total = __ffs(meta.height) - 1;
+    uint32_t const log_segment = min(l_skip, log_height_total);
+    uint32_t const segment_size = 1u << log_segment;
+    uint32_t const log_stride = l_skip - log_segment;
+
+    Fp const eta = TWO_ADIC_GENERATORS[l_skip - log_stride];
+    Fp const omega_skip_ntt = pow(omega_skip, ntt_idx);
+
+    Fp const g_coset = is_identity_coset ? Fp::one() : pow(meta.g_shift, coset_idx);
+    Fp const eval_point = is_identity_coset ? omega_skip_ntt : (g_coset * omega_skip_ntt);
+    Fp const omega = exp_power_of_2(eval_point, log_stride);
+    Fp const is_first_mult = avg_gp(omega, segment_size);
+    Fp const is_last_mult = avg_gp(omega * eta, segment_size);
+    Fp const omega_shift = is_identity_coset ? Fp::one() : pow(g_coset, ntt_idx_rev);
+
+    Fp local_buffer[BUFFER_THRESHOLD];
+    Fp *inter_buffer = local_buffer;
+    uint32_t const buffer_stride = 1;
+
+    FracExt sum = {FpExt(Fp::zero()), FpExt(Fp::zero())};
+
+    uint32_t const air_x_blocks = segment_offsets[air_idx + 1] - segment_offsets[air_idx];
+    uint32_t const x_int_stride = (air_x_blocks * blockDim.x) >> l_skip;
+
+    NttEvalContext<1> eval_ctx{
+        meta.preprocessed,
+        meta.main_parts,
+        meta.public_values,
+        inter_buffer,
+        ntt_buffer,
+        {omega_shift},
+        skip_domain,
+        meta.height,
+        buffer_stride,
+        meta.buffer_size,
+        ntt_idx,
+    };
+
+    for (uint32_t x_int = x_int_base; x_int < meta.num_x; x_int += x_int_stride) {
+        Fp is_first = is_first_mult * meta.selectors_cube[x_int];
+        Fp is_last = is_last_mult * meta.selectors_cube[2 * meta.num_x + x_int];
+
+        FpExt numer_results[1];
+        FpExt denom_results[1];
+        acc_interactions</*NUM_COSETS=*/1, NEEDS_SHMEM, /*FIRST_COSET_IS_IDENTITY=*/false>(
+            eval_ctx,
+            &is_first,
+            &is_last,
+            x_int,
+            meta.numer_weights,
+            meta.denom_weights,
+            meta.d_rules,
+            meta.rules_len,
+            numer_results,
+            denom_results,
+            is_identity_coset
+        );
+
+        FpExt eq = meta.eq_cube[x_int];
+        sum.p += eq * numer_results[0];
+        sum.q += eq * (denom_results[0] + meta.denom_sum_init);
+    }
+
+    shared_sum[threadIdx.x] = sum;
+    __syncthreads();
+
+    if (threadIdx.x < skip_domain) {
+        FracExt tile_sum = shared_sum[threadIdx.x];
+        for (uint32_t lane = 1; lane < (blockDim.x >> l_skip); ++lane) {
+            auto lane_offset = (lane << l_skip) + threadIdx.x;
+            tile_sum.p += shared_sum[lane_offset].p;
+            tile_sum.q += shared_sum[lane_offset].q;
+        }
+        tmp_sums_buffer[blockIdx.x * d + coset_idx * skip_domain + ntt_idx] = tile_sum;
+    }
+}
+
+// Batched coset-parallel logup kernel (GLOBAL=true).
+template <bool NEEDS_SHMEM>
+__global__ void logup_r0_ntt_eval_interactions_coset_parallel_batched_global_kernel(
+    FracExt *__restrict__ tmp_sums_buffer,
+    const LogupBatchMetaGlobal *__restrict__ air_metas,
+    const uint32_t *__restrict__ air_for_block,
+    const uint32_t *__restrict__ segment_offsets,
+    uint32_t skip_domain,
+    uint32_t d
+) {
+    extern __shared__ char smem[];
+    FracExt *shared_sum = reinterpret_cast<FracExt *>(smem);
+    Fp *ntt_buffers_base =
+        NEEDS_SHMEM ? reinterpret_cast<Fp *>(smem + blockDim.x * sizeof(FracExt)) : nullptr;
+
+    uint32_t const l_skip = __ffs(skip_domain) - 1;
+
+    uint32_t const air_idx = air_for_block[blockIdx.x];
+    LogupBatchMetaGlobal const meta = air_metas[air_idx];
+    uint32_t const local_block_x = blockIdx.x - segment_offsets[air_idx];
+    uint32_t const coset_idx = blockIdx.y;
+
+    if (coset_idx >= meta.num_cosets) return;
+
+    bool const is_identity_coset = (coset_idx == 0);
+
+    uint32_t const x_int_in_block = threadIdx.x >> l_skip;
+    Fp *ntt_buffer = NEEDS_SHMEM ? (ntt_buffers_base + x_int_in_block * skip_domain) : nullptr;
+
+    uint32_t const tidx = threadIdx.x + local_block_x * blockDim.x;
+    uint32_t const ntt_idx = tidx & (skip_domain - 1);
+    uint32_t const x_int_base = tidx >> l_skip;
+
+    uint32_t const ntt_idx_rev = rev_len(ntt_idx, l_skip);
+    Fp const omega_skip = TWO_ADIC_GENERATORS[l_skip];
+
+    uint32_t const log_height_total = __ffs(meta.height) - 1;
+    uint32_t const log_segment = min(l_skip, log_height_total);
+    uint32_t const segment_size = 1u << log_segment;
+    uint32_t const log_stride = l_skip - log_segment;
+
+    Fp const eta = TWO_ADIC_GENERATORS[l_skip - log_stride];
+    Fp const omega_skip_ntt = pow(omega_skip, ntt_idx);
+
+    Fp const g_coset = is_identity_coset ? Fp::one() : pow(meta.g_shift, coset_idx);
+    Fp const eval_point = is_identity_coset ? omega_skip_ntt : (g_coset * omega_skip_ntt);
+    Fp const omega = exp_power_of_2(eval_point, log_stride);
+    Fp const is_first_mult = avg_gp(omega, segment_size);
+    Fp const is_last_mult = avg_gp(omega * eta, segment_size);
+    Fp const omega_shift = is_identity_coset ? Fp::one() : pow(g_coset, ntt_idx_rev);
+
+    // GLOBAL=true intermediates: per-AIR pre-allocated buffer with strided layout
+    Fp local_buffer[1]; // dummy
+    uint32_t const air_x_blocks = segment_offsets[air_idx + 1] - segment_offsets[air_idx];
+    uint32_t const air_stride = air_x_blocks * meta.num_cosets * blockDim.x;
+    uint32_t const global_tidx = coset_idx * air_x_blocks * blockDim.x + tidx;
+    Fp *inter_buffer = meta.intermediates + global_tidx;
+    uint32_t const buffer_stride = air_stride;
+
+    FracExt sum = {FpExt(Fp::zero()), FpExt(Fp::zero())};
+
+    uint32_t const x_int_stride = (air_x_blocks * blockDim.x) >> l_skip;
+
+    NttEvalContext<1> eval_ctx{
+        meta.preprocessed,
+        meta.main_parts,
+        meta.public_values,
+        inter_buffer,
+        ntt_buffer,
+        {omega_shift},
+        skip_domain,
+        meta.height,
+        buffer_stride,
+        meta.buffer_size,
+        ntt_idx,
+    };
+
+    for (uint32_t x_int = x_int_base; x_int < meta.num_x; x_int += x_int_stride) {
+        Fp is_first = is_first_mult * meta.selectors_cube[x_int];
+        Fp is_last = is_last_mult * meta.selectors_cube[2 * meta.num_x + x_int];
+
+        FpExt numer_results[1];
+        FpExt denom_results[1];
+        acc_interactions</*NUM_COSETS=*/1, NEEDS_SHMEM, /*FIRST_COSET_IS_IDENTITY=*/false>(
+            eval_ctx,
+            &is_first,
+            &is_last,
+            x_int,
+            meta.numer_weights,
+            meta.denom_weights,
+            meta.d_rules,
+            meta.rules_len,
+            numer_results,
+            denom_results,
+            is_identity_coset
+        );
+
+        FpExt eq = meta.eq_cube[x_int];
+        sum.p += eq * numer_results[0];
+        sum.q += eq * (denom_results[0] + meta.denom_sum_init);
+    }
+
+    shared_sum[threadIdx.x] = sum;
+    __syncthreads();
+
+    if (threadIdx.x < skip_domain) {
+        FracExt tile_sum = shared_sum[threadIdx.x];
+        for (uint32_t lane = 1; lane < (blockDim.x >> l_skip); ++lane) {
+            auto lane_offset = (lane << l_skip) + threadIdx.x;
+            tile_sum.p += shared_sum[lane_offset].p;
+            tile_sum.q += shared_sum[lane_offset].q;
+        }
+        tmp_sums_buffer[blockIdx.x * d + coset_idx * skip_domain + ntt_idx] = tile_sum;
+    }
+}
+
+// ============================================================================
 // LAUNCHERS
 // ============================================================================
 
@@ -807,6 +1079,114 @@ extern "C" int _logup_bary_eval_interactions_round0(
             max_temp_bytes
         );
     }
+}
+
+extern "C" int _logup_bary_eval_interactions_round0_batched(
+    FracExt *tmp_sums_buffer,
+    FracExt *output,
+    const LogupBatchMeta *metas,
+    const uint32_t *air_for_block,
+    const uint32_t *segment_offsets,
+    uint32_t num_airs,
+    uint32_t total_x_blocks,
+    uint32_t max_num_cosets,
+    uint32_t skip_domain
+) {
+    if (total_x_blocks == 0 || num_airs == 0) return 0;
+
+    uint32_t d_frac = max_num_cosets * skip_domain;
+    dim3 grid(total_x_blocks, max_num_cosets);
+    uint32_t block_x = std::max(skip_domain, MAX_THREADS);
+    dim3 block(block_x);
+
+    bool needs_shmem = skip_domain > WARP_SIZE;
+    size_t shared_sum_size = sizeof(FracExt) * block.x;
+    size_t ntt_buffers_size = needs_shmem ? sizeof(Fp) * block.x : 0;
+    size_t shmem_bytes = shared_sum_size + ntt_buffers_size;
+
+    if (needs_shmem) {
+        logup_r0_ntt_eval_interactions_coset_parallel_batched_kernel<true>
+            <<<grid, block, shmem_bytes>>>(
+                tmp_sums_buffer, metas, air_for_block, segment_offsets,
+                skip_domain, d_frac
+            );
+    } else {
+        logup_r0_ntt_eval_interactions_coset_parallel_batched_kernel<false>
+            <<<grid, block, shmem_bytes>>>(
+                tmp_sums_buffer, metas, air_for_block, segment_offsets,
+                skip_domain, d_frac
+            );
+    }
+    int err = CHECK_KERNEL();
+    if (err != 0) return err;
+
+    uint32_t d_fpext = 2 * d_frac;
+    auto [reduce_grid_unused, reduce_block] = kernel_launch_params(total_x_blocks);
+    unsigned int reduce_warps = div_ceil(reduce_block.x, WARP_SIZE);
+    size_t reduce_shmem = std::max(1u, reduce_warps) * sizeof(FpExt);
+    dim3 reduce_grid(num_airs, d_fpext);
+    sumcheck::batched_final_reduce_block_sums<<<reduce_grid, reduce_block, reduce_shmem>>>(
+        reinterpret_cast<FpExt *>(tmp_sums_buffer),
+        reinterpret_cast<FpExt *>(output),
+        segment_offsets,
+        d_fpext
+    );
+
+    return CHECK_KERNEL();
+}
+
+extern "C" int _logup_bary_eval_interactions_round0_batched_global(
+    FracExt *tmp_sums_buffer,
+    FracExt *output,
+    const LogupBatchMetaGlobal *metas,
+    const uint32_t *air_for_block,
+    const uint32_t *segment_offsets,
+    uint32_t num_airs,
+    uint32_t total_x_blocks,
+    uint32_t max_num_cosets,
+    uint32_t skip_domain
+) {
+    if (total_x_blocks == 0 || num_airs == 0) return 0;
+
+    uint32_t d_frac = max_num_cosets * skip_domain;
+    dim3 grid(total_x_blocks, max_num_cosets);
+    uint32_t block_x = std::max(skip_domain, MAX_THREADS);
+    dim3 block(block_x);
+
+    bool needs_shmem = skip_domain > WARP_SIZE;
+    size_t shared_sum_size = sizeof(FracExt) * block.x;
+    size_t ntt_buffers_size = needs_shmem ? sizeof(Fp) * block.x : 0;
+    size_t shmem_bytes = shared_sum_size + ntt_buffers_size;
+
+    if (needs_shmem) {
+        logup_r0_ntt_eval_interactions_coset_parallel_batched_global_kernel<true>
+            <<<grid, block, shmem_bytes>>>(
+                tmp_sums_buffer, metas, air_for_block, segment_offsets,
+                skip_domain, d_frac
+            );
+    } else {
+        logup_r0_ntt_eval_interactions_coset_parallel_batched_global_kernel<false>
+            <<<grid, block, shmem_bytes>>>(
+                tmp_sums_buffer, metas, air_for_block, segment_offsets,
+                skip_domain, d_frac
+            );
+    }
+    int err = CHECK_KERNEL();
+    if (err != 0) return err;
+
+    uint32_t d_fpext = 2 * d_frac;
+    auto [reduce_grid_unused, reduce_block] = kernel_launch_params(total_x_blocks);
+    unsigned int reduce_warps = div_ceil(reduce_block.x, WARP_SIZE);
+    size_t reduce_shmem = std::max(1u, reduce_warps) * sizeof(FpExt);
+    dim3 reduce_grid(num_airs, d_fpext);
+    sumcheck::batched_final_reduce_block_sums<<<reduce_grid, reduce_block, reduce_shmem>>>(
+        reinterpret_cast<FpExt *>(tmp_sums_buffer),
+        reinterpret_cast<FpExt *>(output),
+        segment_offsets,
+        d_fpext
+    );
+
+    return CHECK_KERNEL();
 }
 
 } // namespace logup_round0

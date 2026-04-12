@@ -349,6 +349,60 @@ extern "C" {
         max_temp_bytes: usize,
     ) -> i32;
 
+    // Batched coset-parallel round0 kernels (GLOBAL=false)
+    fn _zerocheck_ntt_eval_constraints_batched(
+        tmp_sums_buffer: *mut EF,
+        output: *mut EF,
+        metas: *const std::ffi::c_void, // ZerocheckBatchMeta*
+        air_for_block: *const u32,
+        segment_offsets: *const u32,
+        d_lambda_pows: *const EF,
+        lambda_len: usize,
+        num_airs: u32,
+        total_x_blocks: u32,
+        max_num_cosets: u32,
+        skip_domain: u32,
+    ) -> i32;
+
+    fn _logup_bary_eval_interactions_round0_batched(
+        tmp_sums_buffer: *mut Frac<EF>,
+        output: *mut Frac<EF>,
+        metas: *const std::ffi::c_void, // LogupBatchMeta*
+        air_for_block: *const u32,
+        segment_offsets: *const u32,
+        num_airs: u32,
+        total_x_blocks: u32,
+        max_num_cosets: u32,
+        skip_domain: u32,
+    ) -> i32;
+
+    // Batched coset-parallel round0 kernels (GLOBAL=true)
+    fn _zerocheck_ntt_eval_constraints_batched_global(
+        tmp_sums_buffer: *mut EF,
+        output: *mut EF,
+        metas: *const std::ffi::c_void, // ZerocheckBatchMetaGlobal*
+        air_for_block: *const u32,
+        segment_offsets: *const u32,
+        d_lambda_pows: *const EF,
+        lambda_len: usize,
+        num_airs: u32,
+        total_x_blocks: u32,
+        max_num_cosets: u32,
+        skip_domain: u32,
+    ) -> i32;
+
+    fn _logup_bary_eval_interactions_round0_batched_global(
+        tmp_sums_buffer: *mut Frac<EF>,
+        output: *mut Frac<EF>,
+        metas: *const std::ffi::c_void, // LogupBatchMetaGlobal*
+        air_for_block: *const u32,
+        segment_offsets: *const u32,
+        num_airs: u32,
+        total_x_blocks: u32,
+        max_num_cosets: u32,
+        skip_domain: u32,
+    ) -> i32;
+
     fn _fold_selectors_round0(
         out: *mut EF,
         input: *const F,
@@ -1016,6 +1070,116 @@ pub unsafe fn logup_bary_eval_interactions_round0(
         num_cosets,
         g_shift,
         max_temp_bytes,
+    ))
+}
+
+/// Batched coset-parallel zerocheck evaluation for multiple small AIRs (GLOBAL=false).
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn zerocheck_ntt_eval_constraints_batched(
+    tmp_sums_buffer: &mut DeviceBuffer<EF>,
+    output: &mut DeviceBuffer<EF>,
+    metas: &DeviceBuffer<u8>,
+    air_for_block: &DeviceBuffer<u32>,
+    segment_offsets: &DeviceBuffer<u32>,
+    lambda_pows: &DeviceBuffer<EF>,
+    num_airs: u32,
+    total_x_blocks: u32,
+    max_num_cosets: u32,
+    skip_domain: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_zerocheck_ntt_eval_constraints_batched(
+        tmp_sums_buffer.as_mut_ptr(),
+        output.as_mut_ptr(),
+        metas.as_ptr() as *const std::ffi::c_void,
+        air_for_block.as_ptr(),
+        segment_offsets.as_ptr(),
+        lambda_pows.as_ptr(),
+        lambda_pows.len(),
+        num_airs,
+        total_x_blocks,
+        max_num_cosets,
+        skip_domain,
+    ))
+}
+
+/// Batched coset-parallel zerocheck evaluation for multiple AIRs (GLOBAL=true).
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn zerocheck_ntt_eval_constraints_batched_global(
+    tmp_sums_buffer: &mut DeviceBuffer<EF>,
+    output: &mut DeviceBuffer<EF>,
+    metas: &DeviceBuffer<u8>,
+    air_for_block: &DeviceBuffer<u32>,
+    segment_offsets: &DeviceBuffer<u32>,
+    lambda_pows: &DeviceBuffer<EF>,
+    num_airs: u32,
+    total_x_blocks: u32,
+    max_num_cosets: u32,
+    skip_domain: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_zerocheck_ntt_eval_constraints_batched_global(
+        tmp_sums_buffer.as_mut_ptr(),
+        output.as_mut_ptr(),
+        metas.as_ptr() as *const std::ffi::c_void,
+        air_for_block.as_ptr(),
+        segment_offsets.as_ptr(),
+        lambda_pows.as_ptr(),
+        lambda_pows.len(),
+        num_airs,
+        total_x_blocks,
+        max_num_cosets,
+        skip_domain,
+    ))
+}
+
+/// Batched coset-parallel logup evaluation for multiple small AIRs (GLOBAL=false).
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn logup_bary_eval_interactions_round0_batched(
+    tmp_sums_buffer: &mut DeviceBuffer<Frac<EF>>,
+    output: &mut DeviceBuffer<Frac<EF>>,
+    metas: &DeviceBuffer<u8>,
+    air_for_block: &DeviceBuffer<u32>,
+    segment_offsets: &DeviceBuffer<u32>,
+    num_airs: u32,
+    total_x_blocks: u32,
+    max_num_cosets: u32,
+    skip_domain: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_logup_bary_eval_interactions_round0_batched(
+        tmp_sums_buffer.as_mut_ptr(),
+        output.as_mut_ptr(),
+        metas.as_ptr() as *const std::ffi::c_void,
+        air_for_block.as_ptr(),
+        segment_offsets.as_ptr(),
+        num_airs,
+        total_x_blocks,
+        max_num_cosets,
+        skip_domain,
+    ))
+}
+
+/// Batched coset-parallel logup evaluation for multiple AIRs (GLOBAL=true).
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn logup_bary_eval_interactions_round0_batched_global(
+    tmp_sums_buffer: &mut DeviceBuffer<Frac<EF>>,
+    output: &mut DeviceBuffer<Frac<EF>>,
+    metas: &DeviceBuffer<u8>,
+    air_for_block: &DeviceBuffer<u32>,
+    segment_offsets: &DeviceBuffer<u32>,
+    num_airs: u32,
+    total_x_blocks: u32,
+    max_num_cosets: u32,
+    skip_domain: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_logup_bary_eval_interactions_round0_batched_global(
+        tmp_sums_buffer.as_mut_ptr(),
+        output.as_mut_ptr(),
+        metas.as_ptr() as *const std::ffi::c_void,
+        air_for_block.as_ptr(),
+        segment_offsets.as_ptr(),
+        num_airs,
+        total_x_blocks,
+        max_num_cosets,
+        skip_domain,
     ))
 }
 

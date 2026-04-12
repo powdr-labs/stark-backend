@@ -1,0 +1,45 @@
+
+Experiment: apc300  (OpenVM 2)
+
+  App Proof Basic Stats
+  ──────────────────────────────────────────────────────────
+  Segments                  2
+  AIR Instances             623
+  Columns                   106,842
+  Cells                     811.18M (811,182,720)
+  Constraints               54,961
+  Constraint Instances      505.24M (505,240,712)
+  Bus Interactions          67,357
+  Bus Interaction Messages  448.46M (448,457,256)
+
+  Proof Time
+  ──────────────────────────────────────────────────────────
+  Metered Execution        0.61s (615 ms)  (  9.3%)
+  App Proof Time           5.21s (5211 ms)  ( 79.2%)
+    STARK (excl. trace)    2.20s (2203 ms)  ( 33.5%)
+      Constraints          1.54s (1544 ms)  ( 23.5%)
+        LogUp GKR          0.79s (792 ms)  ( 12.0%)
+        Round 0            0.57s (569 ms)  (  8.6%)
+        MLE Rounds         0.18s (181 ms)  (  2.8%)
+        Other              0.00s (2 ms)  (  0.0%) (residual)
+      Openings             0.25s (250 ms)  (  3.8%)
+        WHIR               0.10s (100 ms)  (  1.5%)
+        Stacked Reduction  0.15s (148 ms)  (  2.2%)
+        Other              0.00s (2 ms)  (  0.0%) (residual)
+      Trace Commit         0.41s (407 ms)  (  6.2%)
+      Other                0.00s (2 ms)  (  0.0%) (residual)
+    Preflight Execution    1.55s (1547 ms)  ( 23.5%)
+    Set Initial Memory     0.21s (208 ms)  (  3.2%)
+    Trace Gen              1.25s (1251 ms)  ( 19.0%)
+    Other                  0.00s (2 ms)  (  0.0%) (residual)
+  Leaf Recursion           0.48s (480 ms)  (  7.3%)
+  Inner Recursion          0.27s (273 ms)  (  4.1%)
+  Compression              0.00s (0 ms)  (  0.0%)
+  ──────────────────────────────────────────────────────────
+  Total                    6.58s (6579 ms)  (100.0%)
+
+  Trace Cell Distribution
+  ──────────────────────────────────────────────────────────
+  Powdr                52.8%
+  Normal Instructions  44.5%
+  OpenVM Precompiles   2.7%

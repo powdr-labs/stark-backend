@@ -85,7 +85,10 @@ use batch_mle_monomial::{
 pub use errors::*;
 pub use fractional::{fractional_sumcheck_gpu, make_synthetic_leaves};
 use gkr_input::{collect_trace_interactions, log_gkr_input_evals};
-use round0::evaluate_round0_constraints_gpu;
+use round0::{
+    evaluate_round0_constraints_gpu, LogupBatchMeta, LogupBatchMetaGlobal, ZerocheckBatchMeta,
+    ZerocheckBatchMetaGlobal, BUFFER_THRESHOLD, COSET_PARALLEL_THRESHOLD, MAX_THREADS_ROUND0,
+};
 
 /// When `num_monomials >= DAG_FALLBACK_MONOMIAL_RATIO * rules_len`, use DAG evaluation
 /// instead of the monomial kernel for high num_y traces.
@@ -737,16 +740,42 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             local_constraint_deg: usize,
             omega_root: F,
             n: isize,
+            // For individual (non-batched) launches:
             zc_result: DeviceBuffer<EF>,
             logup_result: DeviceBuffer<Frac<EF>>,
+            // For batched launches (index within the batch category, None if individual):
+            zc_batch_idx: Option<(bool, usize)>,   // (is_global, index)
+            logup_batch_idx: Option<(bool, usize)>, // (is_global, index)
         }
 
-        // Phase 1: Launch all GPU kernels without blocking D2H transfers.
-        // Collect result buffers and metadata for Phase 2 processing.
-        let mut pending: Vec<Round0Pending<F, EF>> = Vec::with_capacity(num_present_airs);
-        // Collect d_main_parts to keep them alive until all kernels complete.
-        let mut d_main_parts_vec: Vec<DeviceBuffer<*const F>> = Vec::with_capacity(num_present_airs);
+        let skip_domain: u32 = 1 << l_skip;
+        let block_x = skip_domain.max(MAX_THREADS_ROUND0);
 
+        // Phase 1: Classify AIRs, collect metadata for batching, launch individual kernels.
+        let mut pending: Vec<Round0Pending<F, EF>> = Vec::with_capacity(num_present_airs);
+        let mut d_main_parts_vec: Vec<DeviceBuffer<*const F>> =
+            Vec::with_capacity(num_present_airs);
+
+        // Batched zerocheck metadata (GLOBAL=false and GLOBAL=true)
+        let mut zc_local_metas: Vec<ZerocheckBatchMeta> = Vec::new();
+        let mut zc_local_x_blocks: Vec<u32> = Vec::new();
+        let mut zc_global_metas: Vec<ZerocheckBatchMetaGlobal> = Vec::new();
+        let mut zc_global_x_blocks: Vec<u32> = Vec::new();
+        // Per-AIR intermediates size for GLOBAL=true zerocheck
+        let mut zc_global_intermed_elems: Vec<usize> = Vec::new();
+
+        // Batched logup metadata + keep-alive buffers
+        let mut logup_local_metas: Vec<LogupBatchMeta> = Vec::new();
+        let mut logup_local_x_blocks: Vec<u32> = Vec::new();
+        let mut logup_global_metas: Vec<LogupBatchMetaGlobal> = Vec::new();
+        let mut logup_global_x_blocks: Vec<u32> = Vec::new();
+        let mut logup_global_intermed_elems: Vec<usize> = Vec::new();
+        // Keep per-AIR logup device buffers alive until stream sync
+        let mut logup_keepalive_rules: Vec<DeviceBuffer<u128>> = Vec::new();
+        let mut logup_keepalive_numer_w: Vec<DeviceBuffer<EF>> = Vec::new();
+        let mut logup_keepalive_denom_w: Vec<DeviceBuffer<EF>> = Vec::new();
+
+        // Sub-phase A: Classify AIRs and collect metadata
         for (trace_idx, ((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs)) in izip!(
             &ctx.per_trace,
             &self.n_per_trace,
@@ -758,7 +787,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         {
             debug!("starting batch constraints for air_idx={air_idx} (trace_idx={trace_idx})");
             let single_pk = &self.pk.per_air[*air_idx];
-            // Includes both plain AIR constraints and symbolic interactions
             let single_air_constraints =
                 SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
             let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
@@ -774,7 +802,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
 
             let log_large_domain = log2_ceil_usize(local_constraint_deg << l_skip);
             let omega_root = F::two_adic_generator(log_large_domain);
-
             assert!(!xi.is_empty(), "xi vector must not be empty");
 
             let height = air_ctx.common_main.height();
@@ -786,45 +813,252 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             let d_main_parts = main_parts.to_device()?;
 
             let n_lift = n.max(0) as usize;
+            let num_x: u32 = 1 << n_lift;
             let eq_xi_tree = &self.eq_xis[&n_lift];
             let max_temp_bytes = self.memory_limit_bytes;
-            // local_constraint_deg = 0 means no constraints. The only way that linear constraints
-            // on trace polynomials could vanish on 2^l_skip points is if the constraint polynomial
-            // is identically zero. Thus for local_constraint_deg = 0 or 1, we must have `s'_0 = 0`.
             let num_cosets_zc = local_constraint_deg.saturating_sub(1);
-            let zc_result = evaluate_round0_constraints_gpu(
-                single_pk,
-                selectors_cube.buffer(),
-                &d_main_parts,
-                public_values,
-                eq_xi_tree.get_ptr(n_lift),
-                d_lambda_pows,
-                1 << l_skip,
-                1 << n_lift,
-                height as u32,
-                num_cosets_zc as u32,
-                omega_root,
-                max_temp_bytes,
-            )?;
-
-            // PERF: we could use an interaction-specific constraint degree here
             let num_cosets_logup = local_constraint_deg;
-            let logup_result = evaluate_round0_interactions_gpu(
-                single_pk,
-                &single_air_constraints,
-                selectors_cube.buffer(),
-                &d_main_parts,
-                public_values,
-                eq_xi_tree.get_ptr(n_lift),
-                &self.beta_pows,
-                eq_3bs,
-                1 << l_skip,
-                1 << n_lift,
-                height as u32,
-                num_cosets_logup as u32,
-                omega_root,
-                max_temp_bytes,
-            )?;
+
+            let is_coset_parallel = (num_x * skip_domain) < COSET_PARALLEL_THRESHOLD;
+
+            // --- Zerocheck classification ---
+            let constraints_dag = &single_pk.vk.symbolic_constraints;
+            let has_constraints =
+                !constraints_dag.constraints.constraint_idx.is_empty() && num_cosets_zc > 0;
+
+            let zc_buffer_size = if has_constraints {
+                single_pk.other_data.zerocheck_round0.inner.buffer_size
+            } else {
+                0
+            };
+            let zc_is_global = zc_buffer_size > BUFFER_THRESHOLD;
+            let zc_batch_eligible = has_constraints && is_coset_parallel;
+
+            let (zc_result, zc_batch_idx) = if zc_batch_eligible {
+                let preprocessed_ptr = single_pk
+                    .preprocessed_data
+                    .as_ref()
+                    .map(|cd| cd.trace.buffer().as_ptr())
+                    .unwrap_or(std::ptr::null());
+                let rules = &single_pk.other_data.zerocheck_round0.inner;
+                let x_blocks = (num_x * skip_domain).div_ceil(block_x);
+
+                if zc_is_global {
+                    let idx = zc_global_metas.len();
+                    zc_global_metas.push(ZerocheckBatchMetaGlobal {
+                        selectors_cube: selectors_cube.buffer().as_ptr(),
+                        preprocessed: preprocessed_ptr,
+                        main_parts: d_main_parts.as_ptr(),
+                        eq_cube: eq_xi_tree.get_ptr(n_lift),
+                        public_values: public_values.as_ptr(),
+                        d_rules: rules.d_rules.as_raw_ptr(),
+                        d_used_nodes: rules.d_used_nodes.as_ptr(),
+                        rules_len: rules.d_rules.len(),
+                        used_nodes_len: rules.d_used_nodes.len(),
+                        buffer_size: zc_buffer_size,
+                        num_x,
+                        height: height as u32,
+                        num_cosets: num_cosets_zc as u32,
+                        g_shift: omega_root,
+                        intermediates: std::ptr::null_mut(), // set during sub-batch launch
+                    });
+                    zc_global_x_blocks.push(x_blocks);
+                    let intermed = zc_buffer_size as usize
+                        * x_blocks as usize
+                        * num_cosets_zc
+                        * block_x as usize;
+                    zc_global_intermed_elems.push(intermed);
+                    (DeviceBuffer::new(), Some((true, idx)))
+                } else {
+                    let idx = zc_local_metas.len();
+                    zc_local_metas.push(ZerocheckBatchMeta {
+                        selectors_cube: selectors_cube.buffer().as_ptr(),
+                        preprocessed: preprocessed_ptr,
+                        main_parts: d_main_parts.as_ptr(),
+                        eq_cube: eq_xi_tree.get_ptr(n_lift),
+                        public_values: public_values.as_ptr(),
+                        d_rules: rules.d_rules.as_raw_ptr(),
+                        d_used_nodes: rules.d_used_nodes.as_ptr(),
+                        rules_len: rules.d_rules.len(),
+                        used_nodes_len: rules.d_used_nodes.len(),
+                        buffer_size: zc_buffer_size,
+                        num_x,
+                        height: height as u32,
+                        num_cosets: num_cosets_zc as u32,
+                        g_shift: omega_root,
+                    });
+                    zc_local_x_blocks.push(x_blocks);
+                    (DeviceBuffer::new(), Some((false, idx)))
+                }
+            } else {
+                // Individual launch (lockstep or no constraints)
+                let result = evaluate_round0_constraints_gpu(
+                    single_pk,
+                    selectors_cube.buffer(),
+                    &d_main_parts,
+                    public_values,
+                    eq_xi_tree.get_ptr(n_lift),
+                    d_lambda_pows,
+                    skip_domain,
+                    num_x,
+                    height as u32,
+                    num_cosets_zc as u32,
+                    omega_root,
+                    max_temp_bytes,
+                )?;
+                (result, None)
+            };
+
+            // --- Logup classification ---
+            let has_interactions = !eq_3bs.is_empty();
+            let (logup_result, logup_batch_idx) = if has_interactions {
+                // Per-AIR CPU work: build symbolic DAG, compute weights
+                use openvm_stark_backend::air_builders::symbolic::{
+                    symbolic_expression::SymbolicExpression, SymbolicExpressionDag,
+                };
+
+                use crate::logup_zerocheck::rules::{codec::Codec, SymbolicRulesGpu};
+
+                let mut dag_builder =
+                    openvm_stark_backend::air_builders::symbolic::SymbolicDagBuilder::new();
+                let mut sorted_used_dag_idxs = Vec::new();
+                for interaction in &single_air_constraints.interactions {
+                    let count = dag_builder.add_expr(&interaction.count);
+                    sorted_used_dag_idxs.push(count);
+                    sorted_used_dag_idxs.extend(
+                        interaction
+                            .message
+                            .iter()
+                            .map(|field_expr| dag_builder.add_expr(field_expr)),
+                    );
+                }
+                sorted_used_dag_idxs.sort();
+                sorted_used_dag_idxs.dedup();
+                let dag = SymbolicExpressionDag {
+                    nodes: dag_builder.nodes,
+                    constraint_idx: sorted_used_dag_idxs,
+                };
+                let rules = SymbolicRulesGpu::new(&dag, true);
+                let mut numer_weights = vec![EF::ZERO; rules.rules.len()];
+                let mut denom_weights = vec![EF::ZERO; rules.rules.len()];
+                let mut denom_sum_init = EF::ZERO;
+                for (interaction_idx, interaction) in
+                    single_air_constraints.interactions.iter().enumerate()
+                {
+                    let count_dag_idx = dag_builder.expr_to_idx
+                        [&(&interaction.count as *const SymbolicExpression<_>)];
+                    let count_rule_idx = rules.dag_idx_to_rule_idx[&count_dag_idx];
+                    numer_weights[count_rule_idx] += eq_3bs[interaction_idx];
+                    denom_sum_init += eq_3bs[interaction_idx]
+                        * self.beta_pows[interaction.message.len()]
+                        * F::from_u32(interaction.bus_index as u32 + 1);
+
+                    for (message_idx, message) in interaction.message.iter().enumerate() {
+                        let message_dag_idx =
+                            dag_builder.expr_to_idx[&(message as *const SymbolicExpression<_>)];
+                        let message_rule_idx = rules.dag_idx_to_rule_idx[&message_dag_idx];
+                        denom_weights[message_rule_idx] +=
+                            eq_3bs[interaction_idx] * self.beta_pows[message_idx];
+                    }
+                }
+
+                let logup_buffer_size: u32 = rules.buffer_size.try_into().unwrap();
+                let logup_is_global = logup_buffer_size > BUFFER_THRESHOLD;
+                let logup_batch_eligible = is_coset_parallel;
+
+                if logup_batch_eligible {
+                    let encoded_rules = rules.rules.iter().map(|c| c.encode()).collect_vec();
+                    let d_rules = encoded_rules.to_device()?;
+                    let d_numer_weights = numer_weights.to_device()?;
+                    let d_denom_weights = denom_weights.to_device()?;
+
+                    let preprocessed_ptr = single_pk
+                        .preprocessed_data
+                        .as_ref()
+                        .map(|cd| cd.trace.buffer().as_ptr())
+                        .unwrap_or(std::ptr::null());
+
+                    let x_blocks = (num_x * skip_domain).div_ceil(block_x);
+
+                    let batch_idx = if logup_is_global {
+                        let idx = logup_global_metas.len();
+                        logup_global_metas.push(LogupBatchMetaGlobal {
+                            selectors_cube: selectors_cube.buffer().as_ptr(),
+                            preprocessed: preprocessed_ptr,
+                            main_parts: d_main_parts.as_ptr(),
+                            eq_cube: eq_xi_tree.get_ptr(n_lift),
+                            public_values: public_values.as_ptr(),
+                            numer_weights: d_numer_weights.as_ptr(),
+                            denom_weights: d_denom_weights.as_ptr(),
+                            d_rules: d_rules.as_raw_ptr(),
+                            rules_len: d_rules.len(),
+                            denom_sum_init,
+                            buffer_size: logup_buffer_size,
+                            num_x,
+                            height: height as u32,
+                            num_cosets: num_cosets_logup as u32,
+                            g_shift: omega_root,
+                            intermediates: std::ptr::null_mut(),
+                        });
+                        logup_global_x_blocks.push(x_blocks);
+                        let intermed = logup_buffer_size as usize
+                            * x_blocks as usize
+                            * num_cosets_logup
+                            * block_x as usize;
+                        logup_global_intermed_elems.push(intermed);
+                        (true, idx)
+                    } else {
+                        let idx = logup_local_metas.len();
+                        logup_local_metas.push(LogupBatchMeta {
+                            selectors_cube: selectors_cube.buffer().as_ptr(),
+                            preprocessed: preprocessed_ptr,
+                            main_parts: d_main_parts.as_ptr(),
+                            eq_cube: eq_xi_tree.get_ptr(n_lift),
+                            public_values: public_values.as_ptr(),
+                            numer_weights: d_numer_weights.as_ptr(),
+                            denom_weights: d_denom_weights.as_ptr(),
+                            d_rules: d_rules.as_raw_ptr(),
+                            rules_len: d_rules.len(),
+                            denom_sum_init,
+                            buffer_size: logup_buffer_size,
+                            num_x,
+                            height: height as u32,
+                            num_cosets: num_cosets_logup as u32,
+                            g_shift: omega_root,
+                        });
+                        logup_local_x_blocks.push(x_blocks);
+                        (false, idx)
+                    };
+
+                    // Keep device buffers alive
+                    logup_keepalive_rules.push(d_rules);
+                    logup_keepalive_numer_w.push(d_numer_weights);
+                    logup_keepalive_denom_w.push(d_denom_weights);
+
+                    (DeviceBuffer::new(), Some(batch_idx))
+                } else {
+                    // Individual launch via existing function
+                    let result = evaluate_round0_interactions_gpu(
+                        single_pk,
+                        &single_air_constraints,
+                        selectors_cube.buffer(),
+                        &d_main_parts,
+                        public_values,
+                        eq_xi_tree.get_ptr(n_lift),
+                        &self.beta_pows,
+                        eq_3bs,
+                        skip_domain,
+                        num_x,
+                        height as u32,
+                        num_cosets_logup as u32,
+                        omega_root,
+                        max_temp_bytes,
+                    )?;
+                    (result, None)
+                }
+            } else {
+                (DeviceBuffer::new(), None)
+            };
 
             d_main_parts_vec.push(d_main_parts);
             pending.push(Round0Pending {
@@ -837,18 +1071,433 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 n,
                 zc_result,
                 logup_result,
+                zc_batch_idx,
+                logup_batch_idx,
             });
+        }
+
+        // Sub-phase B: Batched launches
+        debug!(
+            "Round 0 batching: zc_local={}, zc_global={}, logup_local={}, logup_global={}, skip_domain={skip_domain}",
+            zc_local_metas.len(), zc_global_metas.len(), logup_local_metas.len(), logup_global_metas.len()
+        );
+
+        // Helper to build batch launch data structures
+        fn build_batch_arrays(x_blocks: &[u32]) -> (Vec<u32>, Vec<u32>) {
+            let total: u32 = x_blocks.iter().sum();
+            let mut seg_offsets = Vec::with_capacity(x_blocks.len() + 1);
+            seg_offsets.push(0u32);
+            let mut acc = 0u32;
+            for &xb in x_blocks {
+                acc += xb;
+                seg_offsets.push(acc);
+            }
+            let mut air_for_block = Vec::with_capacity(total as usize);
+            for (air_idx, &xb) in x_blocks.iter().enumerate() {
+                for _ in 0..xb {
+                    air_for_block.push(air_idx as u32);
+                }
+            }
+            (seg_offsets, air_for_block)
+        }
+
+        // Keep-alive for intermediates buffers (must survive until stream sync)
+        let mut intermed_keepalive: Vec<DeviceBuffer<F>> = Vec::new();
+
+        // --- Zerocheck GLOBAL=false batch ---
+        let mut d_zc_local_output: DeviceBuffer<EF> = DeviceBuffer::new();
+        let zc_local_max_cosets: u32 = zc_local_metas
+            .iter()
+            .map(|m| m.num_cosets)
+            .max()
+            .unwrap_or(0);
+        let zc_local_d: usize = (zc_local_max_cosets * skip_domain) as usize;
+
+        if !zc_local_metas.is_empty() {
+            let total_x_blocks: u32 = zc_local_x_blocks.iter().sum();
+            let (seg_offsets, air_for_block) = build_batch_arrays(&zc_local_x_blocks);
+
+            let d_metas_bytes: DeviceBuffer<u8> = unsafe {
+                let bytes = std::slice::from_raw_parts(
+                    zc_local_metas.as_ptr() as *const u8,
+                    zc_local_metas.len() * std::mem::size_of::<ZerocheckBatchMeta>(),
+                );
+                bytes.to_device()?
+            };
+            let d_air_for_block = air_for_block.to_device()?;
+            let d_seg_offsets = seg_offsets.to_device()?;
+
+            let mut d_tmp =
+                DeviceBuffer::<EF>::with_capacity(total_x_blocks as usize * zc_local_d);
+            d_tmp
+                .fill_zero()
+                .map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
+            d_zc_local_output =
+                DeviceBuffer::<EF>::with_capacity(zc_local_metas.len() * zc_local_d);
+
+            unsafe {
+                crate::cuda::logup_zerocheck::zerocheck_ntt_eval_constraints_batched(
+                    &mut d_tmp,
+                    &mut d_zc_local_output,
+                    &d_metas_bytes,
+                    &d_air_for_block,
+                    &d_seg_offsets,
+                    d_lambda_pows,
+                    zc_local_metas.len() as u32,
+                    total_x_blocks,
+                    zc_local_max_cosets,
+                    skip_domain,
+                )
+                .map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
+            }
+            drop(d_tmp);
+        }
+
+        // --- Zerocheck GLOBAL=true sub-batched launches ---
+        // Sub-batch indices map: zc_global_sb_map[i] = (sub_batch_idx, offset_within_sub_batch)
+        let mut zc_global_sb_map: Vec<(usize, usize)> = vec![(0, 0); zc_global_metas.len()];
+        let mut d_zc_global_sb_outputs: Vec<DeviceBuffer<EF>> = Vec::new();
+        let mut zc_global_sb_d: Vec<usize> = Vec::new(); // d per sub-batch
+        let zc_global_max_cosets: u32 = zc_global_metas
+            .iter()
+            .map(|m| m.num_cosets)
+            .max()
+            .unwrap_or(0);
+        let zc_global_d: usize = (zc_global_max_cosets * skip_domain) as usize;
+
+        if !zc_global_metas.is_empty() {
+            const PER_BATCH_MEM_BUDGET: usize = 64 * 1024 * 1024; // 64 MB
+
+            // Form sub-batches with memory budget
+            let mut sub_batches: Vec<(usize, usize)> = Vec::new();
+            let mut batch_start = 0usize;
+            let mut current_x_blocks: u32 = 0;
+            let mut current_intermed: usize = 0;
+            for i in 0..zc_global_metas.len() {
+                let xb = zc_global_x_blocks[i];
+                let ie = zc_global_intermed_elems[i];
+                let projected_tmp =
+                    (current_x_blocks + xb) as usize * zc_global_d * std::mem::size_of::<EF>();
+                let projected_intermed = (current_intermed + ie) * std::mem::size_of::<F>();
+                if projected_tmp + projected_intermed > PER_BATCH_MEM_BUDGET
+                    && i > batch_start
+                {
+                    sub_batches.push((batch_start, i));
+                    batch_start = i;
+                    current_x_blocks = 0;
+                    current_intermed = 0;
+                }
+                current_x_blocks += xb;
+                current_intermed += ie;
+            }
+            if batch_start < zc_global_metas.len() {
+                sub_batches.push((batch_start, zc_global_metas.len()));
+            }
+
+            debug!(
+                "Zerocheck GLOBAL=true: {} sub-batches for {} AIRs",
+                sub_batches.len(),
+                zc_global_metas.len()
+            );
+
+            for (sb_idx, &(sb_start, sb_end)) in sub_batches.iter().enumerate() {
+                let sb_metas = &mut zc_global_metas[sb_start..sb_end];
+                let sb_x_blocks = &zc_global_x_blocks[sb_start..sb_end];
+                let sb_intermed = &zc_global_intermed_elems[sb_start..sb_end];
+
+                // Record mapping
+                for (i, global_i) in (sb_start..sb_end).enumerate() {
+                    zc_global_sb_map[global_i] = (sb_idx, i);
+                }
+
+                let (sb_seg_offsets, sb_air_for_block) = build_batch_arrays(sb_x_blocks);
+                let sb_total_x: u32 = sb_x_blocks.iter().sum();
+
+                // Allocate intermediates for this sub-batch only
+                let sb_total_intermed: usize = sb_intermed.iter().sum();
+                let d_intermediates = DeviceBuffer::<F>::with_capacity(sb_total_intermed);
+                let intermed_base = d_intermediates.as_ptr() as *mut F;
+
+                let mut offset = 0usize;
+                for (meta, &elems) in sb_metas.iter_mut().zip(sb_intermed) {
+                    meta.intermediates = unsafe { intermed_base.add(offset) };
+                    offset += elems;
+                }
+
+                let d_metas_bytes: DeviceBuffer<u8> = unsafe {
+                    let bytes = std::slice::from_raw_parts(
+                        sb_metas.as_ptr() as *const u8,
+                        sb_metas.len() * std::mem::size_of::<ZerocheckBatchMetaGlobal>(),
+                    );
+                    bytes.to_device()?
+                };
+                let d_air_for_block = sb_air_for_block.to_device()?;
+                let d_seg_offsets = sb_seg_offsets.to_device()?;
+
+                let mut d_tmp =
+                    DeviceBuffer::<EF>::with_capacity(sb_total_x as usize * zc_global_d);
+                d_tmp
+                    .fill_zero()
+                    .map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
+
+                let mut d_sb_output =
+                    DeviceBuffer::<EF>::with_capacity(sb_metas.len() * zc_global_d);
+
+                unsafe {
+                    crate::cuda::logup_zerocheck::zerocheck_ntt_eval_constraints_batched_global(
+                        &mut d_tmp,
+                        &mut d_sb_output,
+                        &d_metas_bytes,
+                        &d_air_for_block,
+                        &d_seg_offsets,
+                        d_lambda_pows,
+                        sb_metas.len() as u32,
+                        sb_total_x,
+                        zc_global_max_cosets,
+                        skip_domain,
+                    )
+                    .map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
+                }
+                drop(d_tmp);
+                intermed_keepalive.push(d_intermediates);
+                d_zc_global_sb_outputs.push(d_sb_output);
+                zc_global_sb_d.push(zc_global_d);
+            }
+        }
+
+        // --- Logup GLOBAL=false batch ---
+        let mut d_logup_local_output: DeviceBuffer<Frac<EF>> = DeviceBuffer::new();
+        let logup_local_max_cosets: u32 = logup_local_metas
+            .iter()
+            .map(|m| m.num_cosets)
+            .max()
+            .unwrap_or(0);
+        let logup_local_d: usize = (logup_local_max_cosets * skip_domain) as usize;
+
+        if !logup_local_metas.is_empty() {
+            let total_x_blocks: u32 = logup_local_x_blocks.iter().sum();
+            let (seg_offsets, air_for_block) = build_batch_arrays(&logup_local_x_blocks);
+
+            let d_metas_bytes: DeviceBuffer<u8> = unsafe {
+                let bytes = std::slice::from_raw_parts(
+                    logup_local_metas.as_ptr() as *const u8,
+                    logup_local_metas.len() * std::mem::size_of::<LogupBatchMeta>(),
+                );
+                bytes.to_device()?
+            };
+            let d_air_for_block = air_for_block.to_device()?;
+            let d_seg_offsets = seg_offsets.to_device()?;
+
+            let mut d_tmp = DeviceBuffer::<Frac<EF>>::with_capacity(
+                total_x_blocks as usize * logup_local_d,
+            );
+            d_tmp
+                .fill_zero()
+                .map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
+            d_logup_local_output =
+                DeviceBuffer::<Frac<EF>>::with_capacity(logup_local_metas.len() * logup_local_d);
+
+            unsafe {
+                crate::cuda::logup_zerocheck::logup_bary_eval_interactions_round0_batched(
+                    &mut d_tmp,
+                    &mut d_logup_local_output,
+                    &d_metas_bytes,
+                    &d_air_for_block,
+                    &d_seg_offsets,
+                    logup_local_metas.len() as u32,
+                    total_x_blocks,
+                    logup_local_max_cosets,
+                    skip_domain,
+                )
+                .map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
+            }
+            drop(d_tmp);
+        }
+
+        // --- Logup GLOBAL=true sub-batched launches ---
+        let mut logup_global_sb_map: Vec<(usize, usize)> =
+            vec![(0, 0); logup_global_metas.len()];
+        let mut d_logup_global_sb_outputs: Vec<DeviceBuffer<Frac<EF>>> = Vec::new();
+        let mut logup_global_sb_d: Vec<usize> = Vec::new();
+        let logup_global_max_cosets: u32 = logup_global_metas
+            .iter()
+            .map(|m| m.num_cosets)
+            .max()
+            .unwrap_or(0);
+        let logup_global_d: usize = (logup_global_max_cosets * skip_domain) as usize;
+
+        if !logup_global_metas.is_empty() {
+            const PER_BATCH_MEM_BUDGET: usize = 64 * 1024 * 1024; // 64 MB
+
+            let mut sub_batches: Vec<(usize, usize)> = Vec::new();
+            let mut batch_start = 0usize;
+            let mut current_x_blocks: u32 = 0;
+            let mut current_intermed: usize = 0;
+            for i in 0..logup_global_metas.len() {
+                let xb = logup_global_x_blocks[i];
+                let ie = logup_global_intermed_elems[i];
+                let projected_tmp = (current_x_blocks + xb) as usize
+                    * logup_global_d
+                    * std::mem::size_of::<Frac<EF>>();
+                let projected_intermed = (current_intermed + ie) * std::mem::size_of::<F>();
+                if projected_tmp + projected_intermed > PER_BATCH_MEM_BUDGET
+                    && i > batch_start
+                {
+                    sub_batches.push((batch_start, i));
+                    batch_start = i;
+                    current_x_blocks = 0;
+                    current_intermed = 0;
+                }
+                current_x_blocks += xb;
+                current_intermed += ie;
+            }
+            if batch_start < logup_global_metas.len() {
+                sub_batches.push((batch_start, logup_global_metas.len()));
+            }
+
+            debug!(
+                "Logup GLOBAL=true: {} sub-batches for {} AIRs",
+                sub_batches.len(),
+                logup_global_metas.len()
+            );
+
+            for (sb_idx, &(sb_start, sb_end)) in sub_batches.iter().enumerate() {
+                let sb_metas = &mut logup_global_metas[sb_start..sb_end];
+                let sb_x_blocks = &logup_global_x_blocks[sb_start..sb_end];
+                let sb_intermed = &logup_global_intermed_elems[sb_start..sb_end];
+
+                for (i, global_i) in (sb_start..sb_end).enumerate() {
+                    logup_global_sb_map[global_i] = (sb_idx, i);
+                }
+
+                let (sb_seg_offsets, sb_air_for_block) = build_batch_arrays(sb_x_blocks);
+                let sb_total_x: u32 = sb_x_blocks.iter().sum();
+
+                let sb_total_intermed: usize = sb_intermed.iter().sum();
+                let d_intermediates = DeviceBuffer::<F>::with_capacity(sb_total_intermed);
+                let intermed_base = d_intermediates.as_ptr() as *mut F;
+
+                let mut offset = 0usize;
+                for (meta, &elems) in sb_metas.iter_mut().zip(sb_intermed) {
+                    meta.intermediates = unsafe { intermed_base.add(offset) };
+                    offset += elems;
+                }
+
+                let d_metas_bytes: DeviceBuffer<u8> = unsafe {
+                    let bytes = std::slice::from_raw_parts(
+                        sb_metas.as_ptr() as *const u8,
+                        sb_metas.len() * std::mem::size_of::<LogupBatchMetaGlobal>(),
+                    );
+                    bytes.to_device()?
+                };
+                let d_air_for_block = sb_air_for_block.to_device()?;
+                let d_seg_offsets = sb_seg_offsets.to_device()?;
+
+                let mut d_tmp = DeviceBuffer::<Frac<EF>>::with_capacity(
+                    sb_total_x as usize * logup_global_d,
+                );
+                d_tmp
+                    .fill_zero()
+                    .map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
+
+                let mut d_sb_output = DeviceBuffer::<Frac<EF>>::with_capacity(
+                    sb_metas.len() * logup_global_d,
+                );
+
+                unsafe {
+                    crate::cuda::logup_zerocheck::logup_bary_eval_interactions_round0_batched_global(
+                        &mut d_tmp,
+                        &mut d_sb_output,
+                        &d_metas_bytes,
+                        &d_air_for_block,
+                        &d_seg_offsets,
+                        sb_metas.len() as u32,
+                        sb_total_x,
+                        logup_global_max_cosets,
+                        skip_domain,
+                    )
+                    .map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
+                }
+                drop(d_tmp);
+                intermed_keepalive.push(d_intermediates);
+                d_logup_global_sb_outputs.push(d_sb_output);
+                logup_global_sb_d.push(logup_global_d);
+            }
         }
 
         // Phase 2: Explicit stream sync, then D2H transfers + CPU polynomial construction.
         current_stream_sync().map_err(|e| LogupZerocheckError::from(MemCopyError::from(e)))?;
 
-        // Release d_main_parts now that all kernels have completed
+        // Release keep-alive buffers now that all kernels have completed
         drop(d_main_parts_vec);
+        drop(logup_keepalive_rules);
+        drop(logup_keepalive_numer_w);
+        drop(logup_keepalive_denom_w);
+        drop(intermed_keepalive);
+
+        // D2H batched outputs
+        let h_zc_local_output = if !d_zc_local_output.is_empty() {
+            let h = d_zc_local_output.to_host()?;
+            drop(d_zc_local_output);
+            h
+        } else {
+            drop(d_zc_local_output);
+            vec![]
+        };
+        // D2H sub-batch outputs for zerocheck GLOBAL=true
+        let h_zc_global_sb_outputs: Vec<Vec<EF>> = d_zc_global_sb_outputs
+            .into_iter()
+            .map(|d_buf| {
+                if !d_buf.is_empty() {
+                    d_buf.to_host().unwrap_or_default()
+                } else {
+                    vec![]
+                }
+            })
+            .collect();
+
+        let h_logup_local_output = if !d_logup_local_output.is_empty() {
+            let h = d_logup_local_output.to_host()?;
+            drop(d_logup_local_output);
+            h
+        } else {
+            drop(d_logup_local_output);
+            vec![]
+        };
+        // D2H sub-batch outputs for logup GLOBAL=true
+        let h_logup_global_sb_outputs: Vec<Vec<Frac<EF>>> = d_logup_global_sb_outputs
+            .into_iter()
+            .map(|d_buf| {
+                if !d_buf.is_empty() {
+                    d_buf.to_host().unwrap_or_default()
+                } else {
+                    vec![]
+                }
+            })
+            .collect();
 
         for entry in pending {
-            if !entry.zc_result.is_empty() {
-                let q_evals = entry.zc_result.to_host()?;
+            // Process zerocheck result
+            let q_evals: Option<Vec<EF>> =
+                if let Some((is_global, batch_idx)) = entry.zc_batch_idx {
+                    if is_global {
+                        let (sb_idx, sb_offset) = zc_global_sb_map[batch_idx];
+                        let d = zc_global_sb_d[sb_idx];
+                        let offset = sb_offset * d;
+                        let len = entry.num_cosets_zc * (1 << l_skip);
+                        Some(h_zc_global_sb_outputs[sb_idx][offset..offset + len].to_vec())
+                    } else {
+                        let offset = batch_idx * zc_local_d;
+                        let len = entry.num_cosets_zc * (1 << l_skip);
+                        Some(h_zc_local_output[offset..offset + len].to_vec())
+                    }
+                } else if !entry.zc_result.is_empty() {
+                    Some(entry.zc_result.to_host()?)
+                } else {
+                    None
+                };
+
+            if let Some(q_evals) = q_evals {
                 let q = {
                     // Make q_evals row-major, with columns <> cosets
                     let mut values = EF::zero_vec(entry.num_cosets_zc << l_skip);
@@ -886,8 +1535,27 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     UnivariatePoly::new(coeffs);
             }
 
-            if !entry.logup_result.is_empty() {
-                let evals = entry.logup_result.to_host()?;
+            // Process logup result
+            let logup_evals: Option<Vec<Frac<EF>>> =
+                if let Some((is_global, batch_idx)) = entry.logup_batch_idx {
+                    if is_global {
+                        let (sb_idx, sb_offset) = logup_global_sb_map[batch_idx];
+                        let d = logup_global_sb_d[sb_idx];
+                        let offset = sb_offset * d;
+                        let len = entry.num_cosets_logup * (1 << l_skip);
+                        Some(h_logup_global_sb_outputs[sb_idx][offset..offset + len].to_vec())
+                    } else {
+                        let offset = batch_idx * logup_local_d;
+                        let len = entry.num_cosets_logup * (1 << l_skip);
+                        Some(h_logup_local_output[offset..offset + len].to_vec())
+                    }
+                } else if !entry.logup_result.is_empty() {
+                    Some(entry.logup_result.to_host()?)
+                } else {
+                    None
+                };
+
+            if let Some(evals) = logup_evals {
                 let (mut numer, denom): (Vec<EF>, Vec<EF>) =
                     evals.into_iter().map(|frac| (frac.p, frac.q)).unzip();
                 if entry.n.is_negative() {

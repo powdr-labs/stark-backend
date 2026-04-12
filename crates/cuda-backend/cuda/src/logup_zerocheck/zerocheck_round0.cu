@@ -467,6 +467,283 @@ __global__ void zerocheck_ntt_evaluate_constraints_coset_parallel_kernel(
 }
 
 // ============================================================================
+// BATCHED COSET-PARALLEL
+// ============================================================================
+
+// Per-AIR metadata for batched coset-parallel evaluation (GLOBAL=false).
+struct ZerocheckBatchMeta {
+    const Fp *selectors_cube;
+    const Fp *preprocessed;
+    const Fp *const *main_parts;
+    const FpExt *eq_cube;
+    const Fp *public_values;
+    const Rule *d_rules;
+    const size_t *d_used_nodes;
+    size_t rules_len;
+    size_t used_nodes_len;
+    uint32_t buffer_size;
+    uint32_t num_x;
+    uint32_t height;
+    uint32_t num_cosets;
+    Fp g_shift;
+};
+
+// Per-AIR metadata for batched coset-parallel evaluation (GLOBAL=true).
+// Same as ZerocheckBatchMeta but with an intermediates pointer.
+struct ZerocheckBatchMetaGlobal {
+    const Fp *selectors_cube;
+    const Fp *preprocessed;
+    const Fp *const *main_parts;
+    const FpExt *eq_cube;
+    const Fp *public_values;
+    const Rule *d_rules;
+    const size_t *d_used_nodes;
+    size_t rules_len;
+    size_t used_nodes_len;
+    uint32_t buffer_size;
+    uint32_t num_x;
+    uint32_t height;
+    uint32_t num_cosets;
+    Fp g_shift;
+    Fp *intermediates;  // pre-allocated device buffer base for this AIR's intermediates
+};
+
+// Batched coset-parallel kernel: processes multiple small AIRs in a single launch.
+// Grid: (total_x_blocks, max_num_cosets) where total_x_blocks = sum of per-AIR x_blocks.
+// Each block looks up its AIR via air_for_block[blockIdx.x] and loads per-AIR metadata.
+// GLOBAL=false only (buffer_size <= BUFFER_THRESHOLD).
+template <bool NEEDS_SHMEM>
+__global__ void zerocheck_ntt_evaluate_constraints_coset_parallel_batched_kernel(
+    FpExt *__restrict__ tmp_sums_buffer,         // [total_x_blocks][max_num_cosets * skip_domain]
+    const ZerocheckBatchMeta *__restrict__ air_metas,   // [num_airs], device
+    const uint32_t *__restrict__ air_for_block,  // [total_x_blocks], device
+    const uint32_t *__restrict__ segment_offsets, // [num_airs + 1], device
+    const FpExt *__restrict__ d_lambda_pows,     // shared across all AIRs
+    size_t lambda_len,
+    uint32_t skip_domain,
+    uint32_t d                                   // max_num_cosets * skip_domain
+) {
+    extern __shared__ char smem[];
+    FpExt *shared_sum = reinterpret_cast<FpExt *>(smem);
+    Fp *ntt_buffers_base =
+        NEEDS_SHMEM ? reinterpret_cast<Fp *>(smem + blockDim.x * sizeof(FpExt)) : nullptr;
+
+    uint32_t const l_skip = __ffs(skip_domain) - 1;
+
+    // Identify which AIR this block belongs to
+    uint32_t const air_idx = air_for_block[blockIdx.x];
+    ZerocheckBatchMeta const meta = air_metas[air_idx];
+    uint32_t const local_block_x = blockIdx.x - segment_offsets[air_idx];
+    uint32_t const coset_idx = blockIdx.y;
+
+    // Bounds check: early return if this coset doesn't exist for this AIR
+    if (coset_idx >= meta.num_cosets) return;
+
+    // Each x_int group within the block gets its own ntt_buffer slice
+    uint32_t const x_int_in_block = threadIdx.x >> l_skip;
+    Fp *ntt_buffer = NEEDS_SHMEM ? (ntt_buffers_base + x_int_in_block * skip_domain) : nullptr;
+
+    // Thread layout: ntt_idx varies fastest, then x_int
+    uint32_t const tidx = threadIdx.x + local_block_x * blockDim.x;
+    uint32_t const ntt_idx = tidx & (skip_domain - 1);
+    uint32_t const x_int_base = tidx >> l_skip;
+
+    // Precompute values for this single coset
+    uint32_t const ntt_idx_rev = rev_len(ntt_idx, l_skip);
+
+    uint32_t const log_height_total = __ffs(meta.height) - 1;
+    uint32_t const log_segment = min(l_skip, log_height_total);
+    uint32_t const segment_size = 1u << log_segment;
+    uint32_t const log_stride = l_skip - log_segment;
+
+    Fp const eta = TWO_ADIC_GENERATORS[l_skip - log_stride];
+    Fp const omega_skip_ntt =
+        (l_skip == 0) ? Fp::one() : device_ntt::get_twiddle(l_skip, ntt_idx);
+
+    // Compute for single coset: g^(coset_idx + 1)
+    Fp const g_coset = pow(meta.g_shift, coset_idx + 1);
+    Fp const eval_point = g_coset * omega_skip_ntt;
+    Fp const omega = exp_power_of_2(eval_point, log_stride);
+    Fp const is_first_mult = avg_gp(omega, segment_size);
+    Fp const is_last_mult = avg_gp(omega * eta, segment_size);
+    Fp const omega_shift = pow(g_coset, ntt_idx_rev);
+
+    // Intermediate buffer: local only (GLOBAL=false)
+    Fp local_buffer[BUFFER_THRESHOLD];
+    Fp *inter_buffer = local_buffer;
+    uint32_t const buffer_stride = 1;
+
+    FpExt sum = FpExt(Fp::zero());
+
+    uint32_t const air_x_blocks = segment_offsets[air_idx + 1] - segment_offsets[air_idx];
+    uint32_t const x_int_stride = (air_x_blocks * blockDim.x) >> l_skip;
+
+    // Single-coset context (NUM_COSETS=1)
+    NttEvalContext<1> eval_ctx{
+        meta.preprocessed,
+        meta.main_parts,
+        meta.public_values,
+        inter_buffer,
+        ntt_buffer,
+        {omega_shift},
+        skip_domain,
+        meta.height,
+        buffer_stride,
+        meta.buffer_size,
+        ntt_idx,
+    };
+
+    for (uint32_t x_int = x_int_base; x_int < meta.num_x; x_int += x_int_stride) {
+        Fp is_first = is_first_mult * meta.selectors_cube[x_int];
+        Fp is_last = is_last_mult * meta.selectors_cube[2 * meta.num_x + x_int];
+
+        FpExt constraint_sums[1];
+        acc_constraints<1, NEEDS_SHMEM>(
+            constraint_sums,
+            eval_ctx,
+            &is_first,
+            &is_last,
+            x_int,
+            d_lambda_pows,
+            meta.d_rules,
+            meta.rules_len,
+            meta.d_used_nodes,
+            meta.used_nodes_len,
+            lambda_len
+        );
+
+        sum += constraint_sums[0] * meta.eq_cube[x_int];
+    }
+
+    // Single-coset reduction
+    Fp zerofier = exp_power_of_2(eval_point, l_skip) - Fp::one();
+    shared_sum[threadIdx.x] = sum * inv(zerofier);
+    __syncthreads();
+
+    if (threadIdx.x < skip_domain) {
+        FpExt tile_sum = shared_sum[threadIdx.x];
+        for (uint32_t lane = 1; lane < (blockDim.x >> l_skip); ++lane) {
+            tile_sum += shared_sum[(lane << l_skip) + threadIdx.x];
+        }
+        // Output layout: [total_x_blocks][d] where d = max_num_cosets * skip_domain
+        tmp_sums_buffer[blockIdx.x * d + coset_idx * skip_domain + ntt_idx] = tile_sum;
+    }
+}
+
+// Batched coset-parallel kernel for GLOBAL=true (buffer_size > BUFFER_THRESHOLD).
+// Uses pre-allocated per-AIR intermediates buffers instead of local registers.
+template <bool NEEDS_SHMEM>
+__global__ void zerocheck_ntt_evaluate_constraints_coset_parallel_batched_global_kernel(
+    FpExt *__restrict__ tmp_sums_buffer,
+    const ZerocheckBatchMetaGlobal *__restrict__ air_metas,
+    const uint32_t *__restrict__ air_for_block,
+    const uint32_t *__restrict__ segment_offsets,
+    const FpExt *__restrict__ d_lambda_pows,
+    size_t lambda_len,
+    uint32_t skip_domain,
+    uint32_t d
+) {
+    extern __shared__ char smem[];
+    FpExt *shared_sum = reinterpret_cast<FpExt *>(smem);
+    Fp *ntt_buffers_base =
+        NEEDS_SHMEM ? reinterpret_cast<Fp *>(smem + blockDim.x * sizeof(FpExt)) : nullptr;
+
+    uint32_t const l_skip = __ffs(skip_domain) - 1;
+
+    uint32_t const air_idx = air_for_block[blockIdx.x];
+    ZerocheckBatchMetaGlobal const meta = air_metas[air_idx];
+    uint32_t const local_block_x = blockIdx.x - segment_offsets[air_idx];
+    uint32_t const coset_idx = blockIdx.y;
+
+    if (coset_idx >= meta.num_cosets) return;
+
+    uint32_t const x_int_in_block = threadIdx.x >> l_skip;
+    Fp *ntt_buffer = NEEDS_SHMEM ? (ntt_buffers_base + x_int_in_block * skip_domain) : nullptr;
+
+    uint32_t const tidx = threadIdx.x + local_block_x * blockDim.x;
+    uint32_t const ntt_idx = tidx & (skip_domain - 1);
+    uint32_t const x_int_base = tidx >> l_skip;
+
+    uint32_t const ntt_idx_rev = rev_len(ntt_idx, l_skip);
+
+    uint32_t const log_height_total = __ffs(meta.height) - 1;
+    uint32_t const log_segment = min(l_skip, log_height_total);
+    uint32_t const segment_size = 1u << log_segment;
+    uint32_t const log_stride = l_skip - log_segment;
+
+    Fp const eta = TWO_ADIC_GENERATORS[l_skip - log_stride];
+    Fp const omega_skip_ntt =
+        (l_skip == 0) ? Fp::one() : device_ntt::get_twiddle(l_skip, ntt_idx);
+
+    Fp const g_coset = pow(meta.g_shift, coset_idx + 1);
+    Fp const eval_point = g_coset * omega_skip_ntt;
+    Fp const omega = exp_power_of_2(eval_point, log_stride);
+    Fp const is_first_mult = avg_gp(omega, segment_size);
+    Fp const is_last_mult = avg_gp(omega * eta, segment_size);
+    Fp const omega_shift = pow(g_coset, ntt_idx_rev);
+
+    // GLOBAL=true intermediates: per-AIR pre-allocated buffer with strided layout
+    Fp local_buffer[1]; // dummy, not used
+    uint32_t const air_x_blocks = segment_offsets[air_idx + 1] - segment_offsets[air_idx];
+    uint32_t const air_stride = air_x_blocks * meta.num_cosets * blockDim.x;
+    uint32_t const global_tidx = coset_idx * air_x_blocks * blockDim.x + tidx;
+    Fp *inter_buffer = meta.intermediates + global_tidx;
+    uint32_t const buffer_stride = air_stride;
+
+    FpExt sum = FpExt(Fp::zero());
+
+    uint32_t const x_int_stride = (air_x_blocks * blockDim.x) >> l_skip;
+
+    NttEvalContext<1> eval_ctx{
+        meta.preprocessed,
+        meta.main_parts,
+        meta.public_values,
+        inter_buffer,
+        ntt_buffer,
+        {omega_shift},
+        skip_domain,
+        meta.height,
+        buffer_stride,
+        meta.buffer_size,
+        ntt_idx,
+    };
+
+    for (uint32_t x_int = x_int_base; x_int < meta.num_x; x_int += x_int_stride) {
+        Fp is_first = is_first_mult * meta.selectors_cube[x_int];
+        Fp is_last = is_last_mult * meta.selectors_cube[2 * meta.num_x + x_int];
+
+        FpExt constraint_sums[1];
+        acc_constraints<1, NEEDS_SHMEM>(
+            constraint_sums,
+            eval_ctx,
+            &is_first,
+            &is_last,
+            x_int,
+            d_lambda_pows,
+            meta.d_rules,
+            meta.rules_len,
+            meta.d_used_nodes,
+            meta.used_nodes_len,
+            lambda_len
+        );
+
+        sum += constraint_sums[0] * meta.eq_cube[x_int];
+    }
+
+    Fp zerofier = exp_power_of_2(eval_point, l_skip) - Fp::one();
+    shared_sum[threadIdx.x] = sum * inv(zerofier);
+    __syncthreads();
+
+    if (threadIdx.x < skip_domain) {
+        FpExt tile_sum = shared_sum[threadIdx.x];
+        for (uint32_t lane = 1; lane < (blockDim.x >> l_skip); ++lane) {
+            tile_sum += shared_sum[(lane << l_skip) + threadIdx.x];
+        }
+        tmp_sums_buffer[blockIdx.x * d + coset_idx * skip_domain + ntt_idx] = tile_sum;
+    }
+}
+
+// ============================================================================
 // LAUNCHERS
 // ============================================================================
 constexpr uint32_t MAX_THREADS = 128;
@@ -714,6 +991,110 @@ extern "C" int _zerocheck_ntt_eval_constraints(
         );
     }
 #undef KERNEL_ARGS
+}
+
+extern "C" int _zerocheck_ntt_eval_constraints_batched(
+    FpExt *tmp_sums_buffer,               // pre-zeroed, [total_x_blocks][d]
+    FpExt *output,                        // [num_airs][d]
+    const ZerocheckBatchMeta *metas,      // [num_airs], device
+    const uint32_t *air_for_block,        // [total_x_blocks], device
+    const uint32_t *segment_offsets,      // [num_airs + 1], device
+    const FpExt *d_lambda_pows,           // shared
+    size_t lambda_len,
+    uint32_t num_airs,
+    uint32_t total_x_blocks,
+    uint32_t max_num_cosets,
+    uint32_t skip_domain
+) {
+    if (total_x_blocks == 0 || num_airs == 0) return 0;
+
+    uint32_t d = max_num_cosets * skip_domain;
+    dim3 grid(total_x_blocks, max_num_cosets);
+    uint32_t block_x = std::max(skip_domain, MAX_THREADS);
+    dim3 block(block_x);
+
+    bool needs_shmem = skip_domain > WARP_SIZE;
+    size_t shared_sum_size = sizeof(FpExt) * block.x;
+    size_t ntt_buffers_size = needs_shmem ? sizeof(Fp) * block.x : 0;
+    size_t shmem_bytes = shared_sum_size + ntt_buffers_size;
+
+    if (needs_shmem) {
+        zerocheck_ntt_evaluate_constraints_coset_parallel_batched_kernel<true>
+            <<<grid, block, shmem_bytes>>>(
+                tmp_sums_buffer, metas, air_for_block, segment_offsets,
+                d_lambda_pows, lambda_len, skip_domain, d
+            );
+    } else {
+        zerocheck_ntt_evaluate_constraints_coset_parallel_batched_kernel<false>
+            <<<grid, block, shmem_bytes>>>(
+                tmp_sums_buffer, metas, air_for_block, segment_offsets,
+                d_lambda_pows, lambda_len, skip_domain, d
+            );
+    }
+    int err = CHECK_KERNEL();
+    if (err != 0) return err;
+
+    auto [reduce_grid_unused, reduce_block] = kernel_launch_params(total_x_blocks);
+    unsigned int reduce_warps = div_ceil(reduce_block.x, WARP_SIZE);
+    size_t reduce_shmem = std::max(1u, reduce_warps) * sizeof(FpExt);
+    dim3 reduce_grid(num_airs, d);
+    sumcheck::batched_final_reduce_block_sums<<<reduce_grid, reduce_block, reduce_shmem>>>(
+        tmp_sums_buffer, output, segment_offsets, d
+    );
+
+    return CHECK_KERNEL();
+}
+
+extern "C" int _zerocheck_ntt_eval_constraints_batched_global(
+    FpExt *tmp_sums_buffer,
+    FpExt *output,
+    const ZerocheckBatchMetaGlobal *metas,
+    const uint32_t *air_for_block,
+    const uint32_t *segment_offsets,
+    const FpExt *d_lambda_pows,
+    size_t lambda_len,
+    uint32_t num_airs,
+    uint32_t total_x_blocks,
+    uint32_t max_num_cosets,
+    uint32_t skip_domain
+) {
+    if (total_x_blocks == 0 || num_airs == 0) return 0;
+
+    uint32_t d = max_num_cosets * skip_domain;
+    dim3 grid(total_x_blocks, max_num_cosets);
+    uint32_t block_x = std::max(skip_domain, MAX_THREADS);
+    dim3 block(block_x);
+
+    bool needs_shmem = skip_domain > WARP_SIZE;
+    size_t shared_sum_size = sizeof(FpExt) * block.x;
+    size_t ntt_buffers_size = needs_shmem ? sizeof(Fp) * block.x : 0;
+    size_t shmem_bytes = shared_sum_size + ntt_buffers_size;
+
+    if (needs_shmem) {
+        zerocheck_ntt_evaluate_constraints_coset_parallel_batched_global_kernel<true>
+            <<<grid, block, shmem_bytes>>>(
+                tmp_sums_buffer, metas, air_for_block, segment_offsets,
+                d_lambda_pows, lambda_len, skip_domain, d
+            );
+    } else {
+        zerocheck_ntt_evaluate_constraints_coset_parallel_batched_global_kernel<false>
+            <<<grid, block, shmem_bytes>>>(
+                tmp_sums_buffer, metas, air_for_block, segment_offsets,
+                d_lambda_pows, lambda_len, skip_domain, d
+            );
+    }
+    int err = CHECK_KERNEL();
+    if (err != 0) return err;
+
+    auto [reduce_grid_unused, reduce_block] = kernel_launch_params(total_x_blocks);
+    unsigned int reduce_warps = div_ceil(reduce_block.x, WARP_SIZE);
+    size_t reduce_shmem = std::max(1u, reduce_warps) * sizeof(FpExt);
+    dim3 reduce_grid(num_airs, d);
+    sumcheck::batched_final_reduce_block_sums<<<reduce_grid, reduce_block, reduce_shmem>>>(
+        tmp_sums_buffer, output, segment_offsets, d
+    );
+
+    return CHECK_KERNEL();
 }
 
 extern "C" int _fold_selectors_round0(
