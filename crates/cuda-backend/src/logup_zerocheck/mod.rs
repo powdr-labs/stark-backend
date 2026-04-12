@@ -54,8 +54,14 @@ use crate::{
     gpu_backend::GenericGpuBackend,
     hash_scheme::GpuHashScheme,
     logup_zerocheck::{
-        batch_mle::evaluate_zerocheck_batched, fold_ple::fold_ple_evals_rotate,
-        gkr_input::TraceInteractionMeta, round0::evaluate_round0_interactions_gpu,
+        batch_mle::evaluate_zerocheck_batched,
+        fold_ple::fold_ple_evals_rotate,
+        gkr_input::TraceInteractionMeta,
+        round0::{
+            launch_round0_constraints_kernel, launch_round0_interactions_kernel,
+            logup_intermediates_size, logup_temp_sums_size, prepare_round0_interactions,
+            zc_intermediates_size, zc_temp_sums_size, InteractionRound0Prep,
+        },
     },
     poly::EqEvalLayers,
     prelude::{EF, F},
@@ -84,7 +90,6 @@ use batch_mle_monomial::{
 pub use errors::*;
 pub use fractional::{fractional_sumcheck_gpu, make_synthetic_leaves};
 use gkr_input::{collect_trace_interactions, log_gkr_input_evals};
-use round0::evaluate_round0_constraints_gpu;
 
 /// When `num_monomials >= DAG_FALLBACK_MONOMIAL_RATIO * rules_len`, use DAG evaluation
 /// instead of the monomial kernel for high num_y traces.
@@ -727,9 +732,27 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             .as_ref()
             .expect("lambda powers must be set before round-0 evaluation");
 
-        // Loop through one AIR at a time; it is more efficient to do everything for one AIR
-        // together
-        for (trace_idx, ((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs)) in izip!(
+        // ── Phase A: Prepare per-AIR metadata and interaction data (CPU work) ──
+        struct Round0AirData {
+            air_idx: usize,
+            n: isize,
+            height: usize,
+            local_constraint_deg: usize,
+            num_cosets_zc: usize,
+            num_cosets_logup: usize,
+            has_constraints: bool,
+            interaction_prep: Option<InteractionRound0Prep>,
+            d_main_parts: DeviceBuffer<*const F>,
+            omega_root: F,
+            eq_xi_ptr: *const EF,
+            preprocessed_ptr: *const F,
+        }
+
+        let max_temp_bytes = self.memory_limit_bytes;
+        let skip_domain: u32 = 1 << l_skip;
+        let mut per_air_data: Vec<Round0AirData> = Vec::with_capacity(num_present_airs);
+
+        for (trace_idx, ((air_idx, air_ctx), &n, _selectors_cube, _public_values, eq_3bs)) in izip!(
             &ctx.per_trace,
             &self.n_per_trace,
             &selectors_base,
@@ -738,9 +761,8 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         )
         .enumerate()
         {
-            debug!("starting batch constraints for air_idx={air_idx} (trace_idx={trace_idx})");
+            debug!("preparing batch constraints for air_idx={air_idx} (trace_idx={trace_idx})");
             let single_pk = &self.pk.per_air[*air_idx];
-            // Includes both plain AIR constraints and symbolic interactions
             let single_air_constraints =
                 SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
             let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
@@ -769,27 +791,208 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
 
             let n_lift = n.max(0) as usize;
             let eq_xi_tree = &self.eq_xis[&n_lift];
-            let max_temp_bytes = self.memory_limit_bytes;
-            // local_constraint_deg = 0 means no constraints. The only way that linear constraints
-            // on trace polynomials could vanish on 2^l_skip points is if the constraint polynomial
-            // is identically zero. Thus for local_constraint_deg = 0 or 1, we must have `s'_0 = 0`.
+
             let num_cosets_zc = local_constraint_deg.saturating_sub(1);
-            let sum_buffer = evaluate_round0_constraints_gpu(
-                single_pk,
-                selectors_cube.buffer(),
-                &d_main_parts,
-                public_values,
-                eq_xi_tree.get_ptr(n_lift),
-                d_lambda_pows,
-                1 << l_skip,
-                1 << n_lift,
-                height as u32,
-                num_cosets_zc as u32,
+            // has_constraints: must check both constraint_idx.is_empty() AND num_cosets_zc > 0,
+            // matching the guard at round0.rs:46.
+            let has_constraints = !single_pk
+                .vk
+                .symbolic_constraints
+                .constraints
+                .constraint_idx
+                .is_empty()
+                && num_cosets_zc > 0;
+
+            let num_cosets_logup = local_constraint_deg;
+            let has_interactions = !eq_3bs.is_empty();
+            let interaction_prep = if has_interactions {
+                Some(
+                    prepare_round0_interactions(&single_air_constraints, eq_3bs, &self.beta_pows)
+                        .map_err(LogupZerocheckError::Round0Eval)?,
+                )
+            } else {
+                None
+            };
+
+            let preprocessed_ptr = single_pk
+                .preprocessed_data
+                .as_ref()
+                .map(|cd| cd.trace.buffer().as_ptr())
+                .unwrap_or(std::ptr::null());
+
+            per_air_data.push(Round0AirData {
+                air_idx: *air_idx,
+                n,
+                height,
+                local_constraint_deg,
+                num_cosets_zc,
+                num_cosets_logup,
+                has_constraints,
+                interaction_prep,
+                d_main_parts,
                 omega_root,
-                max_temp_bytes,
-            )?;
-            if !sum_buffer.is_empty() {
-                let q_evals = sum_buffer.to_host()?;
+                eq_xi_ptr: eq_xi_tree.get_ptr(n_lift),
+                preprocessed_ptr,
+            });
+        }
+
+        // Pre-allocate shared intermediate buffers (max size across all AIRs).
+        // These are reused across AIRs since kernels execute sequentially on cudaStreamPerThread.
+        let max_zc_intermed = per_air_data
+            .iter()
+            .filter(|d| d.has_constraints)
+            .map(|d| {
+                let buffer_size = self.pk.per_air[d.air_idx]
+                    .other_data
+                    .zerocheck_round0
+                    .inner
+                    .buffer_size;
+                let n_lift = d.n.max(0) as usize;
+                zc_intermediates_size(
+                    buffer_size,
+                    skip_domain,
+                    1 << n_lift,
+                    d.num_cosets_zc as u32,
+                    max_temp_bytes,
+                )
+            })
+            .max()
+            .unwrap_or(0);
+        let max_zc_temp = per_air_data
+            .iter()
+            .filter(|d| d.has_constraints)
+            .map(|d| {
+                let buffer_size = self.pk.per_air[d.air_idx]
+                    .other_data
+                    .zerocheck_round0
+                    .inner
+                    .buffer_size;
+                let n_lift = d.n.max(0) as usize;
+                zc_temp_sums_size(
+                    buffer_size,
+                    skip_domain,
+                    1 << n_lift,
+                    d.num_cosets_zc as u32,
+                    max_temp_bytes,
+                )
+            })
+            .max()
+            .unwrap_or(0);
+        let max_logup_intermed = per_air_data
+            .iter()
+            .filter_map(|d| d.interaction_prep.as_ref().map(|p| (d, p)))
+            .map(|(d, prep)| {
+                let n_lift = d.n.max(0) as usize;
+                logup_intermediates_size(
+                    prep.buffer_size,
+                    skip_domain,
+                    1 << n_lift,
+                    d.num_cosets_logup as u32,
+                    max_temp_bytes,
+                )
+            })
+            .max()
+            .unwrap_or(0);
+        let max_logup_temp = per_air_data
+            .iter()
+            .filter_map(|d| d.interaction_prep.as_ref().map(|p| (d, p)))
+            .map(|(d, prep)| {
+                let n_lift = d.n.max(0) as usize;
+                logup_temp_sums_size(
+                    prep.buffer_size,
+                    skip_domain,
+                    1 << n_lift,
+                    d.num_cosets_logup as u32,
+                    max_temp_bytes,
+                )
+            })
+            .max()
+            .unwrap_or(0);
+
+        let mut zc_intermediates = DeviceBuffer::<F>::with_capacity(max_zc_intermed.max(1));
+        let mut zc_temp_sums = DeviceBuffer::<EF>::with_capacity(max_zc_temp.max(1));
+        let mut logup_intermediates = DeviceBuffer::<F>::with_capacity(max_logup_intermed.max(1));
+        let mut logup_temp_sums = DeviceBuffer::<Frac<EF>>::with_capacity(max_logup_temp.max(1));
+
+        // Pre-allocate per-AIR output buffers
+        let mut zc_outputs: Vec<DeviceBuffer<EF>> = per_air_data
+            .iter()
+            .map(|d| {
+                if d.has_constraints {
+                    DeviceBuffer::with_capacity(d.num_cosets_zc * skip_domain as usize)
+                } else {
+                    DeviceBuffer::new()
+                }
+            })
+            .collect();
+        let mut logup_outputs: Vec<DeviceBuffer<Frac<EF>>> = per_air_data
+            .iter()
+            .map(|d| {
+                if d.interaction_prep.is_some() {
+                    DeviceBuffer::with_capacity(d.num_cosets_logup * skip_domain as usize)
+                } else {
+                    DeviceBuffer::new()
+                }
+            })
+            .collect();
+
+        // ── Phase B: Launch all kernels (no sync) ──
+        for (trace_idx, data) in per_air_data.iter().enumerate() {
+            let n_lift = data.n.max(0) as usize;
+            let selectors_cube = &selectors_base[trace_idx];
+            let public_values = &self.public_values_per_trace[trace_idx];
+
+            if data.has_constraints {
+                launch_round0_constraints_kernel(
+                    &self.pk.per_air[data.air_idx],
+                    selectors_cube.buffer(),
+                    &data.d_main_parts,
+                    public_values,
+                    data.eq_xi_ptr,
+                    d_lambda_pows,
+                    skip_domain,
+                    1 << n_lift,
+                    data.height as u32,
+                    data.num_cosets_zc as u32,
+                    data.omega_root,
+                    max_temp_bytes,
+                    &mut zc_intermediates,
+                    &mut zc_temp_sums,
+                    &mut zc_outputs[trace_idx],
+                )
+                .map_err(LogupZerocheckError::Round0Eval)?;
+            }
+            if let Some(prep) = &data.interaction_prep {
+                launch_round0_interactions_kernel(
+                    prep,
+                    selectors_cube.buffer(),
+                    &data.d_main_parts,
+                    public_values,
+                    data.eq_xi_ptr,
+                    data.preprocessed_ptr,
+                    skip_domain,
+                    1 << n_lift,
+                    data.height as u32,
+                    data.num_cosets_logup as u32,
+                    data.omega_root,
+                    max_temp_bytes,
+                    &mut logup_intermediates,
+                    &mut logup_temp_sums,
+                    &mut logup_outputs[trace_idx],
+                )
+                .map_err(LogupZerocheckError::Round0Eval)?;
+            }
+        }
+
+        // ── Phase C: Sync once + batch process results ──
+        openvm_cuda_common::stream::current_stream_sync()
+            .map_err(LogupZerocheckError::CurrentStreamSync)?;
+
+        for (trace_idx, data) in per_air_data.iter().enumerate() {
+            // Process zerocheck output
+            if !zc_outputs[trace_idx].is_empty() {
+                let q_evals = zc_outputs[trace_idx].to_host()?;
+                let num_cosets_zc = data.num_cosets_zc;
                 let q = {
                     // Make q_evals row-major, with columns <> cosets
                     let mut values = EF::zero_vec(num_cosets_zc << l_skip);
@@ -801,12 +1004,12 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     }
                     UnivariatePoly::from_geometric_cosets_evals_idft(
                         RowMajorMatrix::new(values, num_cosets_zc),
-                        omega_root,
-                        omega_root,
+                        data.omega_root,
+                        data.omega_root,
                     )
                 };
                 // sp_0 = (Z^{2^l_skip} - 1) * q
-                let sp_0_deg = sumcheck_round0_deg(l_skip, local_constraint_deg);
+                let sp_0_deg = sumcheck_round0_deg(l_skip, data.local_constraint_deg);
                 let coeffs = (0..=sp_0_deg)
                     .map(|i| {
                         let mut c = -*q.coeffs().get(i).unwrap_or(&EF::ZERO);
@@ -820,37 +1023,21 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     coeffs.iter().step_by(1 << l_skip).copied().sum::<EF>(),
                     EF::ZERO,
                     "Zerocheck sum is not zero for air_id: {}",
-                    ctx.per_trace[trace_idx].0
+                    data.air_idx
                 );
 
                 batch_sp_poly[2 * num_present_airs + trace_idx] = UnivariatePoly::new(coeffs);
             }
 
-            // PERF: we could use an interaction-specific constraint degree here
-            let num_cosets_logup = local_constraint_deg;
-            let sum = evaluate_round0_interactions_gpu(
-                single_pk,
-                &single_air_constraints,
-                selectors_cube.buffer(),
-                &d_main_parts,
-                public_values,
-                eq_xi_tree.get_ptr(n_lift),
-                &self.beta_pows,
-                eq_3bs,
-                1 << l_skip,
-                1 << n_lift,
-                height as u32,
-                num_cosets_logup as u32,
-                omega_root,
-                max_temp_bytes,
-            )?;
-            if !sum.is_empty() {
-                let evals = sum.to_host()?;
+            // Process logup output
+            if !logup_outputs[trace_idx].is_empty() {
+                let num_cosets_logup = data.num_cosets_logup;
+                let evals = logup_outputs[trace_idx].to_host()?;
                 let (mut numer, denom): (Vec<EF>, Vec<EF>) =
                     evals.into_iter().map(|frac| (frac.p, frac.q)).unzip();
-                if n.is_negative() {
+                if data.n.is_negative() {
                     // normalize for lifting
-                    let norm_factor = F::from_u32(1 << n.unsigned_abs()).inverse();
+                    let norm_factor = F::from_u32(1 << data.n.unsigned_abs()).inverse();
                     for s in &mut numer {
                         *s *= norm_factor;
                     }
@@ -868,12 +1055,12 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 // Logup uses cosets 1, g^1, g^2, ... (init = 1, shift = omega_root)
                 batch_sp_poly[2 * trace_idx] = UnivariatePoly::from_geometric_cosets_evals_idft(
                     RowMajorMatrix::new(numer_values, num_cosets_logup),
-                    omega_root,
+                    data.omega_root,
                     F::ONE, // init = 1 for identity coset
                 );
                 batch_sp_poly[2 * trace_idx + 1] = UnivariatePoly::from_geometric_cosets_evals_idft(
                     RowMajorMatrix::new(denom_values, num_cosets_logup),
-                    omega_root,
+                    data.omega_root,
                     F::ONE, // init = 1 for identity coset
                 );
             }

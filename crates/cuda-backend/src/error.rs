@@ -90,6 +90,8 @@ pub enum LogupZerocheckError {
     BatchFoldMle(CudaError),
     #[error("fill_zero: {0}")]
     FillZero(CudaError),
+    #[error("current_stream_sync: {0}")]
+    CurrentStreamSync(CudaError),
 }
 
 #[derive(Error, Debug)]
