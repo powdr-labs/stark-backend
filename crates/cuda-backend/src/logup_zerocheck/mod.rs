@@ -26,7 +26,6 @@ use openvm_stark_backend::{
     calculate_n_logup,
     dft::Radix2BowersSerial,
     p3_matrix::dense::RowMajorMatrix,
-    p3_maybe_rayon::prelude::*,
     poly_common::{
         eq_uni_poly, eval_eq_mle, eval_eq_sharp_uni, eval_eq_uni, eval_eq_uni_at_one,
         UnivariatePoly,
@@ -728,21 +727,8 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             .as_ref()
             .expect("lambda powers must be set before round-0 evaluation");
 
-        // Phase 1: GPU kernel launches + D2H copies (sequential — must stay on one CUDA stream)
-        // Phase 2: CPU post-processing (parallel via rayon — transpose, iDFT, poly construction)
-        struct Round0AirRaw {
-            trace_idx: usize,
-            air_idx: usize,
-            n: isize,
-            local_constraint_deg: usize,
-            omega_root: F,
-            constraint_evals: Option<Vec<EF>>,
-            interaction_evals: Option<Vec<Frac<EF>>>,
-        }
-
-        let mut raw_results = Vec::with_capacity(num_present_airs);
-
-        // Phase 1: GPU work + D2H collection
+        // Loop through one AIR at a time; it is more efficient to do everything for one AIR
+        // together
         for (trace_idx, ((air_idx, air_ctx), &n, selectors_cube, public_values, eq_3bs)) in izip!(
             &ctx.per_trace,
             &self.n_per_trace,
@@ -754,6 +740,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         {
             debug!("starting batch constraints for air_idx={air_idx} (trace_idx={trace_idx})");
             let single_pk = &self.pk.per_air[*air_idx];
+            // Includes both plain AIR constraints and symbolic interactions
             let single_air_constraints =
                 SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
             let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
@@ -783,6 +770,9 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             let n_lift = n.max(0) as usize;
             let eq_xi_tree = &self.eq_xis[&n_lift];
             let max_temp_bytes = self.memory_limit_bytes;
+            // local_constraint_deg = 0 means no constraints. The only way that linear constraints
+            // on trace polynomials could vanish on 2^l_skip points is if the constraint polynomial
+            // is identically zero. Thus for local_constraint_deg = 0 or 1, we must have `s'_0 = 0`.
             let num_cosets_zc = local_constraint_deg.saturating_sub(1);
             let sum_buffer = evaluate_round0_constraints_gpu(
                 single_pk,
@@ -798,12 +788,45 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 omega_root,
                 max_temp_bytes,
             )?;
-            let constraint_evals = if !sum_buffer.is_empty() {
-                Some(sum_buffer.to_host()?)
-            } else {
-                None
-            };
+            if !sum_buffer.is_empty() {
+                let q_evals = sum_buffer.to_host()?;
+                let q = {
+                    // Make q_evals row-major, with columns <> cosets
+                    let mut values = EF::zero_vec(num_cosets_zc << l_skip);
+                    for coset_idx in 0..num_cosets_zc {
+                        for i in 0..1 << l_skip {
+                            values[i * num_cosets_zc + coset_idx] =
+                                q_evals[(coset_idx << l_skip) + i];
+                        }
+                    }
+                    UnivariatePoly::from_geometric_cosets_evals_idft(
+                        RowMajorMatrix::new(values, num_cosets_zc),
+                        omega_root,
+                        omega_root,
+                    )
+                };
+                // sp_0 = (Z^{2^l_skip} - 1) * q
+                let sp_0_deg = sumcheck_round0_deg(l_skip, local_constraint_deg);
+                let coeffs = (0..=sp_0_deg)
+                    .map(|i| {
+                        let mut c = -*q.coeffs().get(i).unwrap_or(&EF::ZERO);
+                        if i >= 1 << l_skip {
+                            c += q.coeffs()[i - (1 << l_skip)];
+                        }
+                        c
+                    })
+                    .collect_vec();
+                debug_assert_eq!(
+                    coeffs.iter().step_by(1 << l_skip).copied().sum::<EF>(),
+                    EF::ZERO,
+                    "Zerocheck sum is not zero for air_id: {}",
+                    ctx.per_trace[trace_idx].0
+                );
 
+                batch_sp_poly[2 * num_present_airs + trace_idx] = UnivariatePoly::new(coeffs);
+            }
+
+            // PERF: we could use an interaction-specific constraint degree here
             let num_cosets_logup = local_constraint_deg;
             let sum = evaluate_round0_interactions_gpu(
                 single_pk,
@@ -821,111 +844,38 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 omega_root,
                 max_temp_bytes,
             )?;
-            let interaction_evals = if !sum.is_empty() {
-                Some(sum.to_host()?)
-            } else {
-                None
-            };
-
-            raw_results.push(Round0AirRaw {
-                trace_idx,
-                air_idx: *air_idx,
-                n,
-                local_constraint_deg,
-                omega_root,
-                constraint_evals,
-                interaction_evals,
-            });
-        }
-
-        // Phase 2: CPU post-processing (parallel across AIRs)
-        let results: Vec<_> = raw_results
-            .into_par_iter()
-            .map(|raw| {
-                // Constraint post-processing (transpose + iDFT + polynomial construction)
-                let zc_poly = raw.constraint_evals.map(|q_evals| {
-                    let num_cosets_zc = raw.local_constraint_deg.saturating_sub(1);
-                    let mut values = EF::zero_vec(num_cosets_zc << l_skip);
-                    for coset_idx in 0..num_cosets_zc {
-                        for i in 0..1 << l_skip {
-                            values[i * num_cosets_zc + coset_idx] =
-                                q_evals[(coset_idx << l_skip) + i];
-                        }
+            if !sum.is_empty() {
+                let evals = sum.to_host()?;
+                let (mut numer, denom): (Vec<EF>, Vec<EF>) =
+                    evals.into_iter().map(|frac| (frac.p, frac.q)).unzip();
+                if n.is_negative() {
+                    // normalize for lifting
+                    let norm_factor = F::from_u32(1 << n.unsigned_abs()).inverse();
+                    for s in &mut numer {
+                        *s *= norm_factor;
                     }
-                    let q = UnivariatePoly::from_geometric_cosets_evals_idft(
-                        RowMajorMatrix::new(values, num_cosets_zc),
-                        raw.omega_root,
-                        raw.omega_root,
-                    );
-                    let sp_0_deg = sumcheck_round0_deg(l_skip, raw.local_constraint_deg);
-                    let coeffs = (0..=sp_0_deg)
-                        .map(|i| {
-                            let mut c = -*q.coeffs().get(i).unwrap_or(&EF::ZERO);
-                            if i >= 1 << l_skip {
-                                c += q.coeffs()[i - (1 << l_skip)];
-                            }
-                            c
-                        })
-                        .collect_vec();
-                    debug_assert_eq!(
-                        coeffs.iter().step_by(1 << l_skip).copied().sum::<EF>(),
-                        EF::ZERO,
-                        "Zerocheck sum is not zero for air_id: {}",
-                        raw.air_idx
-                    );
-                    UnivariatePoly::new(coeffs)
-                });
-
-                // Interaction post-processing (transpose + iDFT for numer and denom)
-                let (numer_poly, denom_poly) = if let Some(evals) = raw.interaction_evals {
-                    let num_cosets_logup = raw.local_constraint_deg;
-                    let (mut numer, denom): (Vec<EF>, Vec<EF>) =
-                        evals.into_iter().map(|frac| (frac.p, frac.q)).unzip();
-                    if raw.n.is_negative() {
-                        let norm_factor = F::from_u32(1 << raw.n.unsigned_abs()).inverse();
-                        for s in &mut numer {
-                            *s *= norm_factor;
-                        }
+                }
+                let mut numer_values = EF::zero_vec(num_cosets_logup << l_skip);
+                let mut denom_values = EF::zero_vec(num_cosets_logup << l_skip);
+                for coset_idx in 0..num_cosets_logup {
+                    for i in 0..1 << l_skip {
+                        let src = (coset_idx << l_skip) + i;
+                        let dst = i * num_cosets_logup + coset_idx;
+                        numer_values[dst] = numer[src];
+                        denom_values[dst] = denom[src];
                     }
-                    let mut numer_values = EF::zero_vec(num_cosets_logup << l_skip);
-                    let mut denom_values = EF::zero_vec(num_cosets_logup << l_skip);
-                    for coset_idx in 0..num_cosets_logup {
-                        for i in 0..1 << l_skip {
-                            let src = (coset_idx << l_skip) + i;
-                            let dst = i * num_cosets_logup + coset_idx;
-                            numer_values[dst] = numer[src];
-                            denom_values[dst] = denom[src];
-                        }
-                    }
-                    let np = UnivariatePoly::from_geometric_cosets_evals_idft(
-                        RowMajorMatrix::new(numer_values, num_cosets_logup),
-                        raw.omega_root,
-                        F::ONE,
-                    );
-                    let dp = UnivariatePoly::from_geometric_cosets_evals_idft(
-                        RowMajorMatrix::new(denom_values, num_cosets_logup),
-                        raw.omega_root,
-                        F::ONE,
-                    );
-                    (Some(np), Some(dp))
-                } else {
-                    (None, None)
-                };
-
-                (raw.trace_idx, numer_poly, denom_poly, zc_poly)
-            })
-            .collect();
-
-        // Scatter results into batch_sp_poly
-        for (trace_idx, numer_poly, denom_poly, zc_poly) in results {
-            if let Some(p) = numer_poly {
-                batch_sp_poly[2 * trace_idx] = p;
-            }
-            if let Some(p) = denom_poly {
-                batch_sp_poly[2 * trace_idx + 1] = p;
-            }
-            if let Some(p) = zc_poly {
-                batch_sp_poly[2 * num_present_airs + trace_idx] = p;
+                }
+                // Logup uses cosets 1, g^1, g^2, ... (init = 1, shift = omega_root)
+                batch_sp_poly[2 * trace_idx] = UnivariatePoly::from_geometric_cosets_evals_idft(
+                    RowMajorMatrix::new(numer_values, num_cosets_logup),
+                    omega_root,
+                    F::ONE, // init = 1 for identity coset
+                );
+                batch_sp_poly[2 * trace_idx + 1] = UnivariatePoly::from_geometric_cosets_evals_idft(
+                    RowMajorMatrix::new(denom_values, num_cosets_logup),
+                    omega_root,
+                    F::ONE, // init = 1 for identity coset
+                );
             }
         }
         self.mem
