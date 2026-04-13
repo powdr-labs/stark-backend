@@ -326,17 +326,35 @@ pub fn log_gkr_input_evals<HS: GpuHashScheme>(
             process_gkr_input_air(w, &mut bufs)?;
         }
     } else {
-        let chunk_size = work_items.len().div_ceil(num_threads);
+        // Interleaved (round-robin) assignment on the height-sorted list.
+        // Item i goes to thread (i % num_threads). Each thread gets a balanced
+        // mix of large and small AIRs without needing a calibrated cost model.
+        let items_per_thread = work_items.len().div_ceil(num_threads);
+        let mut thread_indices: Vec<Vec<usize>> =
+            (0..num_threads).map(|_| Vec::with_capacity(items_per_thread)).collect();
+        for (idx, _) in work_items.iter().enumerate() {
+            thread_indices[idx % num_threads].push(idx);
+        }
+
         std::thread::scope(|s| {
             let handles: Vec<_> = thread_buffers
                 .into_iter()
-                .zip(work_items.chunks(chunk_size))
-                .map(|(mut bufs, chunk)| {
+                .zip(thread_indices.into_iter())
+                .enumerate()
+                .map(|(thread_id, (mut bufs, indices))| {
+                    let items = &work_items;
                     s.spawn(move || -> Result<(), InteractionGpuError> {
-                        for w in chunk {
-                            process_gkr_input_air(w, &mut bufs)?;
+                        let t0 = std::time::Instant::now();
+                        for &idx in &indices {
+                            process_gkr_input_air(&items[idx], &mut bufs)?;
                         }
                         current_stream_sync().map_err(InteractionGpuError::from)?;
+                        tracing::debug!(
+                            thread_id,
+                            elapsed_ms = t0.elapsed().as_millis(),
+                            num_airs = indices.len(),
+                            "gkr_input thread done"
+                        );
                         Ok(())
                     })
                 })
