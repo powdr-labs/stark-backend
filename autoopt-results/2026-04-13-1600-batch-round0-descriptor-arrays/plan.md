@@ -168,7 +168,7 @@ New kernel: `batched_zerocheck_r0_coset_parallel_kernel`
   4. `x_per_block = blockDim.x / skip_domain` (known from block size)
   5. Thread maps: `ntt_idx = threadIdx.x % skip_domain`, `x_offset = threadIdx.x / skip_domain + x_block_idx * x_per_block`
   6. Compute NTT evaluation context: `inter_buffer = ctx.d_intermediates + (coset_idx * num_x_blocks * blockDim.x + x_block_idx * blockDim.x + threadIdx.x)`. Stride = `ctx.buffer_stride`.
-  7. Compute coset-specific values: `g_coset = g_shift^(2^coset_shift_exp)` for `coset_idx`. Precompute `is_first_mult`, `is_last_mult` for this coset.
+  7. Compute coset-specific values: `g_coset = pow(g_shift, coset_idx + 1)` (matching zerocheck_round0.cu line 388 — no identity-coset special case for zerocheck, unlike logup). Precompute `is_first_mult`, `is_last_mult` from `g_coset` (lines 389-393 of zerocheck_round0.cu).
   8. Main loop: iterate `x_int` from `x_offset` to `num_x` stepping by `x_per_block`. Call `acc_constraints<1, false>(...)` (GLOBAL=true, no shmem) per iteration. Accumulate into `sum`.
   9. Block-level reduction across `skip_domain` threads, write to `tmp_sums_buffer[block_offset + coset_idx * skip_domain + ntt_idx]` where `block_offset` is the per-AIR offset.
 
@@ -185,11 +185,12 @@ New launcher: `_batched_zerocheck_r0_eval_constraints`
 New kernel: `batched_logup_r0_coset_parallel_kernel`
 - Same 1D grid structure as Change 4
 - Per-block: load `Round0LogupCtx`, compute coset/x indices
-- **Identity-coset handling**: coset_idx 0 is the identity coset. The kernel computes `bool is_identity_coset = (coset_idx == 0)` and passes it as the runtime `skip_ntt` flag to `acc_interactions<1, false, false>(...)`, matching the existing coset-parallel logup kernel logic (logup_round0.cu lines 361-442). For coset_idx 0: `g_coset = Fp::one()` and `skip_ntt = true`. For coset_idx > 0: `g_coset = g_shift^(...)` and `skip_ntt = false`.
+- **Identity-coset handling**: coset_idx 0 is the identity coset. The kernel computes `bool is_identity_coset = (coset_idx == 0)` and passes it as the runtime `skip_ntt` flag to `acc_interactions<1, false, false>(...)`, matching the existing coset-parallel logup kernel logic (logup_round0.cu lines 361-442). For coset_idx 0: `g_coset = Fp::one()` and `skip_ntt = true`. For coset_idx > 0: `g_coset = pow(g_shift, coset_idx)` and `skip_ntt = false` (note: this differs from zerocheck which uses `coset_idx + 1` — logup's coset 0 is the identity, so coset 1 maps to `g^1`, matching logup_round0.cu line 376).
 - Block-level reduction writes `FracExt` (numer + denom) to `tmp_sums_buffer`
 
 New launcher: `_batched_logup_r0_eval_interactions`
-- Same structure as Change 4 launcher. Reduction uses `batched_final_reduce_block_sums` for `FracExt` type (the reduction kernel already supports `FracExt` via the stacked reduction usage).
+- Same structure as Change 4 launcher.
+- **FracExt reduction**: `batched_final_reduce_block_sums` is typed for `FpExt`, not `FracExt`. Apply the same stacked reinterpret pattern used in the existing non-batched logup round0 launchers (logup_round0.cu lines 579, 651): `reinterpret_cast<FpExt*>(tmp_sums_buffer)` and `reinterpret_cast<FpExt*>(output)`, then set `d = 2 * num_cosets * skip_domain` (doubling `d` because `FracExt = {FpExt p, FpExt q}` is layout-compatible with `FpExt[2]`). The `air_block_offsets` remain unchanged (they count blocks, which are the same regardless of element type). Grid: `(num_airs, 2 * num_cosets * skip_domain)`.
 
 ### Change 6: Rust orchestration — batched Round 0
 
@@ -213,8 +214,8 @@ For each constraint eval group (all AIRs with same `num_cosets_zc`):
    a. `num_x_blocks = ceil(num_x / x_per_block)`
    b. `blocks_per_air = num_x_blocks * num_cosets_zc`
    c. Build `BlockCtx` entries (local_block_idx 0..blocks_per_air, air_idx)
-   d. Compute intermediate buffer size: call `_zerocheck_r0_intermediates_buffer_size(buffer_size, skip_domain, num_x, num_cosets_zc, PER_GROUP_TEMP_BYTES)`. Accumulate total.
-   e. Compute `buffer_stride = num_cosets_zc * num_x_blocks * block_x`
+   d. Compute intermediate buffer size: call `_zerocheck_r0_intermediates_buffer_size(buffer_size, skip_domain, num_x, num_cosets_zc, usize::MAX)`. **Critical**: pass `usize::MAX` as `max_temp_bytes` to prevent `eval_config.cuh` (lines 47-55) from reducing `grid.x` below `num_x_blocks`. Memory is controlled at the group level by the 2 GB cap (Phase C), not per-AIR via `max_temp_bytes`. This ensures the intermediates buffer is sized for the full `num_x_blocks`, matching the `buffer_stride` computation. Accumulate total.
+   e. Compute `buffer_stride = num_cosets_zc * num_x_blocks * block_x` (must match the intermediates allocation from step d — both use the unreduced `num_x_blocks`)
    f. Build `Round0ZcCtx` with all pointers from work item + pkey, store placeholder for `d_intermediates` (backfilled in Phase C)
    g. Compute tmp_sums buffer contribution: `num_blocks_for_this_air * num_cosets_zc * skip_domain`
 4. Record `air_offsets` (cumulative block counts for reduction)
@@ -250,7 +251,7 @@ For each group:
 
 **Phase D: Launch kernels per group**
 1. Launch `_batched_zerocheck_r0_eval_constraints` (or `_batched_logup_r0_eval_interactions`)
-2. Launch reduction kernel (same `batched_final_reduce_block_sums` with uniform `d`)
+2. Launch reduction kernel: `batched_final_reduce_block_sums` with uniform `d`. For zerocheck groups: `d = num_cosets_zc * skip_domain` on `FpExt` buffers. For logup groups: `d = 2 * num_cosets_logup * skip_domain` on `reinterpret_cast<FpExt*>` of `FracExt` buffers (the stacked reinterpret pattern).
 3. D2H copy output buffer
 
 **Phase E: CPU post-processing (parallel via rayon)**
@@ -326,7 +327,8 @@ Add FFI extern declarations and safe wrapper functions for the batched launchers
 4. **Numerical equivalence**: The batched kernel uses GLOBAL intermediates mode only (no shared memory optimization). For most AIRs at APC 300, buffer_size is small enough that GLOBAL mode was already used. Verify via prove+verify correctness test.
 5. **Keygen compatibility**: The new `Round0InteractionRules` field in `AirDataGpu` is computed at keygen. Existing serialized proving keys are not affected (this field is not serialized; it's computed in-memory).
 6. **Identity coset**: The batched logup kernel handles coset_idx=0 as the identity coset with `g_coset = Fp::one()` and `skip_ntt = true`, matching the existing coset-parallel logup kernel behavior (logup_round0.cu lines 361-436).
-7. **Uniform reduction**: Within each `(num_cosets)` group, all AIRs share the same `d = num_cosets * skip_domain`, so `batched_final_reduce_block_sums` works without modification.
+7. **Uniform reduction**: Within each `(num_cosets)` group, all AIRs share the same reduction dimension. For zerocheck: `d = num_cosets * skip_domain` (FpExt). For logup: `d = 2 * num_cosets * skip_domain` (FracExt stacked as FpExt[2], via reinterpret_cast). The existing `batched_final_reduce_block_sums` works for both cases without modification.
+8. **Intermediates sizing**: All `_zerocheck_r0_intermediates_buffer_size` and `_logup_r0_intermediates_buffer_size` calls in the batched path use `max_temp_bytes = usize::MAX` to prevent the internal `eval_config.cuh` launch-params logic from reducing `grid.x`. This ensures `buffer_stride = num_cosets * num_x_blocks * block_x` is consistent between the intermediates allocation size and the kernel indexing.
 
 ## Measurement Plan
 

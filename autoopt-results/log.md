@@ -93,3 +93,43 @@
 **Result**: failure — MLE Rounds at APC 300: 170ms → 165ms (-5ms, below 10ms rollback threshold). STARK excl trace at APC 300: 1421ms, 1.73x lower vs baseline (vs previous: 1417ms → 1421ms, +4ms noise).
 
 **Summary**: Replaced ~5600 per-trace `main_ptrs.to_device()` calls (confirmed by nsys H2D count drop from 30035 to 24436) with 2 batched uploads per round (one for late_eval, one for early_eval). The implementation is mechanically correct but the improvement was only 5ms — per-call CUDA API overhead is ~1μs (not ~15-20μs as estimated) because cudaMallocAsync uses pool caching, the mutex is uncontended in single-threaded MLE rounds, and 16-48 byte H2D copies are negligible on PCIe. The dominant MLE Rounds cost is kernel execution, not API overhead.
+
+## 2026-04-13-1600-batch-round0-descriptor-arrays
+
+**Idea**: Replace per-AIR Round 0 kernel launches with batched descriptor-array kernels for both zerocheck and logup evaluation.
+
+**Result**: failure — Infrastructure implemented (CUDA kernels, FFI bindings, Rust batch helpers) but orchestration integration blocked by Rust optimizer interference causing cudaErrorIllegalAddress.
+
+**Summary**: Implemented batched CUDA kernels (Round0ZcCtx/Round0LogupCtx descriptors, 1D grid with BlockCtx mapping, batched reduction) and Rust FFI bindings. However, adding the Rust orchestration code that routes small AIRs to the batched path consistently caused CUDA illegal memory access errors at APC 300, even when the batched code path was never executed. The root cause appears to be that adding significant code to the large `sumcheck_uni_round0_polys` function changes Rust optimizer behavior for the existing multi-threaded CUDA kernel launch path. The CUDA+FFI infrastructure is committed as a foundation for future integration.
+
+## 2026-04-13-1700-batch-round0-caller-routing
+
+**Idea**: Re-attempt batched Round 0 descriptor-array kernels using caller-level routing to avoid modifying the sensitive `sumcheck_uni_round0_polys` function.
+
+**Result**: failure — Implementation complete but blocked by pre-existing GPU OOM in gkr_input (8GB allocation on 24GB GPU). APC 0 confirms no regression (batched path inactive, Round 0 = 178ms unchanged).
+
+**Summary**: Moved all batched orchestration to a separate `round0_batched.rs` module with `#[inline(never)]`, adding only a `.filter()` to the existing function. This avoided the Rust optimizer interference from the previous attempt (APC 0 proves+verifies correctly). Fixed a `cudaErrorIllegalAddress` bug where GLOBAL-mode batched kernels crashed when intermediates buffers were null (identified via compute-sanitizer). Added memory budget filtering to prevent intermediates OOM. However, APC 300/100 benchmarks failed with OOM in the GKR input phase (unrelated to this optimization) after a clean CUDA rebuild increased GPU memory overhead.
+
+## 2026-04-13-1930-round0-interleaved-work-balance
+
+**Idea**: Replace contiguous work chunking in Round 0 with interleaved (round-robin) assignment to balance GPU kernel time and CPU post-processing across threads.
+
+**Result**: success — Round 0 at APC 300: 313ms → 277ms (2.39x lower vs baseline 662ms). STARK excl trace at APC 300: 1433ms → 1411ms, 1.74x lower vs baseline (vs previous: -22ms, 1.02x lower).
+
+**Summary**: Replaced contiguous `chunks(chunk_size)` dispatch with round-robin index assignment on the height-sorted work items list. Diagnostic instrumentation showed 26ms thread spread (83-109ms) with contiguous chunking; round-robin reduced this to 7ms (93-100ms). The plan's LPT approach using `height` as cost proxy was abandoned because it assigned only 1 AIR to the 3 highest-height threads (finishing in 13ms) while packing 66+ small AIRs onto other threads (finishing in 118ms). The per-AIR fixed overhead (~1.8ms) dominates for small AIRs, making height alone a poor cost proxy. Round-robin balances both count and height naturally.
+
+## 2026-04-13-2035-gkr-input-round-robin
+
+**Idea**: Replace contiguous work chunking in GKR input evaluation with interleaved (round-robin) assignment across multi-stream threads.
+
+**Result**: failure — GKR input evals at APC 300: 304ms → 296ms (-8ms median, 1.03x lower). STARK excl trace at APC 300: 1403ms → 1406ms (+3ms, within noise). Below 8ms rollback threshold.
+
+**Summary**: Applied the same round-robin pattern that worked for Round 0 (saving 36ms) to GKR input eval. Thread balance improved (seg0 spread 29ms, seg1 spread 6ms), but the net impact was only ~8ms on GKR input and undetectable at STARK excl trace level. The pre-allocated buffer optimization (previous task) had already eliminated the main source of thread imbalance (per-AIR mutex contention), leaving little room for scheduling improvements. Also discovered that `RUST_LOG=warn` blocks INFO-level tracing spans, preventing `TimingMetricsLayer` from recording timing metrics.
+
+## 2026-04-13-2200-prealloc-round0-threshold-buffers
+
+**Idea**: Pre-allocate per-thread reusable GPU buffers for Round 0 constraint and interaction evaluation using an adaptive 95th-percentile size threshold.
+
+**Result**: success — Round 0 at APC 300: 276ms → 242ms (2.74x lower vs baseline 662ms). STARK excl trace at APC 300: 1372ms, 1.79x lower vs baseline (vs previous: 1407ms → 1372ms, -35ms, 1.03x lower).
+
+**Summary**: Pre-computed per-AIR buffer sizes during Phase 1 work item preparation (required adding `logup_round0_buffer_size` to `AirDataGpu` to avoid per-AIR DAG reconstruction). Used 95th-percentile sizes for pre-allocation instead of maximum — the max is 193 MB/thread (driven by a few large AIRs), while p95 is 3.1 MB/thread. The failed previous attempt (`prealloc-round0-buffers`) used max sizes, causing 1.5 GB total pre-allocation and systemic GPU memory pressure. The percentile approach covers 95% of AIRs with negligible memory impact. No regression at APC 0.
