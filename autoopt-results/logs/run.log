@@ -1,0 +1,99 @@
+========================================
+[Sun Apr 12 21:17:45 CEST 2026] Iteration 1 / 100
+========================================
+[Sun Apr 12 21:17:45 CEST 2026] Generate & Plan → autoopt-results/logs/20260412-211745-1-1-plan.log
+----------------------------------------
+# 2026-04-12-2130-pipeline-round0-kernel-launches
+
+The Round 0 constraint evaluation loop in `logup_zerocheck/mod.rs` processes each AIR instance sequentially with two GPU sync points per AIR (`to_host()` at lines 792 and 848). With 623 AIR instances at APC 300, this creates 1,246 GPU synchronizations that serialize the pipeline and prevent the GPU from keeping its execution queue full. Eliminating these per-AIR sync points by deferring all D2H copies to after all kernel launches will allow the GPU to execute kernels back-to-back, reducing Round 0 from ~662ms to an estimated ~300-400ms at APC 300.
+----------------------------------------
+[Sun Apr 12 21:40:58 CEST 2026] Do Task → autoopt-results/logs/20260412-211745-1-2-do.log
+========================================
+[Sun Apr 12 21:54:29 CEST 2026] Iteration 2 / 100
+========================================
+[Sun Apr 12 21:54:29 CEST 2026] Generate & Plan → autoopt-results/logs/20260412-215429-2-1-plan.log
+----------------------------------------
+# 2026-04-12-2245-parallelize-round0-cpu-postprocess
+
+Round 0 constraint evaluation at APC 300 spends ~200ms of its 662ms total on serial CPU post-processing (transpose + iDFT + polynomial construction), executed once per AIR × 3 calls inside a sequential loop over 623 AIRs. This work is embarrassingly parallel — each AIR's post-processing is independent. Restructuring the loop to collect raw GPU results first, then batch-process them with rayon's `par_iter` across 32 cores, should reduce this CPU overhead from ~200ms to ~7-13ms, yielding an estimated 28% improvement on Round 0 and 7-8% on STARK excl trace.
+----------------------------------------
+[Sun Apr 12 22:14:23 CEST 2026] Do Task → autoopt-results/logs/20260412-215429-2-2-do.log
+========================================
+[Sun Apr 12 22:23:19 CEST 2026] Iteration 3 / 100
+========================================
+[Sun Apr 12 22:23:19 CEST 2026] Generate & Plan → autoopt-results/logs/20260412-222319-3-1-plan.log
+[Sun Apr 12 22:48:06 CEST 2026] Generate & Plan rate-limited. Waiting 4375s (until Mon Apr 13 00:00:00 CEST 2026 + 60s)...
+[Mon Apr 13 00:01:01 CEST 2026] Generate & Plan → autoopt-results/logs/20260412-222319-3-1-plan.log
+----------------------------------------
+# 2026-04-12-2330-batch-stacked-reduction-mle-sync
+
+The stacked reduction MLE rounds in `batch_sumcheck_poly_eval()` perform a synchronous D2H copy (`to_host()` with full GPU pipeline drain) per height group per round. With ~400+ height groups and 17 MLE rounds, this creates ~7,000+ pipeline-draining sync points per segment. Since both the regular and degenerate CUDA kernels already use atomic accumulation into a shared `d_accum` buffer, and the final result is a sum across all windows, these per-window syncs are unnecessary — a single `fill_zero` + `to_host` per round suffices. This eliminates the dominant source of CPU-GPU synchronization overhead, which profiling shows accounts for the majority of the 287ms MLE rounds time at APC 300 (vs ~60ms of actual GPU kernel time).
+----------------------------------------
+[Mon Apr 13 00:01:30 CEST 2026] Do Task → autoopt-results/logs/20260412-222319-3-2-do.log
+========================================
+[Mon Apr 13 00:10:04 CEST 2026] Iteration 4 / 100
+========================================
+[Mon Apr 13 00:10:04 CEST 2026] Generate & Plan → autoopt-results/logs/20260413-001004-4-1-plan.log
+----------------------------------------
+# 2026-04-13-0100-multistream-round0-parallel
+
+Round 0 constraint evaluation processes 623 AIRs sequentially on a single CUDA stream (cudaStreamPerThread). At APC 300, most AIRs are tiny (height 8-64), so each kernel uses 1-4 of the RTX 4090's 128 SMs — GPU throughput drops 10.7x per cell vs APC 0. By processing AIRs across N OS threads (each with its own per-thread CUDA stream), small kernels from different streams execute concurrently on idle SMs, recovering GPU utilization and overlapping CPU metadata preparation with GPU execution. This is expected to reduce Round 0 from ~663ms to ~500-565ms (15-25% improvement), yielding a 4-8% reduction in STARK excl trace at APC 300.
+----------------------------------------
+[Mon Apr 13 00:48:14 CEST 2026] Do Task → autoopt-results/logs/20260413-001004-4-2-do.log
+========================================
+[Mon Apr 13 01:03:14 CEST 2026] Iteration 5 / 100
+========================================
+[Mon Apr 13 01:03:14 CEST 2026] Generate & Plan → autoopt-results/logs/20260413-010314-5-1-plan.log
+----------------------------------------
+# 2026-04-13-0115-multistream-gkr-input-eval
+
+Parallelize the LogUp GKR input evaluation across multiple OS threads with per-thread CUDA streams, using the same multi-stream pattern that achieved 1.89x improvement on Round 0. Nsight profiling shows 791 sequential per-AIR kernel launches (428ms total GPU time) in `log_gkr_input_evals()`, each using only 1-4 SMs on the RTX 4090's 128 SMs. By distributing these independent per-AIR evaluations across 4 threads (each with its own `cudaStreamPerThread`), kernels from different threads can execute concurrently on idle SMs, reducing the GKR input eval wall clock from ~450ms to ~180-220ms and LogUp GKR from 808ms to ~560-630ms.
+----------------------------------------
+[Mon Apr 13 01:22:33 CEST 2026] Do Task → autoopt-results/logs/20260413-010314-5-2-do.log
+========================================
+[Mon Apr 13 01:30:39 CEST 2026] Iteration 6 / 100
+========================================
+[Mon Apr 13 01:30:39 CEST 2026] Generate & Plan → autoopt-results/logs/20260413-013039-6-1-plan.log
+----------------------------------------
+# 2026-04-13-1500-batch-stacking-scatter-kernel
+
+The `stack_traces_into_expanded()` function in `crates/cuda-backend/src/stacked_pcs.rs` iterates over every trace column (~106K at APC 300) issuing individual CUDA API calls (cudaMemcpyAsync or batch_expand_pad_wide kernel launch) per column. At ~1us CPU overhead per call, this loop costs ~100ms—about 25% of the 404ms Trace Commit phase and 6% of STARK excl trace. Replacing the per-column loop with a single batched scatter kernel that processes all column copies in one GPU launch eliminates this CPU-side overhead, reducing Trace Commit by ~100ms at APC 300 with negligible impact at APC 0 (only ~4K columns).
+----------------------------------------
+[Mon Apr 13 02:05:07 CEST 2026] Do Task → autoopt-results/logs/20260413-013039-6-2-do.log
+========================================
+[Mon Apr 13 02:17:23 CEST 2026] Iteration 7 / 100
+========================================
+[Mon Apr 13 02:17:23 CEST 2026] Generate & Plan → autoopt-results/logs/20260413-021723-7-1-plan.log
+[Mon Apr 13 02:25:47 CEST 2026] Generate & Plan rate-limited. Waiting 9313s (until Mon Apr 13 05:00:00 CEST 2026 + 60s)...
+[Mon Apr 13 05:01:00 CEST 2026] Generate & Plan → autoopt-results/logs/20260413-021723-7-1-plan.log
+----------------------------------------
+# 2026-04-13-1830-increase-multistream-thread-count
+
+Increase the multi-stream thread count from 4 to 8 for both Round 0 (`sumcheck_uni_round0_polys`) and GKR input evaluation (`log_gkr_input_evals`). At APC 300, each segment has ~310 AIRs launching kernels that occupy only 1-4 of the RTX 4090's 128 SMs. With 4 threads, effective parallelism is only 1.7-2.1x (measured via nsys kernel time vs wall time). Doubling to 8 threads increases concurrent kernel occupancy and reduces per-chunk imbalance, targeting a ~100-150ms reduction in STARK excl trace at APC 300.
+----------------------------------------
+[Mon Apr 13 05:25:22 CEST 2026] Do Task → autoopt-results/logs/20260413-021723-7-2-do.log
+========================================
+[Mon Apr 13 05:32:36 CEST 2026] Iteration 8 / 100
+========================================
+[Mon Apr 13 05:32:36 CEST 2026] Generate & Plan → autoopt-results/logs/20260413-053236-8-1-plan.log
+----------------------------------------
+# 2026-04-13-2100-prealloc-gkr-input-buffers
+
+Pre-allocate per-thread reusable GPU buffers for GKR input evaluation to eliminate per-AIR memory management overhead and unlock multi-stream concurrency. Currently, each of the ~310 per-segment AIRs allocates and frees an `intermediates` DeviceBuffer through the global `Mutex<MemoryManager>`, which also calls `cudaMallocAsync`/`cudaFreeAsync` on the per-thread CUDA stream pool. This serializes the 8 worker threads via both the Rust mutex and implicit CUDA pool synchronization, producing ~1.0x effective parallelism (529ms wall for 471ms GPU kernel time). Pre-allocating max-sized buffers per thread before spawning workers should eliminate ~2500 lock acquisitions per segment and all per-AIR CUDA pool operations, enabling real kernel concurrency and targeting a 1.5–2.5x reduction in GKR input eval wall time.
+----------------------------------------
+[Mon Apr 13 06:10:35 CEST 2026] Do Task → autoopt-results/logs/20260413-053236-8-2-do.log
+========================================
+[Mon Apr 13 06:24:27 CEST 2026] Iteration 9 / 100
+========================================
+[Mon Apr 13 06:24:27 CEST 2026] Generate & Plan → autoopt-results/logs/20260413-062427-9-1-plan.log
+----------------------------------------
+# 2026-04-13-2300-batch-mle-round-kernels
+
+Replace the per-AIR kernel launch loop in `batch_sumcheck_poly_eval` (stacked reduction MLE rounds) with batched kernel launches using descriptor arrays. Currently, each MLE round iterates over ~600 AIR windows and launches one kernel per window (10K+ degenerate + 5K+ non-degenerate launches per benchmark), but total GPU compute is only 62ms while wall time is 182ms at APC 300. Batching all per-AIR launches into 1-2 kernel launches per round (using the proven descriptor array pattern from the stacking scatter kernel) will eliminate ~15K kernel launches, improve GPU SM utilization through concurrent block execution, and reduce CPU loop overhead — targeting a 50-100ms reduction in MLE Rounds time at APC 300.
+----------------------------------------
+[Mon Apr 13 06:48:12 CEST 2026] Do Task → autoopt-results/logs/20260413-062427-9-2-do.log
+========================================
+[Mon Apr 13 07:02:41 CEST 2026] Iteration 10 / 100
+========================================
+[Mon Apr 13 07:02:41 CEST 2026] Generate & Plan → autoopt-results/logs/20260413-070241-10-1-plan.log
+[Mon Apr 13 07:21:38 CEST 2026] Generate & Plan rate-limited. Waiting 9562s (until Mon Apr 13 10:00:00 CEST 2026 + 60s)...

@@ -1,0 +1,3 @@
+# 2026-04-13-prealloc-round0-buffers
+
+Pre-allocate per-thread reusable GPU buffers for Round 0 constraint and interaction evaluation to eliminate per-AIR cudaMallocAsync/cudaFreeAsync serialization across 8 worker threads. Round 0 currently allocates 6 temporary DeviceBuffers per AIR (intermediates, temp_sums, sp_evals for both zerocheck constraints and logup interactions), causing ~2,400 mutex acquisitions and CUDA memory pool cross-stream synchronization per segment. This is the same bottleneck that the GKR input eval pre-allocation (task 2026-04-13-2100) eliminated for a 1.67x improvement; Round 0 at 296ms has even more per-AIR allocations and exhibits the same symptom of equal seg0/seg1 wall times despite very different workloads.
