@@ -107,7 +107,7 @@ pub(crate) fn compute_lambda_combinations<HS: GpuHashScheme>(
 /// The batch must contain at least one trace.
 ///
 /// The struct holds references to `TraceCtx` which guarantees the underlying
-/// device buffers (including `main_ptrs_dev`) remain valid for the struct's lifetime.
+/// device pointers (including `main_ptrs_ptr`) remain valid for the struct's lifetime.
 pub(crate) struct ZerocheckMonomialBatch<'a> {
     traces: Vec<&'a TraceCtx>,
     block_ctxs: DeviceBuffer<BlockCtx>,
@@ -181,7 +181,7 @@ impl<'a> ZerocheckMonomialBatch<'a> {
                 let eval_ctx = EvalCoreCtx {
                     d_selectors: t.sels_ptr,
                     d_preprocessed: t.prep_ptr,
-                    d_main: t.main_ptrs_dev.as_ptr(),
+                    d_main: t.main_ptrs_ptr,
                     d_public: t.public_ptr,
                 };
 
@@ -404,7 +404,7 @@ impl<'a> ZerocheckMonomialParYBatch<'a> {
                 let eval_ctx = EvalCoreCtx {
                     d_selectors: t.sels_ptr,
                     d_preprocessed: t.prep_ptr,
-                    d_main: t.main_ptrs_dev.as_ptr(),
+                    d_main: t.main_ptrs_ptr,
                     d_public: t.public_ptr,
                 };
 
@@ -669,7 +669,7 @@ impl<'a> LogupMonomialBatch<'a> {
                 let eval_ctx = EvalCoreCtx {
                     d_selectors: t.sels_ptr,
                     d_preprocessed: t.prep_ptr,
-                    d_main: t.main_ptrs_dev.as_ptr(),
+                    d_main: t.main_ptrs_ptr,
                     d_public: t.public_ptr,
                 };
 
