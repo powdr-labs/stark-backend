@@ -76,7 +76,6 @@ mod fractional;
 mod gkr_input;
 mod mle_round;
 mod round0;
-mod round0_batched;
 pub(crate) mod rules;
 
 use batch_mle::{evaluate_logup_batched, TraceCtx};
@@ -112,11 +111,11 @@ pub(crate) fn air_width_for_mat(need_rot: bool, mat_width: usize) -> u32 {
 }
 
 /// Result of processing one AIR in Round 0.
-pub(crate) struct Round0AirResult {
-    pub trace_idx: usize,
-    pub zerocheck_poly: Option<UnivariatePoly<EF>>,
-    pub logup_numer_poly: Option<UnivariatePoly<EF>>,
-    pub logup_denom_poly: Option<UnivariatePoly<EF>>,
+struct Round0AirResult {
+    trace_idx: usize,
+    zerocheck_poly: Option<UnivariatePoly<EF>>,
+    logup_numer_poly: Option<UnivariatePoly<EF>>,
+    logup_denom_poly: Option<UnivariatePoly<EF>>,
 }
 
 /// All read-only references needed to process one AIR in Round 0.
@@ -391,11 +390,7 @@ where
     let lambda = transcript.sample_ext();
     debug!(%lambda);
 
-    let skip_mask =
-        round0_batched::identify_batchable_airs::<HS>(ctx, mpk, &prover.n_per_trace, l_skip);
-    let sp_0_polys = prover.sumcheck_uni_round0_polys(ctx, lambda, Some(&skip_mask))?;
-    let small_results = round0_batched::batch_round0_small_airs(&mut prover, ctx, &skip_mask)?;
-    let sp_0_polys = round0_batched::merge_results(sp_0_polys, small_results, num_traces);
+    let sp_0_polys = prover.sumcheck_uni_round0_polys(ctx, lambda)?;
     let s_0_cpu_span = info_span!("s'_0 -> s_0 cpu interpolations").entered();
     let sp_0_deg = sumcheck_round0_deg(l_skip, constraint_degree);
     let s_deg = constraint_degree + 1;
@@ -773,7 +768,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         &mut self,
         ctx: &ProvingContext<GenericGpuBackend<HS>>,
         lambda: EF,
-        skip_traces: Option<&[bool]>,
     ) -> Result<Vec<UnivariatePoly<EF>>, LogupZerocheckError> {
         self.mem
             .emit_metrics_with_label("prover.batch_constraints.before_round0");
@@ -912,7 +906,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             &self.eq_3b_per_trace,
         )
         .enumerate()
-        .filter(|(trace_idx, _)| skip_traces.map_or(true, |s| !s[*trace_idx]))
         .map(|(trace_idx, ((air_idx, air_ctx), &n, sel, pv, eq3b))| Round0AirWorkItem {
             trace_idx,
             single_pk: &self.pk.per_air[*air_idx],
