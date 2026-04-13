@@ -8,13 +8,9 @@ use openvm_stark_backend::{
     prover::{fractional_sumcheck_gkr::Frac, DeviceStarkProvingKey},
 };
 use p3_field::PrimeCharacteristicRing;
-use tracing::{debug, warn};
-
 use super::errors::Round0EvalError;
 use crate::{
     cuda::logup_zerocheck::{
-        _logup_r0_intermediates_buffer_size, _logup_r0_temp_sums_buffer_size,
-        _zerocheck_r0_intermediates_buffer_size, _zerocheck_r0_temp_sums_buffer_size,
         logup_bary_eval_interactions_round0, zerocheck_ntt_eval_constraints,
     },
     gpu_backend::GenericGpuBackend,
@@ -41,6 +37,8 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
     num_cosets: u32,
     g_shift: F,
     max_temp_bytes: usize,
+    prealloc_intermediates: &mut DeviceBuffer<F>,
+    prealloc_temp_sums: &mut DeviceBuffer<EF>,
 ) -> Result<DeviceBuffer<EF>, Round0EvalError> {
     let constraints_dag = &pk.vk.symbolic_constraints;
     if constraints_dag.constraints.constraint_idx.is_empty() || num_cosets == 0 {
@@ -49,42 +47,7 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
     }
 
     let rules = &pk.other_data.zerocheck_round0;
-
     let buffer_size: u32 = rules.inner.buffer_size;
-    let intermed_capacity = unsafe {
-        _zerocheck_r0_intermediates_buffer_size(
-            buffer_size,
-            skip_domain,
-            num_x,
-            num_cosets,
-            max_temp_bytes,
-        )
-    };
-    let mut intermediates = if intermed_capacity > 0 {
-        debug!("zerocheck:intermediates_capacity={intermed_capacity}");
-        DeviceBuffer::<F>::with_capacity(intermed_capacity)
-    } else {
-        DeviceBuffer::<F>::new()
-    };
-
-    let temp_sums_buffer_capacity = unsafe {
-        _zerocheck_r0_temp_sums_buffer_size(
-            buffer_size,
-            skip_domain,
-            num_x,
-            num_cosets,
-            max_temp_bytes,
-        )
-    };
-    debug!("zerocheck:temp_sums_buffer_capacity={temp_sums_buffer_capacity}");
-    let mut temp_sums_buffer = DeviceBuffer::<EF>::with_capacity(temp_sums_buffer_capacity);
-    let used_temp_bytes =
-        intermed_capacity * size_of::<F>() + temp_sums_buffer_capacity * size_of::<EF>();
-    if used_temp_bytes > max_temp_bytes {
-        // We do not error if the required bytes is greater than the requested max, but this may
-        // lead to unexpected peak memory usage.
-        warn!("zerocheck used_temp_bytes ({used_temp_bytes}) > max_temp_bytes ({max_temp_bytes})");
-    }
 
     let preprocessed_ptr = pk
         .preprocessed_data
@@ -99,7 +62,7 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
     //   all nodes are valid.
     unsafe {
         zerocheck_ntt_eval_constraints(
-            &mut temp_sums_buffer,
+            prealloc_temp_sums,
             &mut sp_evals,
             selectors_cube,
             preprocessed_ptr,
@@ -110,7 +73,7 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
             &rules.inner.d_rules,
             &rules.inner.d_used_nodes,
             buffer_size,
-            &mut intermediates,
+            prealloc_intermediates,
             skip_domain,
             num_x,
             height,
@@ -144,6 +107,8 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
     num_cosets: u32,
     g_shift: F,
     max_temp_bytes: usize,
+    prealloc_intermediates: &mut DeviceBuffer<F>,
+    prealloc_temp_sums: &mut DeviceBuffer<Frac<EF>>,
 ) -> Result<DeviceBuffer<Frac<EF>>, Round0EvalError> {
     // Check if this trace has interactions
     if eq_3bs.is_empty() {
@@ -210,34 +175,6 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
     let d_rules = encoded_rules.to_device()?;
 
     let buffer_size: u32 = rules.buffer_size.try_into().unwrap();
-    let intermed_capacity = unsafe {
-        _logup_r0_intermediates_buffer_size(
-            buffer_size,
-            skip_domain,
-            num_x,
-            num_cosets,
-            max_temp_bytes,
-        )
-    };
-    let mut intermediates = if intermed_capacity > 0 {
-        debug!("logup_r0:intermediates_capacity={intermed_capacity}");
-        DeviceBuffer::<F>::with_capacity(intermed_capacity)
-    } else {
-        DeviceBuffer::<F>::new()
-    };
-
-    let temp_sums_buffer_capacity = unsafe {
-        _logup_r0_temp_sums_buffer_size(buffer_size, skip_domain, num_x, num_cosets, max_temp_bytes)
-    };
-    debug!("logup_r0:tmp_sums_buffer_capacity={temp_sums_buffer_capacity}");
-    let mut temp_sums_buffer = DeviceBuffer::<Frac<EF>>::with_capacity(temp_sums_buffer_capacity);
-    let used_temp_bytes =
-        intermed_capacity * size_of::<F>() + temp_sums_buffer_capacity * size_of::<Frac<EF>>();
-    if used_temp_bytes > max_temp_bytes {
-        warn!(
-            "logup_round0 used_temp_bytes ({used_temp_bytes}) > max_temp_bytes ({max_temp_bytes})"
-        );
-    }
 
     let preprocessed_ptr = pk
         .preprocessed_data
@@ -249,7 +186,7 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
 
     unsafe {
         logup_bary_eval_interactions_round0(
-            &mut temp_sums_buffer,
+            prealloc_temp_sums,
             &mut s_evals,
             selectors_cube,
             preprocessed_ptr,
@@ -261,7 +198,7 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
             denom_sum_init,
             &d_rules,
             buffer_size,
-            &mut intermediates,
+            prealloc_intermediates,
             skip_domain,
             num_x,
             height,
@@ -272,4 +209,32 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
     }
 
     Ok(s_evals)
+}
+
+/// Compute the buffer_size for logup round0 interaction rules.
+/// Returns (buffer_size, rules_count).
+pub fn compute_logup_round0_buffer_size(symbolic: &SymbolicConstraints<F>) -> (u32, usize) {
+    if symbolic.interactions.is_empty() {
+        return (0, 0);
+    }
+    let mut dag_builder = SymbolicDagBuilder::new();
+    let mut sorted_used_dag_idxs = Vec::new();
+    for interaction in &symbolic.interactions {
+        let count = dag_builder.add_expr(&interaction.count);
+        sorted_used_dag_idxs.push(count);
+        sorted_used_dag_idxs.extend(
+            interaction
+                .message
+                .iter()
+                .map(|field_expr| dag_builder.add_expr(field_expr)),
+        );
+    }
+    sorted_used_dag_idxs.sort();
+    sorted_used_dag_idxs.dedup();
+    let dag = SymbolicExpressionDag {
+        nodes: dag_builder.nodes,
+        constraint_idx: sorted_used_dag_idxs,
+    };
+    let rules = SymbolicRulesGpu::new(&dag, true);
+    (rules.buffer_size.try_into().unwrap(), rules.rules.len())
 }

@@ -47,7 +47,11 @@ use tracing::{debug, info, info_span, instrument};
 use crate::{
     base::DeviceMatrix,
     cuda::{
-        logup_zerocheck::{fold_selectors_round0, interpolate_columns_gpu, MainMatrixPtrs},
+        logup_zerocheck::{
+            _logup_r0_intermediates_buffer_size, _logup_r0_temp_sums_buffer_size,
+            _zerocheck_r0_intermediates_buffer_size, _zerocheck_r0_temp_sums_buffer_size,
+            fold_selectors_round0, interpolate_columns_gpu, MainMatrixPtrs,
+        },
         sumcheck::batch_fold_mle,
     },
     data_transporter::transport_matrix_d2h_col_major,
@@ -73,7 +77,7 @@ mod fractional;
 /// Logup interaction evaluations for GKR input
 mod gkr_input;
 mod mle_round;
-mod round0;
+pub(crate) mod round0;
 pub(crate) mod rules;
 
 use batch_mle::{evaluate_logup_batched, TraceCtx};
@@ -133,10 +137,21 @@ struct Round0AirWorkItem<'a, HS: GpuHashScheme> {
     constraint_degree: usize,
     xi: &'a [EF],
     max_temp_bytes: usize,
+    /// Pre-computed logup round0 buffer_size (from SymbolicRulesGpu).
+    logup_r0_buffer_size: u32,
+}
+
+/// Pre-allocated per-thread GPU buffers for Round 0 to avoid per-AIR allocation overhead.
+struct Round0ThreadBuffers {
+    zc_intermediates: DeviceBuffer<F>,
+    zc_temp_sums: DeviceBuffer<EF>,
+    logup_intermediates: DeviceBuffer<F>,
+    logup_temp_sums: DeviceBuffer<Frac<EF>>,
 }
 
 fn process_air_round0<HS: GpuHashScheme>(
     w: &Round0AirWorkItem<HS>,
+    buffers: &mut Round0ThreadBuffers,
 ) -> Result<Round0AirResult, LogupZerocheckError> {
     let single_pk = w.single_pk;
     let single_air_constraints = SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
@@ -176,6 +191,8 @@ fn process_air_round0<HS: GpuHashScheme>(
         num_cosets_zc as u32,
         omega_root,
         w.max_temp_bytes,
+        &mut buffers.zc_intermediates,
+        &mut buffers.zc_temp_sums,
     )?;
 
     let zerocheck_poly = if !sum_buffer.is_empty() {
@@ -224,6 +241,8 @@ fn process_air_round0<HS: GpuHashScheme>(
         num_cosets_logup as u32,
         omega_root,
         w.max_temp_bytes,
+        &mut buffers.logup_intermediates,
+        &mut buffers.logup_temp_sums,
     )?;
 
     let (logup_numer_poly, logup_denom_poly) = if !sum.is_empty() {
@@ -904,55 +923,182 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             &self.eq_3b_per_trace,
         )
         .enumerate()
-        .map(|(trace_idx, ((air_idx, air_ctx), &n, sel, pv, eq3b))| Round0AirWorkItem {
-            trace_idx,
-            single_pk: &self.pk.per_air[*air_idx],
-            n,
-            selectors_cube: sel,
-            public_values: pv,
-            eq_3bs: eq3b,
-            cached_mains: &air_ctx.cached_mains,
-            common_main: &air_ctx.common_main,
-            eq_xis: &self.eq_xis,
-            d_lambda_pows,
-            beta_pows: &self.beta_pows,
-            l_skip,
-            constraint_degree: self.constraint_degree,
-            xi: &self.xi,
-            max_temp_bytes: per_thread_temp_bytes,
+        .map(|(trace_idx, ((air_idx, air_ctx), &n, sel, pv, eq3b))| {
+            let single_pk = &self.pk.per_air[*air_idx];
+            let logup_r0_buffer_size = if !eq3b.is_empty() {
+                single_pk.other_data.logup_round0_buffer_size
+            } else {
+                0
+            };
+            Round0AirWorkItem {
+                trace_idx,
+                single_pk,
+                n,
+                selectors_cube: sel,
+                public_values: pv,
+                eq_3bs: eq3b,
+                cached_mains: &air_ctx.cached_mains,
+                common_main: &air_ctx.common_main,
+                eq_xis: &self.eq_xis,
+                d_lambda_pows,
+                beta_pows: &self.beta_pows,
+                l_skip,
+                constraint_degree: self.constraint_degree,
+                xi: &self.xi,
+                max_temp_bytes: per_thread_temp_bytes,
+                logup_r0_buffer_size,
+            }
         })
         .collect();
 
         // Sort by descending height for better load balance across thread chunks.
         work_items.sort_by(|a, b| b.common_main.height().cmp(&a.common_main.height()));
 
-        // Barrier: ensure all prior GPU work (trace uploads, pk data, selectors)
-        // is visible to worker thread streams.
-        current_stream_sync().map_err(MemCopyError::from)?;
+        // Pre-compute max buffer sizes across all work items.
+        let mut max_zc_intermediates: usize = 0;
+        let mut max_zc_temp_sums: usize = 0;
+        let mut max_logup_intermediates: usize = 0;
+        let mut max_logup_temp_sums: usize = 0;
 
-        // Phase 2: Process AIRs in parallel across N OS threads.
-        // Only use multi-threading when there are enough AIRs to benefit from concurrent
-        // kernel execution. With few large AIRs (e.g., APC 0 has ~20 per segment), each
-        // kernel already saturates the GPU and multi-threading adds memory pool overhead.
-        let num_threads = if work_items.len() >= 100 {
+        for w in &work_items {
+            let single_pk = w.single_pk;
+            let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
+            let n_lift = w.n.max(0) as usize;
+            let num_cosets_zc = local_constraint_deg.saturating_sub(1);
+            let num_cosets_logup = local_constraint_deg;
+            let skip_domain = 1u32 << w.l_skip;
+            let num_x = 1u32 << n_lift;
+
+            // Zerocheck constraint buffers
+            let zc_rules = &single_pk.other_data.zerocheck_round0;
+            if !single_pk
+                .vk
+                .symbolic_constraints
+                .constraints
+                .constraint_idx
+                .is_empty()
+                && num_cosets_zc > 0
+            {
+                let buffer_size: u32 = zc_rules.inner.buffer_size;
+                let zc_inter = unsafe {
+                    _zerocheck_r0_intermediates_buffer_size(
+                        buffer_size,
+                        skip_domain,
+                        num_x,
+                        num_cosets_zc as u32,
+                        w.max_temp_bytes,
+                    )
+                };
+                let zc_temp = unsafe {
+                    _zerocheck_r0_temp_sums_buffer_size(
+                        buffer_size,
+                        skip_domain,
+                        num_x,
+                        num_cosets_zc as u32,
+                        w.max_temp_bytes,
+                    )
+                };
+                max_zc_intermediates = max_zc_intermediates.max(zc_inter);
+                max_zc_temp_sums = max_zc_temp_sums.max(zc_temp);
+            }
+
+            // Logup interaction buffers
+            if w.logup_r0_buffer_size > 0 {
+                let logup_inter = unsafe {
+                    _logup_r0_intermediates_buffer_size(
+                        w.logup_r0_buffer_size,
+                        skip_domain,
+                        num_x,
+                        num_cosets_logup as u32,
+                        w.max_temp_bytes,
+                    )
+                };
+                let logup_temp = unsafe {
+                    _logup_r0_temp_sums_buffer_size(
+                        w.logup_r0_buffer_size,
+                        skip_domain,
+                        num_x,
+                        num_cosets_logup as u32,
+                        w.max_temp_bytes,
+                    )
+                };
+                max_logup_intermediates = max_logup_intermediates.max(logup_inter);
+                max_logup_temp_sums = max_logup_temp_sums.max(logup_temp);
+            }
+        }
+
+        let per_thread_bytes = max_zc_intermediates * size_of::<F>()
+            + max_zc_temp_sums * size_of::<EF>()
+            + max_logup_intermediates * size_of::<F>()
+            + max_logup_temp_sums * size_of::<Frac<EF>>();
+
+        let mut num_threads = if work_items.len() >= 100 {
             NUM_ROUND0_STREAMS.min(work_items.len())
         } else {
             1
         };
+
+        // Safety valve: reduce threads if pre-allocation would exceed 2 GB
+        while num_threads > 1 && num_threads * per_thread_bytes > 2_000_000_000 {
+            num_threads /= 2;
+            tracing::warn!(
+                "Reducing Round 0 thread count to {} due to memory budget ({}MB per thread)",
+                num_threads,
+                per_thread_bytes / (1024 * 1024)
+            );
+        }
+
+        let thread_buffers: Vec<Round0ThreadBuffers> = (0..num_threads)
+            .map(|_| Round0ThreadBuffers {
+                zc_intermediates: if max_zc_intermediates > 0 {
+                    DeviceBuffer::with_capacity(max_zc_intermediates)
+                } else {
+                    DeviceBuffer::new()
+                },
+                zc_temp_sums: if max_zc_temp_sums > 0 {
+                    DeviceBuffer::with_capacity(max_zc_temp_sums)
+                } else {
+                    DeviceBuffer::new()
+                },
+                logup_intermediates: if max_logup_intermediates > 0 {
+                    DeviceBuffer::with_capacity(max_logup_intermediates)
+                } else {
+                    DeviceBuffer::new()
+                },
+                logup_temp_sums: if max_logup_temp_sums > 0 {
+                    DeviceBuffer::with_capacity(max_logup_temp_sums)
+                } else {
+                    DeviceBuffer::new()
+                },
+            })
+            .collect();
+
+        // Barrier: ensure all prior GPU work (trace uploads, pk data, selectors)
+        // is visible to worker thread streams.
+        current_stream_sync().map_err(MemCopyError::from)?;
+
+        // Phase 2: Process AIRs in parallel across N OS threads with pre-allocated buffers.
         let results: Vec<Round0AirResult> = if num_threads <= 1 {
+            let mut bufs = thread_buffers.into_iter().next().unwrap();
             work_items
                 .iter()
-                .map(|w| process_air_round0(w))
+                .map(|w| process_air_round0(w, &mut bufs))
                 .collect::<Result<Vec<_>, _>>()?
         } else {
             let chunk_size = work_items.len().div_ceil(num_threads);
             std::thread::scope(|s| {
-                let handles: Vec<_> = work_items
-                    .chunks(chunk_size)
-                    .map(|chunk| {
-                        s.spawn(move || -> Result<Vec<Round0AirResult>, LogupZerocheckError> {
-                            chunk.iter().map(|w| process_air_round0(w)).collect()
-                        })
+                let handles: Vec<_> = thread_buffers
+                    .into_iter()
+                    .zip(work_items.chunks(chunk_size))
+                    .map(|(mut bufs, chunk)| {
+                        s.spawn(
+                            move || -> Result<Vec<Round0AirResult>, LogupZerocheckError> {
+                                chunk
+                                    .iter()
+                                    .map(|w| process_air_round0(w, &mut bufs))
+                                    .collect()
+                            },
+                        )
                     })
                     .collect();
                 let mut all_results = Vec::with_capacity(work_items.len());
