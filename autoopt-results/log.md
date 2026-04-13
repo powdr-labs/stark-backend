@@ -69,3 +69,27 @@
 **Result**: success — Stacked Reduction at APC 300: 123ms → 75ms (4.15x lower vs baseline 311ms). STARK excl trace at APC 300: 1474ms, 1.67x lower vs baseline (vs previous: 1474ms → 1474ms, 0ms change — improvement masked by noise in other metrics).
 
 **Summary**: Replaced ~15K per-AIR kernel launches per benchmark with 2 batched launches per MLE round (one degenerate, one non-degenerate) using descriptor arrays. The stacked reduction MLE rounds improved 2.09x at APC 300 (115ms → 55ms raw gauge), with the improvement scaling with AIR count (1.55x at APC 0, 1.93x at APC 100). The overall STARK excl trace didn't show net improvement at APC 300 due to measurement noise in other components (GKR +39ms, Round 0 +8ms), but Openings total improved by 60ms. No regression at any APC configuration.
+
+## 2026-04-13-prealloc-round0-buffers
+
+**Idea**: Pre-allocate per-thread reusable GPU buffers for Round 0 constraint and interaction evaluation to eliminate per-AIR cudaMallocAsync/cudaFreeAsync serialization.
+
+**Result**: failure — Round 0 at APC 300: 296ms → 443ms (1.50x higher vs before). STARK excl trace at APC 300: 1779ms, 1.38x lower vs baseline (vs previous: 1442ms → 1779ms, +337ms, 1.23x higher).
+
+**Summary**: Applied the GKR pre-allocation pattern to Round 0, but the approach failed due to fundamental differences: (1) Round 0 processes AIRs in small batches of 20-42, never reaching the >=100 multi-threading threshold; (2) max buffer sizes are ~1GB per thread (driven by max_temp_bytes), vs ~100MB for GKR (driven by TASK_SIZE); (3) pre-allocating 1GB for the largest AIR caused systemic GPU memory pressure that degraded even unrelated phases (GKR +188ms, Leaf Recursion +100ms). Key learning: the pre-allocation pattern only works when buffer sizes are small relative to GPU memory AND many AIRs are processed per call.
+
+## 2026-04-13-1100-batch-mle-interpolation
+
+**Idea**: Replace per-AIR `interpolate_columns_gpu` kernel launches in MLE sumcheck rounds with a single batched descriptor-array kernel launch per round.
+
+**Result**: success — MLE Rounds at APC 300: 183ms → 168ms (1.09x lower vs before, 1.07x lower vs baseline 180ms). STARK excl trace at APC 300: 1418ms, 1.73x lower vs baseline (vs previous: 1441ms → 1418ms, -23ms, 1.02x lower).
+
+**Summary**: Replaced ~5000 per-AIR interpolation kernel launches with a single batched kernel per MLE round using descriptor arrays. One big buffer allocation replaces ~5000 individual allocations, and one kernel launch replaces ~5000 launches. Used a multi-block-per-descriptor design with binary search (initial one-block-per-trace design caused APC 0 regression due to GPU underutilization for large AIRs). The improvement was modest (15ms MLE Rounds, 23ms STARK excl trace at APC 300) because residual per-trace `main_ptrs.to_device()` overhead (~5000 calls) was not addressed, and per-call CUDA API overhead was lower than estimated.
+
+## 2026-04-13-1430-batch-mle-main-ptrs-upload
+
+**Idea**: Replace per-trace `main_ptrs.to_device()` calls in MLE sumcheck rounds with a single batched device upload per round.
+
+**Result**: failure — MLE Rounds at APC 300: 170ms → 165ms (-5ms, below 10ms rollback threshold). STARK excl trace at APC 300: 1421ms, 1.73x lower vs baseline (vs previous: 1417ms → 1421ms, +4ms noise).
+
+**Summary**: Replaced ~5600 per-trace `main_ptrs.to_device()` calls (confirmed by nsys H2D count drop from 30035 to 24436) with 2 batched uploads per round (one for late_eval, one for early_eval). The implementation is mechanically correct but the improvement was only 5ms — per-call CUDA API overhead is ~1μs (not ~15-20μs as estimated) because cudaMallocAsync uses pool caching, the mutex is uncontended in single-threaded MLE rounds, and 16-48 byte H2D copies are negligible on PCIe. The dominant MLE Rounds cost is kernel execution, not API overhead.

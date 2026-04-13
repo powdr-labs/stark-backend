@@ -4,7 +4,7 @@
 
 Eliminate per-AIR `cudaMallocAsync`/`cudaFreeAsync` and `MemoryManager` mutex overhead in Round 0 constraint and interaction evaluation by pre-allocating reusable per-thread GPU buffers. This is the same optimization pattern applied to GKR input eval in task `2026-04-13-2100-prealloc-gkr-input-buffers`, which achieved 1.67x improvement at APC 300 (532ms → 318ms).
 
-Round 0 currently takes 296ms at APC 300 (seg0=148ms, seg1=148ms). Each AIR allocates 6 temporary `DeviceBuffer`s via the global `Mutex<MemoryManager>` + `cudaMallocAsync`: zerocheck `intermediates`, `temp_sums_buffer`, `sp_evals`, and logup `intermediates`, `temp_sums_buffer`, `s_evals`. With ~310 AIRs per segment across 8 threads, this causes ~2,400 mutex acquisitions and ~2,400 `cudaFreeAsync` calls per segment. The `cudaMallocAsync`/`cudaFreeAsync` calls cause implicit CUDA memory pool cross-stream synchronization, serializing the 8 worker threads.
+Round 0 currently takes 296ms at APC 300 (seg0=148ms, seg1=148ms). Each AIR allocates 4 large temporary `DeviceBuffer`s via the global `Mutex<MemoryManager>` + `cudaMallocAsync` (zerocheck `intermediates` and `temp_sums_buffer`, logup `intermediates` and `temp_sums_buffer`), plus 2 small output buffers (`sp_evals`, `s_evals`) and 4 small H2D uploads (`d_main_parts`, `d_numer_weights`, `d_denom_weights`, `d_rules`). With ~310 AIRs per segment across 8 threads, the 4 large temporaries alone cause ~2,480 alloc/free pairs per segment. The `cudaMallocAsync`/`cudaFreeAsync` calls cause implicit CUDA memory pool cross-stream synchronization, serializing the 8 worker threads.
 
 **Expected improvement**: Round 0 296ms → ~190-220ms (~75-106ms reduction, 25-36%). STARK excl trace ~70-100ms improvement (5-7%). Based on GKR prealloc precedent where seg1 (many small AIRs, allocation-dominated) improved 4.15x while seg0 (few large AIRs, kernel-dominated) improved 1.07x.
 
@@ -40,12 +40,12 @@ Per AIR, calls two functions that each allocate temporary GPU buffers:
 5. Launches `logup_bary_eval_interactions_round0()` kernel (line 251)
 6. All buffers freed on function return
 
-### Per-AIR allocation count: 6 large allocations + 4 small H2D uploads = 10 GPU memory operations
-### Per-segment at APC 300: ~310 AIRs × 10 = ~3,100 GPU memory operations
+### Per-AIR allocation count: 4 large temporary allocations + 2 small output allocations + 4 small H2D uploads = 10 GPU memory operations
+### Per-segment at APC 300: ~310 AIRs × 10 = ~3,100 GPU memory operations (pre-allocation targets the 4 large temporaries = ~1,240 alloc/free pairs per segment)
 
 ## Changes
 
-### Change 1: Add `Round0ThreadBuffers` struct
+### Change 1: Add `Round0ThreadBuffers` struct and extend `Round0AirWorkItem`
 
 **File**: `crates/cuda-backend/src/logup_zerocheck/mod.rs`
 
@@ -63,6 +63,28 @@ struct Round0ThreadBuffers {
     logup_temp_sums: DeviceBuffer<Frac<EF>>,
 }
 ```
+
+Add a field to `Round0AirWorkItem`:
+
+```rust
+/// Pre-computed logup round0 interaction rules buffer_size (from SymbolicRulesGpu).
+/// Computed once during work item construction to avoid rebuilding the DAG per-AIR
+/// both during max-size pre-computation and inside evaluate_round0_interactions_gpu.
+logup_r0_buffer_size: u32,
+```
+
+Compute this field when building work items (inside the `.map()` at line 907):
+
+```rust
+let logup_r0_buffer_size = if !eq3b.is_empty() {
+    let symbolic = SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
+    compute_logup_round0_buffer_size(&symbolic).0
+} else {
+    0
+};
+```
+
+This pre-computation allows the max-size loop (Change 2) to compute logup buffer sizes without needing its own `SymbolicConstraints::from()` call per AIR. Note: `process_air_round0` still does `SymbolicConstraints::from()` at line 142 because `evaluate_round0_interactions_gpu` needs the full symbolic constraints for weight computation and rule encoding — only the `buffer_size` lookup is cached.
 
 Note: we do NOT pre-allocate `sp_evals` (output of zerocheck) or `s_evals` (output of logup) because these are small (num_cosets × skip_domain elements, typically < 100) and must be returned to the caller. The allocation overhead for small buffers is negligible.
 
@@ -107,27 +129,16 @@ for w in &work_items {
         max_zc_temp_sums = max_zc_temp_sums.max(zc_temp);
     }
 
-    // Logup interaction buffers
-    // Interaction rules are built per-AIR in evaluate_round0_interactions_gpu,
-    // so we use the constraint buffer_size as an upper bound for logup intermediates.
-    // The actual logup intermediates depend on the interaction DAG which varies per AIR.
-    // We use max(height) * num_cosets_logup as a conservative upper bound for temp_sums.
-    let has_interactions = !w.eq_3bs.is_empty();
-    if has_interactions {
-        // For logup intermediates/temp_sums, we cannot call the FFI size functions
-        // directly because the interaction rules (SymbolicRulesGpu) are built per-AIR
-        // inside evaluate_round0_interactions_gpu. Instead, we pre-build the interaction
-        // rules for each AIR to get the buffer_size, then call the FFI functions.
-        let symbolic = SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
-        let (rules_buffer_size, _) = compute_logup_round0_buffer_size(&symbolic);
+    // Logup interaction buffers — use the pre-computed logup_r0_buffer_size from Change 1
+    if w.logup_r0_buffer_size > 0 {
         let logup_inter = unsafe {
             _logup_r0_intermediates_buffer_size(
-                rules_buffer_size, skip_domain, num_x, num_cosets_logup as u32, w.max_temp_bytes,
+                w.logup_r0_buffer_size, skip_domain, num_x, num_cosets_logup as u32, w.max_temp_bytes,
             )
         };
         let logup_temp = unsafe {
             _logup_r0_temp_sums_buffer_size(
-                rules_buffer_size, skip_domain, num_x, num_cosets_logup as u32, w.max_temp_bytes,
+                w.logup_r0_buffer_size, skip_domain, num_x, num_cosets_logup as u32, w.max_temp_bytes,
             )
         };
         max_logup_intermediates = max_logup_intermediates.max(logup_inter);
@@ -136,13 +147,7 @@ for w in &work_items {
 }
 ```
 
-**Issue**: The logup interaction rules are built per-AIR inside `evaluate_round0_interactions_gpu`. To compute max logup buffer sizes, we need the `buffer_size` from `SymbolicRulesGpu`. We have two options:
-
-**Option A (simpler)**: Extract a small helper `compute_logup_round0_buffer_size(symbolic: &SymbolicConstraints) -> (u32, usize)` that builds the interaction DAG and returns only `(rules.buffer_size, rules.rules.len())`. This is CPU-only work, called on the main thread.
-
-**Option B (faster)**: Cache the `SymbolicRulesGpu` (or at least `buffer_size`) as part of `DeviceStarkProvingKey::other_data` at keygen time, alongside the existing `zerocheck_round0` rules. This avoids rebuilding the DAG at proving time.
-
-**Recommendation**: Use Option A for the initial implementation. The DAG building is fast (microseconds per AIR, ~310 × ~5us = ~1.5ms total). Option B can be a follow-up if profiling shows this matters.
+Note: `logup_r0_buffer_size` is computed once per work item in Change 1 via `compute_logup_round0_buffer_size()`. This avoids a separate `SymbolicConstraints::from()` call in this loop.
 
 ### Change 3: Add memory budget check and allocate per-thread buffers
 
@@ -235,7 +240,7 @@ The pre-allocated buffers have capacity ≥ the required size since we took the 
 
 **File**: `crates/cuda-backend/src/logup_zerocheck/round0.rs`
 
-Same pattern: add `prealloc_intermediates: &mut DeviceBuffer<F>` and `prealloc_temp_sums: &mut DeviceBuffer<Frac<EF>>` parameters.
+Add `prealloc_intermediates: &mut DeviceBuffer<F>` and `prealloc_temp_sums: &mut DeviceBuffer<Frac<EF>>` parameters. Do NOT pass `logup_r0_buffer_size` — the function still builds the full DAG and rules per-AIR (needed for `d_rules`, `d_numer_weights`, `d_denom_weights`, weight index mapping), so it obtains `buffer_size` from `rules.buffer_size` naturally. The pre-computed `logup_r0_buffer_size` is only needed in the max-size computation loop (Change 2).
 
 Replace the internal `intermediates` and `temp_sums_buffer` allocations with the pre-allocated buffers.
 
@@ -323,7 +328,7 @@ pub fn compute_logup_round0_buffer_size(
 }
 ```
 
-This is called once per AIR on the main thread during the max-size pre-computation (Change 2).
+This is called once per AIR on the main thread during work item construction (Change 1). The returned `buffer_size` is stored in `Round0AirWorkItem::logup_r0_buffer_size` and reused in the max-size pre-computation loop (Change 2), keeping that loop simple without needing its own `SymbolicConstraints::from()` call per AIR.
 
 ## Invariants
 

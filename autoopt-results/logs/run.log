@@ -97,3 +97,10 @@ Replace the per-AIR kernel launch loop in `batch_sumcheck_poly_eval` (stacked re
 ========================================
 [Mon Apr 13 07:02:41 CEST 2026] Generate & Plan → autoopt-results/logs/20260413-070241-10-1-plan.log
 [Mon Apr 13 07:21:38 CEST 2026] Generate & Plan rate-limited. Waiting 9562s (until Mon Apr 13 10:00:00 CEST 2026 + 60s)...
+[Mon Apr 13 10:01:00 CEST 2026] Generate & Plan → autoopt-results/logs/20260413-070241-10-1-plan.log
+----------------------------------------
+# 2026-04-13-prealloc-round0-buffers
+
+Pre-allocate per-thread reusable GPU buffers for Round 0 constraint and interaction evaluation to eliminate per-AIR cudaMallocAsync/cudaFreeAsync serialization across 8 worker threads. Round 0 currently allocates 6 temporary DeviceBuffers per AIR (intermediates, temp_sums, sp_evals for both zerocheck constraints and logup interactions), causing ~2,400 mutex acquisitions and CUDA memory pool cross-stream synchronization per segment. This is the same bottleneck that the GKR input eval pre-allocation (task 2026-04-13-2100) eliminated for a 1.67x improvement; Round 0 at 296ms has even more per-AIR allocations and exhibits the same symptom of equal seg0/seg1 wall times despite very different workloads.
+----------------------------------------
+[Mon Apr 13 10:09:28 CEST 2026] Do Task → autoopt-results/logs/20260413-070241-10-2-do.log
