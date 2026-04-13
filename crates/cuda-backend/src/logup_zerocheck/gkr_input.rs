@@ -27,7 +27,7 @@ use crate::{
 const TASK_SIZE: u32 = 65536;
 
 /// Number of OS threads (and thus CUDA streams) for parallel GKR input evaluation.
-const NUM_GKR_INPUT_STREAMS: usize = 4;
+const NUM_GKR_INPUT_STREAMS: usize = 8;
 
 struct SendPtr<T>(*mut T);
 unsafe impl<T> Send for SendPtr<T> {}

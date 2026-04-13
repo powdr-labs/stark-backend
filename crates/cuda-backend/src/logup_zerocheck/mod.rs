@@ -89,8 +89,8 @@ use round0::evaluate_round0_constraints_gpu;
 
 /// Number of OS threads (and thus CUDA streams) for parallel Round 0 processing.
 /// More threads = more concurrent kernels but more peak GPU memory and more
-/// MemoryManager mutex contention. 4 is a good balance for the RTX 4090.
-const NUM_ROUND0_STREAMS: usize = 4;
+/// MemoryManager mutex contention. 8 provides good SM utilization on the RTX 4090.
+const NUM_ROUND0_STREAMS: usize = 8;
 
 /// When `num_monomials >= DAG_FALLBACK_MONOMIAL_RATIO * rules_len`, use DAG evaluation
 /// instead of the monomial kernel for high num_y traces.
