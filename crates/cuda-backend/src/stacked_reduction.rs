@@ -29,10 +29,12 @@ use crate::{
         batch_ntt_small::ensure_device_ntt_twiddles_initialized,
         poly::vector_scalar_multiply_ext,
         stacked_reduction::{
-            _stacked_reduction_r0_required_temp_buffer_size, initialize_k_rot_from_eq_segments,
-            stacked_reduction_fold_ple, stacked_reduction_sumcheck_mle_round,
-            stacked_reduction_sumcheck_mle_round_degenerate, stacked_reduction_sumcheck_round0,
-            NUM_G,
+            _stacked_reduction_r0_required_temp_buffer_size,
+            batched_stacked_reduction_sumcheck_mle_round,
+            batched_stacked_reduction_sumcheck_mle_round_degenerate,
+            compute_mle_launch_params, initialize_k_rot_from_eq_segments,
+            stacked_reduction_fold_ple, stacked_reduction_sumcheck_round0, DegenMleDesc,
+            NonDegenMleDesc, NUM_G,
         },
         sumcheck::{fold_mle, triangular_fold_mle},
     },
@@ -832,58 +834,85 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
             .fill_zero()
             .map_err(StackedReductionError::FillZero)?;
 
-        for window in self.ht_diff_idxs.windows(2) {
-            let window_len = window[1] - window[0];
-            // SAFETY: in bounds by construction of ht_diff_idxs
-            let unstacked_cols_ptr = unsafe { self.d_unstacked_cols.as_ptr().add(window[0]) };
-            // 2 per column for (eq, k_rot)
-            // SAFETY: in bounds by construction of lambda_pows
-            let lambda_pows_ptr = unsafe { self.d_lambda_pows.as_ptr().add(2 * window[0]) };
+        // Phase A: Build descriptors (CPU-only, no CUDA calls)
+        let mut degen_descs: Vec<DegenMleDesc> = Vec::new();
+        let mut nondegen_descs: Vec<NonDegenMleDesc> = Vec::new();
+        let mut nondegen_prefix_sums: Vec<u32> = Vec::new();
+        let mut total_nondegen_blocks: u32 = 0;
 
+        for window in self.ht_diff_idxs.windows(2) {
+            let col_offset = window[0] as u32;
+            let window_len = (window[1] - window[0]) as u32;
             let log_height = self.unstacked_cols[window[0]].log_height as usize;
 
             if log_height < l_skip + round {
-                let eq_r = self.eq_stable[log_height];
-                let k_rot_r = self.k_rot_stable[log_height];
-                let stacked_height = self.stacked_height(round);
-                unsafe {
-                    // Pointer offset into pre-uploaded buffer
-                    let eq_ub_ptr = self.d_eq_ub_all.as_ptr().add(window[0]);
-                    stacked_reduction_sumcheck_mle_round_degenerate(
-                        &self.d_q_eval_ptrs,
-                        eq_ub_ptr,
-                        eq_r,
-                        k_rot_r,
-                        unstacked_cols_ptr,
-                        lambda_pows_ptr,
-                        &mut self.d_accum,
-                        stacked_height,
-                        window_len,
-                        l_skip,
-                        round,
-                    )
-                    .map_err(StackedReductionError::SumcheckMleRoundDegenerate)?;
-                }
+                degen_descs.push(DegenMleDesc {
+                    col_offset,
+                    window_len,
+                    eq_r: self.eq_stable[log_height],
+                    k_rot_r: self.k_rot_stable[log_height],
+                });
             } else {
                 let hypercube_dim = log_height - l_skip - round;
-                let num_y = 1 << hypercube_dim;
+                let num_y = 1u32 << hypercube_dim;
+                let (blocks_x, stride) =
+                    compute_mle_launch_params(num_y, window_len, self.sm_count);
+                nondegen_prefix_sums.push(total_nondegen_blocks);
+                total_nondegen_blocks += blocks_x * stride;
+                nondegen_descs.push(NonDegenMleDesc {
+                    col_offset,
+                    window_len,
+                    num_y,
+                    stride,
+                    blocks_x,
+                });
+            }
+        }
 
-                let stacked_height = self.stacked_height(round);
-                unsafe {
-                    stacked_reduction_sumcheck_mle_round(
-                        &self.d_q_eval_ptrs,
-                        &self.eq_r_ns,
-                        &self.k_rot_ns,
-                        unstacked_cols_ptr,
-                        lambda_pows_ptr,
-                        &mut self.d_accum,
-                        stacked_height,
-                        window_len,
-                        num_y,
-                        self.sm_count,
-                    )
-                    .map_err(StackedReductionError::SumcheckMleRound)?;
-                };
+        // Phase B: Upload descriptors and launch batched kernels
+        let stacked_height = self.stacked_height(round);
+        let shift_factor = (l_skip + round) as u32;
+
+        if !degen_descs.is_empty() {
+            let d_degen_descs = degen_descs
+                .to_device()
+                .map_err(StackedReductionError::MemCopy)?;
+            unsafe {
+                batched_stacked_reduction_sumcheck_mle_round_degenerate(
+                    &d_degen_descs,
+                    &self.d_q_eval_ptrs,
+                    self.d_eq_ub_all.as_ptr(),
+                    self.d_unstacked_cols.as_ptr(),
+                    self.d_lambda_pows.as_ptr(),
+                    &mut self.d_accum,
+                    stacked_height,
+                    shift_factor,
+                )
+                .map_err(StackedReductionError::SumcheckMleRoundDegenerate)?;
+            }
+        }
+
+        if !nondegen_descs.is_empty() {
+            let d_nondegen_descs = nondegen_descs
+                .to_device()
+                .map_err(StackedReductionError::MemCopy)?;
+            let d_block_offsets = nondegen_prefix_sums
+                .to_device()
+                .map_err(StackedReductionError::MemCopy)?;
+            unsafe {
+                batched_stacked_reduction_sumcheck_mle_round(
+                    &d_nondegen_descs,
+                    &d_block_offsets,
+                    total_nondegen_blocks,
+                    &self.d_q_eval_ptrs,
+                    &self.eq_r_ns,
+                    &self.k_rot_ns,
+                    self.d_unstacked_cols.as_ptr(),
+                    self.d_lambda_pows.as_ptr(),
+                    &mut self.d_accum,
+                    stacked_height,
+                )
+                .map_err(StackedReductionError::SumcheckMleRound)?;
             }
         }
 
