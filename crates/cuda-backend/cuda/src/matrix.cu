@@ -220,6 +220,28 @@ __global__ void batch_expand_pad_wide_kernel(
     }
 }
 
+struct StackColDesc {
+    const Fp* src;
+    Fp* dst;
+    uint32_t height;
+    uint32_t stride;
+};
+
+// Each block handles one column descriptor. Threads cooperatively copy elements
+// from src to dst with the given stride.
+__global__ void stack_columns_kernel(
+    const StackColDesc* descs,
+    uint32_t num_descs
+) {
+    uint32_t desc_idx = blockIdx.x;
+    if (desc_idx >= num_descs) return;
+
+    const StackColDesc& d = descs[desc_idx];
+    for (uint32_t i = threadIdx.x; i < d.height; i += blockDim.x) {
+        d.dst[i * d.stride] = d.src[i];
+    }
+}
+
 // ============================================================================
 // LAUNCHERS
 // ============================================================================
@@ -348,5 +370,16 @@ extern "C" int _batch_expand_pad_wide(
     grid.z = (width + grid.y - 1) / grid.y;
     assert(grid.z <= MAX_GRID_DIM);
     batch_expand_pad_wide_kernel<<<grid, block>>>(out, in, width, padded_height, height);
+    return CHECK_KERNEL();
+}
+
+extern "C" int _stack_columns(
+    const StackColDesc* descs,
+    uint32_t num_descs
+) {
+    if (num_descs == 0) return 0;
+    dim3 grid(num_descs);
+    dim3 block(256);
+    stack_columns_kernel<<<grid, block>>>(descs, num_descs);
     return CHECK_KERNEL();
 }
