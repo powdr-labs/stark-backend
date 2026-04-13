@@ -947,13 +947,33 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 .map(|w| process_air_round0(w))
                 .collect::<Result<Vec<_>, _>>()?
         } else {
-            let chunk_size = work_items.len().div_ceil(num_threads);
+            // Interleaved (round-robin) assignment on the height-sorted list.
+            // Work items are already sorted by descending height. Round-robin
+            // distributes them so each thread gets a balanced mix of large and
+            // small AIRs (thread 0 gets items 0, N, 2N, ...; thread 1 gets
+            // items 1, N+1, 2N+1, ...). This balances both per-AIR fixed
+            // overhead (kernel launches, D2H copies) and height-proportional
+            // GPU kernel time without needing a calibrated cost model.
+            let mut thread_items: Vec<Vec<usize>> =
+                (0..num_threads).map(|_| Vec::new()).collect();
+            for (item_idx, _) in work_items.iter().enumerate() {
+                thread_items[item_idx % num_threads].push(item_idx);
+            }
+
             std::thread::scope(|s| {
-                let handles: Vec<_> = work_items
-                    .chunks(chunk_size)
-                    .map(|chunk| {
+                let handles: Vec<_> = thread_items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(thread_id, indices)| {
+                        let items = &work_items;
                         s.spawn(move || -> Result<Vec<Round0AirResult>, LogupZerocheckError> {
-                            chunk.iter().map(|w| process_air_round0(w)).collect()
+                            let t0 = std::time::Instant::now();
+                            let results: Vec<_> = indices
+                                .iter()
+                                .map(|&idx| process_air_round0(&items[idx]))
+                                .collect::<Result<_, _>>()?;
+                            tracing::debug!(thread_id, elapsed_ms = t0.elapsed().as_millis(), num_airs = indices.len(), "round0 thread done");
+                            Ok(results)
                         })
                     })
                     .collect();
