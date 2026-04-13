@@ -228,7 +228,7 @@ extern "C" int _logup_gkr_input_eval(
     uint32_t permutation_height,
     uint32_t num_rows_per_tile
 ) {
-    auto count = is_global ? TASK_SIZE : permutation_height;
+    auto count = is_global ? min((uint32_t)TASK_SIZE, permutation_height) : permutation_height;
     auto [grid, block] = kernel_launch_params(count, 256);
     if (is_global) {
         evaluate_interactions_gkr_kernel<true><<<grid, block>>>(
