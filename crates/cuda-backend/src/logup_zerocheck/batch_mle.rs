@@ -99,7 +99,7 @@ pub(crate) struct TraceCtx {
     pub eq_xi_ptr: *const EF,
     pub sels_ptr: *const EF,
     pub prep_ptr: MainMatrixPtrs<EF>,
-    pub main_ptrs_ptr: *const MainMatrixPtrs<EF>,
+    pub main_ptrs_dev: DeviceBuffer<MainMatrixPtrs<EF>>,
     pub public_ptr: *const F,
     pub eq_3bs_ptr: *const EF,
 }
@@ -185,7 +185,7 @@ impl<'a> ZerocheckMleBatchBuilder<'a> {
             let eval_ctx = EvalCoreCtx {
                 d_selectors: t.sels_ptr,
                 d_preprocessed: t.prep_ptr,
-                d_main: t.main_ptrs_ptr,
+                d_main: t.main_ptrs_dev.as_ptr(),
                 d_public: t.public_ptr,
             };
 
@@ -332,7 +332,7 @@ impl<'a> LogupMleBatchBuilder<'a> {
             let eval_ctx = EvalCoreCtx {
                 d_selectors: t.sels_ptr,
                 d_preprocessed: t.prep_ptr,
-                d_main: t.main_ptrs_ptr,
+                d_main: t.main_ptrs_dev.as_ptr(),
                 d_public: t.public_ptr,
             };
 
@@ -470,7 +470,7 @@ pub(crate) fn evaluate_zerocheck_batched<'a, HS: GpuHashScheme>(
                 t.eq_xi_ptr,
                 t.sels_ptr,
                 t.prep_ptr,
-                t.main_ptrs_ptr,
+                &t.main_ptrs_dev,
                 t.public_ptr,
                 lambda_pows,
                 rules,
@@ -639,7 +639,7 @@ fn evaluate_single_logup<HS: GpuHashScheme>(
         t.eq_xi_ptr,
         t.sels_ptr,
         t.prep_ptr,
-        t.main_ptrs_ptr,
+        &t.main_ptrs_dev,
         t.public_ptr,
         d_challenges_ptr,
         t.eq_3bs_ptr,

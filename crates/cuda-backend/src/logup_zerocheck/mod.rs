@@ -1121,8 +1121,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             vec![[vec![EF::ZERO; sp_deg], vec![EF::ZERO; sp_deg]]; self.n_per_trace.len()];
 
         let mut late_eval: Vec<TraceCtx> = Vec::new(); // round == n_lift + 1
-        let mut all_late_main_ptrs: Vec<MainMatrixPtrs<EF>> = Vec::new();
-        let mut late_main_ptrs_offsets: Vec<usize> = Vec::new();
         let mut early_eval: Vec<TraceCtx> = Vec::new(); // round <= n_lift
 
         // ── Phase 1: Collect metadata, split into Case A / Case B (no CUDA calls) ──
@@ -1187,13 +1185,14 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                             air_width: 0,
                         }
                     };
-                    late_main_ptrs_offsets.push(all_late_main_ptrs.len());
-                    all_late_main_ptrs.extend(mats[first_main_idx..].iter().map(|m| {
-                        MainMatrixPtrs {
+                    let main_ptrs: Vec<MainMatrixPtrs<EF>> = mats[first_main_idx..]
+                        .iter()
+                        .map(|m| MainMatrixPtrs {
                             data: m.buffer().as_ptr(),
                             air_width: air_width_for_mat(need_rot, m.width()),
-                        }
-                    }));
+                        })
+                        .collect_vec();
+                    let main_ptrs_dev = main_ptrs.to_device()?;
 
                     late_eval.push(TraceCtx {
                         trace_idx,
@@ -1206,7 +1205,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                         eq_xi_ptr: eq_xi_tree.get_ptr(0),
                         sels_ptr: sels.buffer().as_ptr(),
                         prep_ptr,
-                        main_ptrs_ptr: std::ptr::null(), // backfilled after batch upload
+                        main_ptrs_dev,
                         public_ptr: public_vals.as_ptr(),
                         eq_3bs_ptr: eq_3bs.as_ptr(),
                     });
@@ -1261,17 +1260,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             }
         }
 
-        // ── Batch upload late_eval main_ptrs ──
-        let _keepalive_late_main_ptrs = if !all_late_main_ptrs.is_empty() {
-            let buf = all_late_main_ptrs.to_device()?;
-            for (i, t) in late_eval.iter_mut().enumerate() {
-                t.main_ptrs_ptr = unsafe { buf.as_ptr().add(late_main_ptrs_offsets[i]) };
-            }
-            Some(buf)
-        } else {
-            None
-        };
-
         // ── Phase 2: Batch allocate + single kernel launch ──
         // One big buffer for all interpolated data, one kernel launch for all Case B traces.
         let _keepalive_interpolated = if !case_b_traces.is_empty() {
@@ -1313,8 +1301,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         };
 
         // ── Phase 3: Build TraceCtx for each Case B trace ──
-        let mut all_early_main_ptrs: Vec<MainMatrixPtrs<EF>> = Vec::new();
-        let mut early_main_ptrs_offsets: Vec<usize> = Vec::with_capacity(case_b_traces.len());
         for meta in &case_b_traces {
             let mats = &self.mat_evals_per_trace[meta.trace_idx];
             let first_main_idx = usize::from(meta.has_preprocessed);
@@ -1346,15 +1332,19 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             if meta.has_preprocessed {
                 widths_so_far += mats[0].width();
             }
-            early_main_ptrs_offsets.push(all_early_main_ptrs.len());
-            for m in &mats[first_main_idx..] {
-                all_early_main_ptrs.push(MainMatrixPtrs {
-                    data: base_ptr.wrapping_add(widths_so_far * interpolated_height),
-                    air_width: air_width_for_mat(meta.need_rot, m.width()),
-                });
-                widths_so_far += m.width();
-            }
+            let main_ptrs: Vec<MainMatrixPtrs<EF>> = mats[first_main_idx..]
+                .iter()
+                .map(|m| {
+                    let main_ptr = MainMatrixPtrs {
+                        data: base_ptr.wrapping_add(widths_so_far * interpolated_height),
+                        air_width: air_width_for_mat(meta.need_rot, m.width()),
+                    };
+                    widths_so_far += m.width();
+                    main_ptr
+                })
+                .collect_vec();
             debug_assert_eq!(widths_so_far, meta.num_columns);
+            let main_ptrs_dev = main_ptrs.to_device()?;
 
             early_eval.push(TraceCtx {
                 trace_idx: meta.trace_idx,
@@ -1367,20 +1357,11 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 eq_xi_ptr: eq_xi_tree.get_ptr(log_num_y),
                 sels_ptr,
                 prep_ptr,
-                main_ptrs_ptr: std::ptr::null(), // backfilled after batch upload
+                main_ptrs_dev,
                 public_ptr: self.public_values_per_trace[meta.trace_idx].as_ptr(),
                 eq_3bs_ptr: self.d_eq_3b_per_trace[meta.trace_idx].as_ptr(),
             });
         }
-        let _keepalive_early_main_ptrs = if !all_early_main_ptrs.is_empty() {
-            let buf = all_early_main_ptrs.to_device()?;
-            for (i, t) in early_eval.iter_mut().enumerate() {
-                t.main_ptrs_ptr = unsafe { buf.as_ptr().add(early_main_ptrs_offsets[i]) };
-            }
-            Some(buf)
-        } else {
-            None
-        };
 
         let d_challenges_ptr = self.d_challenges.as_ptr();
 

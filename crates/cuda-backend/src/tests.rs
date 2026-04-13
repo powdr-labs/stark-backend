@@ -704,7 +704,7 @@ fn test_monomial_vs_dag_equivalence() {
                 .wrapping_add(4 * interpolated_height),
             air_width: mat_folded.width() as u32 / 2,
         }];
-        let _main_ptrs_dev = main_ptrs.to_device().unwrap();
+        let main_ptrs_dev = main_ptrs.to_device().unwrap();
 
         let trace_ctx = TraceCtx {
             trace_idx: 0,
@@ -720,7 +720,7 @@ fn test_monomial_vs_dag_equivalence() {
                 data: std::ptr::null(),
                 air_width: 0,
             },
-            main_ptrs_ptr: _main_ptrs_dev.as_ptr(),
+            main_ptrs_dev,
             public_ptr: d_public_values.as_ptr(),
             eq_3bs_ptr: std::ptr::null(),
         };
