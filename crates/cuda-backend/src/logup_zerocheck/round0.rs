@@ -23,6 +23,15 @@ use crate::{
     prelude::{EF, F},
 };
 
+/// Pre-allocated per-thread GPU buffers for Round 0 evaluation.
+/// Reused across AIRs to eliminate per-AIR mutex contention on the global memory manager.
+pub(crate) struct Round0ThreadBuffers {
+    pub zc_intermediates: DeviceBuffer<F>,
+    pub zc_temp_sums: DeviceBuffer<EF>,
+    pub logup_intermediates: DeviceBuffer<F>,
+    pub logup_temp_sums: DeviceBuffer<Frac<EF>>,
+}
+
 /// Evaluate plain AIR constraints (not interactions) for a single AIR, given prepared trace input.
 ///
 /// `num_cosets` should equal `constraint_degree - 1` because we evaluate the quotient polynomial.
@@ -41,6 +50,8 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
     num_cosets: u32,
     g_shift: F,
     max_temp_bytes: usize,
+    prealloc_intermediates: Option<&mut DeviceBuffer<F>>,
+    prealloc_temp_sums: Option<&mut DeviceBuffer<EF>>,
 ) -> Result<DeviceBuffer<EF>, Round0EvalError> {
     let constraints_dag = &pk.vk.symbolic_constraints;
     if constraints_dag.constraints.constraint_idx.is_empty() || num_cosets == 0 {
@@ -60,11 +71,21 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
             max_temp_bytes,
         )
     };
-    let mut intermediates = if intermed_capacity > 0 {
-        debug!("zerocheck:intermediates_capacity={intermed_capacity}");
-        DeviceBuffer::<F>::with_capacity(intermed_capacity)
+
+    let use_prealloc_inter = prealloc_intermediates
+        .as_ref()
+        .map_or(false, |p| intermed_capacity > 0 && p.len() >= intermed_capacity);
+    let mut fallback_intermediates;
+    let intermediates = if use_prealloc_inter {
+        prealloc_intermediates.unwrap()
     } else {
-        DeviceBuffer::<F>::new()
+        fallback_intermediates = if intermed_capacity > 0 {
+            debug!("zerocheck:intermediates_capacity={intermed_capacity}");
+            DeviceBuffer::<F>::with_capacity(intermed_capacity)
+        } else {
+            DeviceBuffer::<F>::new()
+        };
+        &mut fallback_intermediates
     };
 
     let temp_sums_buffer_capacity = unsafe {
@@ -76,13 +97,22 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
             max_temp_bytes,
         )
     };
-    debug!("zerocheck:temp_sums_buffer_capacity={temp_sums_buffer_capacity}");
-    let mut temp_sums_buffer = DeviceBuffer::<EF>::with_capacity(temp_sums_buffer_capacity);
+
+    let use_prealloc_temp = prealloc_temp_sums
+        .as_ref()
+        .map_or(false, |p| p.len() >= temp_sums_buffer_capacity);
+    let mut fallback_temp_sums;
+    let temp_sums_buffer = if use_prealloc_temp {
+        prealloc_temp_sums.unwrap()
+    } else {
+        debug!("zerocheck:temp_sums_buffer_capacity={temp_sums_buffer_capacity}");
+        fallback_temp_sums = DeviceBuffer::<EF>::with_capacity(temp_sums_buffer_capacity);
+        &mut fallback_temp_sums
+    };
+
     let used_temp_bytes =
         intermed_capacity * size_of::<F>() + temp_sums_buffer_capacity * size_of::<EF>();
     if used_temp_bytes > max_temp_bytes {
-        // We do not error if the required bytes is greater than the requested max, but this may
-        // lead to unexpected peak memory usage.
         warn!("zerocheck used_temp_bytes ({used_temp_bytes}) > max_temp_bytes ({max_temp_bytes})");
     }
 
@@ -99,7 +129,7 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
     //   all nodes are valid.
     unsafe {
         zerocheck_ntt_eval_constraints(
-            &mut temp_sums_buffer,
+            temp_sums_buffer,
             &mut sp_evals,
             selectors_cube,
             preprocessed_ptr,
@@ -110,7 +140,7 @@ pub fn evaluate_round0_constraints_gpu<HS: GpuHashScheme>(
             &rules.inner.d_rules,
             &rules.inner.d_used_nodes,
             buffer_size,
-            &mut intermediates,
+            intermediates,
             skip_domain,
             num_x,
             height,
@@ -144,6 +174,8 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
     num_cosets: u32,
     g_shift: F,
     max_temp_bytes: usize,
+    prealloc_intermediates: Option<&mut DeviceBuffer<F>>,
+    prealloc_temp_sums: Option<&mut DeviceBuffer<Frac<EF>>>,
 ) -> Result<DeviceBuffer<Frac<EF>>, Round0EvalError> {
     // Check if this trace has interactions
     if eq_3bs.is_empty() {
@@ -219,18 +251,39 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
             max_temp_bytes,
         )
     };
-    let mut intermediates = if intermed_capacity > 0 {
-        debug!("logup_r0:intermediates_capacity={intermed_capacity}");
-        DeviceBuffer::<F>::with_capacity(intermed_capacity)
+
+    let use_prealloc_inter = prealloc_intermediates
+        .as_ref()
+        .map_or(false, |p| intermed_capacity > 0 && p.len() >= intermed_capacity);
+    let mut fallback_intermediates;
+    let intermediates = if use_prealloc_inter {
+        prealloc_intermediates.unwrap()
     } else {
-        DeviceBuffer::<F>::new()
+        fallback_intermediates = if intermed_capacity > 0 {
+            debug!("logup_r0:intermediates_capacity={intermed_capacity}");
+            DeviceBuffer::<F>::with_capacity(intermed_capacity)
+        } else {
+            DeviceBuffer::<F>::new()
+        };
+        &mut fallback_intermediates
     };
 
     let temp_sums_buffer_capacity = unsafe {
         _logup_r0_temp_sums_buffer_size(buffer_size, skip_domain, num_x, num_cosets, max_temp_bytes)
     };
-    debug!("logup_r0:tmp_sums_buffer_capacity={temp_sums_buffer_capacity}");
-    let mut temp_sums_buffer = DeviceBuffer::<Frac<EF>>::with_capacity(temp_sums_buffer_capacity);
+
+    let use_prealloc_temp = prealloc_temp_sums
+        .as_ref()
+        .map_or(false, |p| p.len() >= temp_sums_buffer_capacity);
+    let mut fallback_temp_sums;
+    let temp_sums_buffer = if use_prealloc_temp {
+        prealloc_temp_sums.unwrap()
+    } else {
+        debug!("logup_r0:tmp_sums_buffer_capacity={temp_sums_buffer_capacity}");
+        fallback_temp_sums = DeviceBuffer::<Frac<EF>>::with_capacity(temp_sums_buffer_capacity);
+        &mut fallback_temp_sums
+    };
+
     let used_temp_bytes =
         intermed_capacity * size_of::<F>() + temp_sums_buffer_capacity * size_of::<Frac<EF>>();
     if used_temp_bytes > max_temp_bytes {
@@ -249,7 +302,7 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
 
     unsafe {
         logup_bary_eval_interactions_round0(
-            &mut temp_sums_buffer,
+            temp_sums_buffer,
             &mut s_evals,
             selectors_cube,
             preprocessed_ptr,
@@ -261,7 +314,7 @@ pub fn evaluate_round0_interactions_gpu<HS: GpuHashScheme>(
             denom_sum_init,
             &d_rules,
             buffer_size,
-            &mut intermediates,
+            intermediates,
             skip_domain,
             num_x,
             height,

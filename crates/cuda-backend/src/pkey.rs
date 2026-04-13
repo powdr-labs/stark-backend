@@ -29,6 +29,10 @@ pub struct AirDataGpu {
     pub zerocheck_mle: ConstraintOnlyRules<false>,
     pub zerocheck_monomials: Option<ZerocheckMonomials>,
     pub interaction_monomials: Option<InteractionMonomials>,
+    /// Buffer size for the logup round0 interaction evaluation DAG.
+    /// Pre-computed at keygen time so Round 0 work item preparation can
+    /// determine per-AIR buffer sizes without rebuilding the DAG.
+    pub logup_round0_buffer_size: u32,
 }
 
 /// Used for GKR input evaluation and logup MLE sumcheck rounds.
@@ -105,12 +109,45 @@ impl AirDataGpu {
         } else {
             None
         };
+
+        // Pre-compute the logup round0 buffer_size from the interaction DAG.
+        // This mirrors the DAG construction in evaluate_round0_interactions_gpu
+        // but only extracts the buffer_size (no weights or device uploads needed).
+        let logup_round0_buffer_size = if !symbolic_constraints.interactions.is_empty() {
+            let mut dag_builder = SymbolicDagBuilder::new();
+            let mut sorted_used_dag_idxs = Vec::new();
+            for interaction in &symbolic_constraints.interactions {
+                let count = dag_builder.add_expr(&interaction.count);
+                sorted_used_dag_idxs.push(count);
+                sorted_used_dag_idxs.extend(
+                    interaction
+                        .message
+                        .iter()
+                        .map(|field_expr| dag_builder.add_expr(field_expr)),
+                );
+            }
+            sorted_used_dag_idxs.sort();
+            sorted_used_dag_idxs.dedup();
+            let dag = SymbolicExpressionDag {
+                nodes: dag_builder.nodes,
+                constraint_idx: sorted_used_dag_idxs,
+            };
+            let rules = SymbolicRulesGpu::new(&dag, true);
+            rules
+                .buffer_size
+                .try_into()
+                .expect("logup round0 buffer_size exceeds u32")
+        } else {
+            0
+        };
+
         Ok(Self {
             interaction_rules,
             zerocheck_round0,
             zerocheck_mle,
             zerocheck_monomials,
             interaction_monomials,
+            logup_round0_buffer_size,
         })
     }
 }
