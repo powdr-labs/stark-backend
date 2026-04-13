@@ -13,10 +13,7 @@ use openvm_stark_backend::{
 use p3_field::PrimeCharacteristicRing;
 
 use crate::{
-    logup_zerocheck::{
-        round0::compute_logup_round0_buffer_size,
-        rules::{codec::Codec, SymbolicRulesGpu},
-    },
+    logup_zerocheck::rules::{codec::Codec, SymbolicRulesGpu},
     monomial::{
         ExpandedInteractionMonomials, ExpandedMonomials, InteractionMonomialTerm, LambdaTerm,
         MonomialHeader, PackedVar,
@@ -32,9 +29,6 @@ pub struct AirDataGpu {
     pub zerocheck_mle: ConstraintOnlyRules<false>,
     pub zerocheck_monomials: Option<ZerocheckMonomials>,
     pub interaction_monomials: Option<InteractionMonomials>,
-    /// Pre-computed logup round0 buffer_size (from SymbolicRulesGpu applied to interaction DAG).
-    /// Used by the Round 0 pre-allocation to avoid rebuilding the DAG per-AIR.
-    pub logup_round0_buffer_size: u32,
 }
 
 /// Used for GKR input evaluation and logup MLE sumcheck rounds.
@@ -111,14 +105,12 @@ impl AirDataGpu {
         } else {
             None
         };
-        let logup_round0_buffer_size = compute_logup_round0_buffer_size(&symbolic_constraints).0;
         Ok(Self {
             interaction_rules,
             zerocheck_round0,
             zerocheck_mle,
             zerocheck_monomials,
             interaction_monomials,
-            logup_round0_buffer_size,
         })
     }
 }
