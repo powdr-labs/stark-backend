@@ -47,7 +47,9 @@ use tracing::{debug, info, info_span, instrument};
 use crate::{
     base::DeviceMatrix,
     cuda::{
-        logup_zerocheck::{fold_selectors_round0, interpolate_columns_gpu, MainMatrixPtrs},
+        logup_zerocheck::{
+            batched_interpolate_columns_gpu, fold_selectors_round0, InterpColDesc, MainMatrixPtrs,
+        },
         sumcheck::batch_fold_mle,
     },
     data_transporter::transport_matrix_d2h_col_major,
@@ -1118,13 +1120,30 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         let mut logup_out: Vec<[Vec<EF>; 2]> =
             vec![[vec![EF::ZERO; sp_deg], vec![EF::ZERO; sp_deg]]; self.n_per_trace.len()];
 
-        // Keep early interpolations alive for duration of kernels
-        let mut _keepalive_interpolated: Vec<DeviceMatrix<EF>> = Vec::new();
-
         let mut late_eval: Vec<TraceCtx> = Vec::new(); // round == n_lift + 1
         let mut early_eval: Vec<TraceCtx> = Vec::new(); // round <= n_lift
 
-        // First, handle traces in original order and split into cases
+        // ── Phase 1: Collect metadata, split into Case A / Case B (no CUDA calls) ──
+        // For Case B traces, we collect column pointers and sizing info to batch the
+        // interpolation into a single kernel launch.
+        struct CaseBMeta {
+            trace_idx: usize,
+            air_idx: usize,
+            n_lift: usize,
+            num_y: usize,
+            num_columns: usize, // total columns (selectors + preprocessed + mains)
+            interp_offset: usize, // element offset within the big interpolated buffer
+            col_start: usize,   // start index in the flat all_columns array
+            has_preprocessed: bool,
+            need_rot: bool,
+            has_constraints: bool,
+            has_interactions: bool,
+            norm_factor: F,
+        }
+        let mut case_b_traces: Vec<CaseBMeta> = Vec::new();
+        let mut all_columns: Vec<*const EF> = Vec::new();
+        let mut total_interp_elems: usize = 0;
+
         for (trace_idx, (&n, mats, sels, eq_3bs, public_vals, &air_idx)) in izip!(
             self.n_per_trace.iter(),
             self.mat_evals_per_trace.iter(),
@@ -1195,102 +1214,153 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     if has_constraints {
                         let tilde_eval = &mut self.zerocheck_tilde_evals[trace_idx];
                         *tilde_eval *= r_prev;
-                        // zc_out not set, will be handled directly from tilde eval in
-                        // compute_batch_s
                     }
                     if has_interactions {
                         for x in self.logup_tilde_evals[trace_idx].iter_mut() {
                             *x *= r_prev;
                         }
-                        // logup_out not set, will be handled directly from tilde eval in
-                        // compute_batch_s
                     }
                 }
             } else {
-                // Case B: interpolate columns and evaluate (num_x = s_deg, num_y = height/2)
+                // Case B: collect metadata for batched interpolation
                 let log_num_y = n_lift - round;
                 let num_y = 1 << log_num_y;
                 let height = 2 * num_y;
                 debug_assert_eq!(height, mats[0].height());
 
-                let mut columns: Vec<*const EF> = Vec::new();
-                columns.extend(
+                let col_start = all_columns.len();
+                // Collect all column pointers: selectors + all matrices (preprocessed + mains)
+                all_columns.extend(
                     iter::once(sels)
                         .chain(mats.iter())
                         .flat_map(|m| {
                             assert_eq!(m.height(), height);
                             (0..m.width())
                                 .map(|col| m.buffer().as_ptr().wrapping_add(col * m.height()))
-                        })
-                        .collect_vec(),
+                        }),
                 );
-                let interpolated = DeviceMatrix::<EF>::with_capacity(sp_deg * num_y, columns.len());
-                let d_columns = columns.to_device()?;
-                unsafe {
-                    interpolate_columns_gpu(interpolated.buffer(), &d_columns, sp_deg, num_y)
-                        .map_err(|e| LogupZerocheckError::InterpolateColumns(e.into()))?;
-                }
+                let num_columns = all_columns.len() - col_start;
+                let interp_size = sp_deg * num_y * num_columns;
 
-                let interpolated_height = interpolated.height();
-                let mut widths_so_far = 0usize;
-                let sels_ptr = interpolated
-                    .buffer()
-                    .as_ptr()
-                    .wrapping_add(widths_so_far * interpolated_height);
-                widths_so_far += 3;
-                let prep_ptr = if has_preprocessed {
-                    MainMatrixPtrs {
-                        data: interpolated
-                            .buffer()
-                            .as_ptr()
-                            .wrapping_add(widths_so_far * interpolated_height),
-                        air_width: air_width_for_mat(need_rot, mats[0].width()),
-                    }
-                } else {
-                    MainMatrixPtrs {
-                        data: std::ptr::null(),
-                        air_width: 0,
-                    }
-                };
-                if has_preprocessed {
-                    widths_so_far += mats[0].width();
-                }
-                let main_ptrs: Vec<MainMatrixPtrs<EF>> = mats[first_main_idx..]
-                    .iter()
-                    .map(|m| {
-                        let main_ptr = MainMatrixPtrs {
-                            data: interpolated
-                                .buffer()
-                                .as_ptr()
-                                .wrapping_add(widths_so_far * interpolated_height),
-                            air_width: air_width_for_mat(need_rot, m.width()),
-                        };
-                        widths_so_far += m.width();
-                        main_ptr
-                    })
-                    .collect_vec();
-                debug_assert_eq!(widths_so_far, interpolated.width());
-                let main_ptrs_dev = main_ptrs.to_device()?;
-
-                _keepalive_interpolated.push(interpolated);
-                let eq_xi_ptr = eq_xi_tree.get_ptr(log_num_y);
-
-                early_eval.push(TraceCtx {
+                case_b_traces.push(CaseBMeta {
                     trace_idx,
                     air_idx,
                     n_lift,
-                    num_y: num_y as u32,
+                    num_y,
+                    num_columns,
+                    interp_offset: total_interp_elems,
+                    col_start,
+                    has_preprocessed,
+                    need_rot,
                     has_constraints,
                     has_interactions,
                     norm_factor,
-                    eq_xi_ptr,
-                    sels_ptr,
-                    prep_ptr,
-                    main_ptrs_dev,
-                    public_ptr: public_vals.as_ptr(),
-                    eq_3bs_ptr: eq_3bs.as_ptr(),
                 });
+                total_interp_elems += interp_size;
             }
+        }
+
+        // ── Phase 2: Batch allocate + single kernel launch ──
+        // One big buffer for all interpolated data, one kernel launch for all Case B traces.
+        let _keepalive_interpolated = if !case_b_traces.is_empty() {
+            let big_buf = DeviceBuffer::<EF>::with_capacity(total_interp_elems);
+            let big_ptr = big_buf.as_mut_ptr();
+
+            // Build descriptors with multi-block-per-trace assignment
+            const THREADS_PER_BLOCK: u32 = 512;
+            let mut block_offset: u32 = 0;
+            let descs: Vec<InterpColDesc> = case_b_traces
+                .iter()
+                .map(|meta| {
+                    let total_threads = (meta.num_y * meta.num_columns) as u32;
+                    let blocks = total_threads.div_ceil(THREADS_PER_BLOCK);
+                    let desc = InterpColDesc {
+                        output: unsafe { big_ptr.add(meta.interp_offset) },
+                        columns_offset: meta.col_start as u32,
+                        num_y: meta.num_y as u32,
+                        num_columns: meta.num_columns as u32,
+                        total_threads,
+                        block_start: block_offset,
+                    };
+                    block_offset += blocks;
+                    desc
+                })
+                .collect();
+            let total_blocks = block_offset as usize;
+
+            let d_descs = descs.to_device()?;
+            let d_all_columns = all_columns.to_device()?;
+            unsafe {
+                batched_interpolate_columns_gpu(&d_descs, &d_all_columns, sp_deg, total_blocks)
+                    .map_err(|e| LogupZerocheckError::InterpolateColumns(e.into()))?;
+            }
+
+            Some(big_buf)
+        } else {
+            None
+        };
+
+        // ── Phase 3: Build TraceCtx for each Case B trace ──
+        for meta in &case_b_traces {
+            let mats = &self.mat_evals_per_trace[meta.trace_idx];
+            let first_main_idx = usize::from(meta.has_preprocessed);
+            let eq_xi_tree = &self.eq_xis[&meta.n_lift];
+            let log_num_y = meta.n_lift - round;
+            let interpolated_height = sp_deg * meta.num_y;
+
+            let base_ptr = _keepalive_interpolated
+                .as_ref()
+                .unwrap()
+                .as_ptr()
+                .wrapping_add(meta.interp_offset);
+
+            let mut widths_so_far = 0usize;
+            let sels_ptr = base_ptr.wrapping_add(widths_so_far * interpolated_height);
+            widths_so_far += 3; // selector width is always 3
+
+            let prep_ptr = if meta.has_preprocessed {
+                MainMatrixPtrs {
+                    data: base_ptr.wrapping_add(widths_so_far * interpolated_height),
+                    air_width: air_width_for_mat(meta.need_rot, mats[0].width()),
+                }
+            } else {
+                MainMatrixPtrs {
+                    data: std::ptr::null(),
+                    air_width: 0,
+                }
+            };
+            if meta.has_preprocessed {
+                widths_so_far += mats[0].width();
+            }
+            let main_ptrs: Vec<MainMatrixPtrs<EF>> = mats[first_main_idx..]
+                .iter()
+                .map(|m| {
+                    let main_ptr = MainMatrixPtrs {
+                        data: base_ptr.wrapping_add(widths_so_far * interpolated_height),
+                        air_width: air_width_for_mat(meta.need_rot, m.width()),
+                    };
+                    widths_so_far += m.width();
+                    main_ptr
+                })
+                .collect_vec();
+            debug_assert_eq!(widths_so_far, meta.num_columns);
+            let main_ptrs_dev = main_ptrs.to_device()?;
+
+            early_eval.push(TraceCtx {
+                trace_idx: meta.trace_idx,
+                air_idx: meta.air_idx,
+                n_lift: meta.n_lift,
+                num_y: meta.num_y as u32,
+                has_constraints: meta.has_constraints,
+                has_interactions: meta.has_interactions,
+                norm_factor: meta.norm_factor,
+                eq_xi_ptr: eq_xi_tree.get_ptr(log_num_y),
+                sels_ptr,
+                prep_ptr,
+                main_ptrs_dev,
+                public_ptr: self.public_values_per_trace[meta.trace_idx].as_ptr(),
+                eq_3bs_ptr: self.d_eq_3b_per_trace[meta.trace_idx].as_ptr(),
+            });
         }
 
         let d_challenges_ptr = self.d_challenges.as_ptr();

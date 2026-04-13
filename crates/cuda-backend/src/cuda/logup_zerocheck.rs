@@ -94,6 +94,21 @@ pub struct LogupMonomialCtx {
     pub d_combinations: *const EF,
     pub num_monomials: u32,
 }
+/// Descriptor for batched interpolation of columns across multiple traces.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct InterpColDesc {
+    pub output: *mut EF,
+    pub columns_offset: u32,
+    pub num_y: u32,
+    pub num_columns: u32,
+    pub total_threads: u32,
+    pub block_start: u32,
+}
+
+unsafe impl Send for InterpColDesc {}
+unsafe impl Sync for InterpColDesc {}
+
 // end of types for batch MLE
 
 extern "C" {
@@ -231,6 +246,14 @@ extern "C" {
         s_deg: usize,
         num_y: usize,
         num_columns: usize,
+    ) -> i32;
+
+    fn _batched_interpolate_columns(
+        descs: *const InterpColDesc,
+        all_columns: *const *const EF,
+        s_deg: usize,
+        num_descs: usize,
+        total_blocks: usize,
     ) -> i32;
 
     fn _frac_matrix_vertically_repeat(
@@ -527,6 +550,21 @@ pub unsafe fn interpolate_columns_gpu(
         s_deg,
         num_y,
         columns.len(),
+    ))
+}
+
+pub unsafe fn batched_interpolate_columns_gpu(
+    descs: &DeviceBuffer<InterpColDesc>,
+    all_columns: &DeviceBuffer<*const EF>,
+    s_deg: usize,
+    total_blocks: usize,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_batched_interpolate_columns(
+        descs.as_ptr(),
+        all_columns.as_ptr(),
+        s_deg,
+        descs.len(),
+        total_blocks,
     ))
 }
 

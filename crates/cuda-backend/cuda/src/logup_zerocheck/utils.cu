@@ -68,6 +68,15 @@ __global__ void fold_ple_from_evals_kernel(
     }
 }
 
+struct InterpColDesc {
+    FpExt* output;              // Base pointer for this trace's interpolated output
+    uint32_t columns_offset;    // Offset into the flattened columns array
+    uint32_t num_y;             // Number of y-values for this trace
+    uint32_t num_columns;       // Number of columns for this trace
+    uint32_t total_threads;     // = num_y * num_columns (precomputed for efficiency)
+    uint32_t block_start;       // First block index assigned to this descriptor
+};
+
 __global__ void interpolate_columns_kernel(
     FpExt *__restrict__ interpolated,
     const FpExt *__restrict__ const *__restrict__ columns,
@@ -88,6 +97,39 @@ __global__ void interpolate_columns_kernel(
 
     for (int x = 0; x < s_deg; x++) {
         this_interpolated[x * num_y + y] = t0 + (t1 - t0) * Fp(x + 1u);
+    }
+}
+
+__global__ void batched_interpolate_columns_kernel(
+    const InterpColDesc* descs,
+    const FpExt *const * all_columns,
+    uint32_t s_deg,
+    uint32_t num_descs
+) {
+    // Binary search: find the descriptor that owns this block
+    uint32_t block_idx = blockIdx.x;
+    uint32_t lo = 0, hi = num_descs;
+    while (lo + 1 < hi) {
+        uint32_t mid = (lo + hi) / 2;
+        if (descs[mid].block_start <= block_idx) lo = mid;
+        else hi = mid;
+    }
+
+    const InterpColDesc& d = descs[lo];
+    uint32_t local_block = block_idx - d.block_start;
+    uint32_t tidx = local_block * blockDim.x + threadIdx.x;
+    if (tidx >= d.total_threads) return;
+
+    uint32_t y = tidx % d.num_y;
+    uint32_t col_local = tidx / d.num_y;
+
+    const FpExt *column = all_columns[d.columns_offset + col_local];
+    auto t0 = column[y << 1];
+    auto t1 = column[(y << 1) | 1];
+    FpExt *this_out = d.output + col_local * s_deg * d.num_y;
+
+    for (int x = 0; x < s_deg; x++) {
+        this_out[x * d.num_y + y] = t0 + (t1 - t0) * Fp(x + 1u);
     }
 }
 
@@ -197,6 +239,22 @@ extern "C" int _interpolate_columns(
     auto [grid, block] = kernel_launch_params(num_y * num_columns, 512);
 
     interpolate_columns_kernel<<<grid, block>>>(interpolated, columns, s_deg, num_y, num_columns);
+    return CHECK_KERNEL();
+}
+
+extern "C" int _batched_interpolate_columns(
+    const InterpColDesc* descs,
+    const FpExt *const * all_columns,
+    size_t s_deg,
+    size_t num_descs,
+    size_t total_blocks
+) {
+    if (num_descs == 0) return 0;
+    dim3 grid(total_blocks);
+    dim3 block(512);
+    batched_interpolate_columns_kernel<<<grid, block>>>(
+        descs, all_columns, s_deg, num_descs
+    );
     return CHECK_KERNEL();
 }
 
