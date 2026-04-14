@@ -232,6 +232,8 @@ __global__ void fold_ef_columns_kernel(const FpExt *src, FpExt *dst, uint32_t qu
 // immediately to reduce live register ranges.
 //
 // shared memory size requirement: max(num_warps,1) * sizeof(FpExt)
+// Template: r_prev_from_ptr=true reads r_prev from d_r_prev device pointer.
+template <bool r_prev_from_ptr = false>
 __global__ void compute_round_and_fold_kernel(
     const FpExt *__restrict__ eq_xi_low,
     const FpExt *__restrict__ eq_xi_high,
@@ -239,11 +241,13 @@ __global__ void compute_round_and_fold_kernel(
     uint32_t num_x,                      // post-fold num_x (= pq_size / 2)
     uint32_t log_eq_low_cap,
     FpExt lambda,
-    FpExt r_prev,                        // Previous round's challenge for folding
+    FpExt r_prev_val,                    // Previous round's challenge (scalar, ignored when r_prev_from_ptr)
     FpExt *__restrict__ block_sums,      // Output: [gridDim.x * 2]
-    FracExt *__restrict__ dst_pq         // Post-fold buffer (pq_size FracExt)
+    FracExt *__restrict__ dst_pq,        // Post-fold buffer (pq_size FracExt)
+    const FpExt *d_r_prev = nullptr      // Device pointer to r_prev (only used when r_prev_from_ptr)
 ) {
     extern __shared__ FpExt shared[];
+    const FpExt r_prev = r_prev_from_ptr ? *d_r_prev : r_prev_val;
     const uint32_t pq_size = 2 * num_x;
 
     // Index offsets for fold pattern (see detailed comments in inplace kernel)
@@ -320,6 +324,8 @@ __global__ void compute_round_and_fold_kernel(
 // NOTE: No __restrict__ on pq pointer since we read and write to the same buffer.
 //
 // shared memory size requirement: max(num_warps,1) * sizeof(FpExt)
+// Template: r_prev_from_ptr=true reads r_prev from d_r_prev device pointer.
+template <bool r_prev_from_ptr = false>
 __global__ void compute_round_and_fold_inplace_kernel(
     const FpExt *__restrict__ eq_xi_low,
     const FpExt *__restrict__ eq_xi_high,
@@ -327,10 +333,12 @@ __global__ void compute_round_and_fold_inplace_kernel(
     uint32_t num_x,                      // post-fold num_x (= pq_size / 2)
     uint32_t log_eq_low_cap,
     FpExt lambda,
-    FpExt r_prev,                        // Previous round's challenge for folding
-    FpExt *__restrict__ block_sums       // Output: [gridDim.x * 2]
+    FpExt r_prev_val,                    // Previous round's challenge (scalar, ignored when r_prev_from_ptr)
+    FpExt *__restrict__ block_sums,      // Output: [gridDim.x * 2]
+    const FpExt *d_r_prev = nullptr      // Device pointer to r_prev (only used when r_prev_from_ptr)
 ) {
     extern __shared__ FpExt shared[];
+    const FpExt r_prev = r_prev_from_ptr ? *d_r_prev : r_prev_val;
     const uint32_t pq_size = 2 * num_x;
 
     // Fold pattern analysis:
@@ -1076,7 +1084,7 @@ extern "C" int _frac_compute_round_and_fold(
     size_t shmem_bytes = div_ceil(block.x, WARP_SIZE) * sizeof(FpExt);
 
     // Launch fused kernel - writes to tmp_block_sums and dst_pq_buffer
-    compute_round_and_fold_kernel<<<grid, block, shmem_bytes>>>(
+    compute_round_and_fold_kernel<false><<<grid, block, shmem_bytes>>>(
         eq_xi_low,
         eq_xi_high,
         src_pq_buffer,
@@ -1092,6 +1100,47 @@ extern "C" int _frac_compute_round_and_fold(
         return err;
 
     // Launch final reduction kernel - reads from tmp_block_sums, writes to output.
+    return final_reduce_block_sums(tmp_block_sums, out, grid.x);
+}
+
+// Device-pointer variant: reads r_prev from device memory (for GPU-side transcript processing).
+extern "C" int _frac_compute_round_and_fold_dptr(
+    const FpExt *eq_xi_low,
+    const FpExt *eq_xi_high,
+    const FracExt *src_pq_buffer,
+    FracExt *dst_pq_buffer,
+    size_t src_pq_size,
+    size_t eq_low_cap,
+    FpExt lambda,
+    const FpExt *d_r_prev,       // Device pointer to previous round's challenge
+    FpExt *out,
+    FpExt *tmp_block_sums
+) {
+    assert(src_pq_size > 2);
+    size_t pq_size = src_pq_size >> 1;
+    size_t num_x = pq_size >> 1;
+    assert(num_x > 0);
+
+    auto [grid, block] = frac_compute_round_launch_params(num_x);
+    size_t shmem_bytes = div_ceil(block.x, WARP_SIZE) * sizeof(FpExt);
+
+    // r_prev_val is unused when r_prev_from_ptr=true; pass lambda (already a valid host FpExt).
+    compute_round_and_fold_kernel<true><<<grid, block, shmem_bytes>>>(
+        eq_xi_low,
+        eq_xi_high,
+        src_pq_buffer,
+        (uint32_t)num_x,
+        __builtin_ctz((uint32_t)eq_low_cap),
+        lambda,
+        lambda,  // dummy value; overridden by *d_r_prev inside kernel
+        tmp_block_sums,
+        dst_pq_buffer,
+        d_r_prev
+    );
+    int err = CHECK_KERNEL();
+    if (err != 0)
+        return err;
+
     return final_reduce_block_sums(tmp_block_sums, out, grid.x);
 }
 
@@ -1119,7 +1168,7 @@ extern "C" int _frac_compute_round_and_fold_inplace(
     size_t shmem_bytes = div_ceil(block.x, WARP_SIZE) * sizeof(FpExt);
 
     // Launch fused in-place kernel - writes to tmp_block_sums and pq_buffer (first half)
-    compute_round_and_fold_inplace_kernel<<<grid, block, shmem_bytes>>>(
+    compute_round_and_fold_inplace_kernel<false><<<grid, block, shmem_bytes>>>(
         eq_xi_low,
         eq_xi_high,
         pq_buffer,
@@ -1134,6 +1183,45 @@ extern "C" int _frac_compute_round_and_fold_inplace(
         return err;
 
     // Launch final reduction kernel - reads from tmp_block_sums, writes to output.
+    return final_reduce_block_sums(tmp_block_sums, out, grid.x);
+}
+
+// Device-pointer variant (IN-PLACE): reads r_prev from device memory.
+extern "C" int _frac_compute_round_and_fold_inplace_dptr(
+    const FpExt *eq_xi_low,
+    const FpExt *eq_xi_high,
+    FracExt *pq_buffer,
+    size_t src_pq_size,
+    size_t eq_low_cap,
+    FpExt lambda,
+    const FpExt *d_r_prev,
+    FpExt *out,
+    FpExt *tmp_block_sums
+) {
+    assert(src_pq_size > 2);
+    size_t pq_size = src_pq_size >> 1;
+    size_t num_x = pq_size >> 1;
+    assert(num_x > 0);
+
+    auto [grid, block] = frac_compute_round_launch_params(num_x);
+    size_t shmem_bytes = div_ceil(block.x, WARP_SIZE) * sizeof(FpExt);
+
+    // r_prev_val is unused when r_prev_from_ptr=true; pass lambda (already a valid host FpExt).
+    compute_round_and_fold_inplace_kernel<true><<<grid, block, shmem_bytes>>>(
+        eq_xi_low,
+        eq_xi_high,
+        pq_buffer,
+        (uint32_t)num_x,
+        __builtin_ctz((uint32_t)eq_low_cap),
+        lambda,
+        lambda,  // dummy value; overridden by *d_r_prev inside kernel
+        tmp_block_sums,
+        d_r_prev
+    );
+    int err = CHECK_KERNEL();
+    if (err != 0)
+        return err;
+
     return final_reduce_block_sums(tmp_block_sums, out, grid.x);
 }
 

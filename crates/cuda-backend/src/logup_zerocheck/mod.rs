@@ -486,8 +486,15 @@ where
     }
     prover.mem.emit_metrics_with_label("prover.gkr_input_evals");
 
-    let (frac_sum_proof, mut xi) =
-        fractional_sumcheck_gpu(transcript, inputs, alpha, true, &mut prover.mem)?;
+    let (frac_sum_proof, mut xi) = fractional_sumcheck_gpu(
+        transcript
+            .as_duplex_sponge_gpu()
+            .expect("BabyBear Poseidon2 transcript required for GPU fractional sumcheck"),
+        inputs,
+        alpha,
+        true,
+        &mut prover.mem,
+    )?;
     while xi.len() != l_skip + n_global {
         xi.push(transcript.sample_ext());
     }

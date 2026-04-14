@@ -330,11 +330,22 @@ pub trait GpuFiatShamirTranscript<Config: StarkProtocolConfig>:
     /// host state to device, launch a CUDA grinding kernel, then update the host state
     /// to match (observe witness + consume one sample).
     fn grind_gpu(&mut self, bits: usize) -> Result<Config::F, GrindError>;
+
+    /// Returns a mutable reference to the underlying `DuplexSpongeGpu`, if the concrete
+    /// type is a `DuplexSpongeGpu` (BabyBear Poseidon2). Returns `None` for other transcript
+    /// types (e.g., BN254 multi-field challenger).
+    fn as_duplex_sponge_gpu(&mut self) -> Option<&mut DuplexSpongeGpu> {
+        None
+    }
 }
 
 impl GpuFiatShamirTranscript<SC> for DuplexSpongeGpu {
     fn grind_gpu(&mut self, bits: usize) -> Result<F, GrindError> {
         DuplexSpongeGpu::grind_gpu(self, bits)
+    }
+
+    fn as_duplex_sponge_gpu(&mut self) -> Option<&mut DuplexSpongeGpu> {
+        Some(self)
     }
 }
 

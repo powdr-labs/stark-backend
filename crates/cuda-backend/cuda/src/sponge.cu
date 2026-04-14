@@ -1,45 +1,12 @@
 /**
  * GPU-accelerated Poseidon2 duplex sponge grinding kernel.
- * 
+ *
  * This implements proof-of-work grinding on GPU for the Fiat-Shamir transcript.
  */
 
-#include "fp.h"
 #include "launcher.cuh"
-#include "poseidon2.cuh"
+#include "sponge.cuh"
 #include <cstdint>
-
-// Must match the Rust DeviceSpongeState struct layout
-struct DeviceSpongeState {
-    Fp state[CELLS];      // WIDTH = 16
-    uint32_t absorb_idx;
-    uint32_t sample_idx;
-};
-
-static_assert(sizeof(DeviceSpongeState) == CELLS * sizeof(Fp) + 2 * sizeof(uint32_t),
-              "DeviceSpongeState size mismatch with Rust");
-
-// Sponge operations matching DuplexSponge behavior
-
-__device__ void sponge_observe(DeviceSpongeState& sponge, Fp value) {
-    sponge.state[sponge.absorb_idx] = value;
-    sponge.absorb_idx += 1;
-    if (sponge.absorb_idx == CELLS_RATE) {
-        poseidon2::poseidon2_mix(sponge.state);
-        sponge.absorb_idx = 0;
-        sponge.sample_idx = CELLS_RATE;
-    }
-}
-
-__device__ Fp sponge_sample(DeviceSpongeState& sponge) {
-    if (sponge.absorb_idx != 0 || sponge.sample_idx == 0) {
-        poseidon2::poseidon2_mix(sponge.state);
-        sponge.absorb_idx = 0;
-        sponge.sample_idx = CELLS_RATE;
-    }
-    sponge.sample_idx -= 1;
-    return sponge.state[sponge.sample_idx];
-}
 
 __device__ uint32_t sponge_sample_bits(DeviceSpongeState& sponge, uint32_t bits) {
     Fp rand_f = sponge_sample(sponge);
