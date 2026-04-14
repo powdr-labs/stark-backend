@@ -133,3 +133,43 @@
 **Result**: success — Round 0 at APC 300: 276ms → 242ms (2.74x lower vs baseline 662ms). STARK excl trace at APC 300: 1372ms, 1.79x lower vs baseline (vs previous: 1407ms → 1372ms, -35ms, 1.03x lower).
 
 **Summary**: Pre-computed per-AIR buffer sizes during Phase 1 work item preparation (required adding `logup_round0_buffer_size` to `AirDataGpu` to avoid per-AIR DAG reconstruction). Used 95th-percentile sizes for pre-allocation instead of maximum — the max is 193 MB/thread (driven by a few large AIRs), while p95 is 3.1 MB/thread. The failed previous attempt (`prealloc-round0-buffers`) used max sizes, causing 1.5 GB total pre-allocation and systemic GPU memory pressure. The percentile approach covers 95% of AIRs with negligible memory impact. No regression at APC 0.
+
+## 2026-04-14-0030-rightsize-gkr-input-kernel-grid
+
+**Idea**: Right-size CUDA kernel grid for small GLOBAL-mode AIRs in GKR input eval by using `min(TASK_SIZE, permutation_height)` instead of always `TASK_SIZE`.
+
+**Result**: failure — STARK excl trace at APC 300: 1364ms → 1358/1383ms (within noise, 0ms net change). GKR input evals seg0: 242ms → 238-254ms (noise). No improvement vs baseline or previous.
+
+**Summary**: Changed the CUDA launcher `count` from `TASK_SIZE` to `min(TASK_SIZE, permutation_height)` for GLOBAL-mode kernels, reducing grid size for small AIRs (e.g., 4 blocks instead of 256 for height=1024). The hypothesis was that oversized grids saturated all 128 SMs, preventing inter-stream concurrency. The change had no measurable impact, suggesting SM saturation is not the concurrency bottleneck — likely either memory bandwidth limits throughput regardless of SM count, or the few large AIRs (height >= TASK_SIZE) dominate per-thread wall time and are unaffected by this change.
+
+## 2026-04-14-0140-multistream-stacked-reduction-round0
+
+**Idea**: Multi-stream the per-trace sequential kernel loops in Stacked Reduction's Round 0 sumcheck and PLE fold across 8 OS threads with per-thread CUDA streams.
+
+**Result**: failure — Stacked Reduction at APC 300: 75ms → 74ms (-1ms, unchanged). STARK excl trace at APC 300: 1382ms → 1558ms (+176ms, 1.13x higher). LogUp GKR regressed +193ms at APC 300, +233ms at APC 100. No regression at APC 0.
+
+**Summary**: Applied the multi-stream pattern (used successfully for Round 0 and GKR input eval) to Stacked Reduction. The optimization required per-thread accumulation buffers (112 DeviceBuffers total) because the final_reduce kernel uses non-atomic `+=`. The buffer allocations/frees through the CUDA memory pool disrupted pool state, causing a ~200ms regression in the memory-bandwidth-bound LogUp GKR phase in subsequent segments. The Stacked Reduction itself barely improved because (1) CPU NTT reconstruction dominates at ~36ms of the 75ms total, limiting max GPU savings, and (2) the D2H reduction overhead (~11ms for 10MB) partially offsets the GPU kernel concurrency gains. Key learning: the multi-stream pattern only works when it doesn't require per-thread accumulation buffers that significantly increase allocation count.
+
+## 2026-04-14-0300-precompute-logup-round0-interaction-rules
+
+**Idea**: Pre-compute the logup Round 0 interaction evaluation DAG, rules, and weight-index mapping at keygen time to eliminate per-AIR CPU overhead in `evaluate_round0_interactions_gpu`.
+
+**Result**: failure — Round 0 at APC 300: 243ms → 243ms (0ms change). STARK excl trace at APC 300: 1386ms → 1373ms (-13ms, within noise). (vs baseline: 1.79x lower, unchanged from previous)
+
+**Summary**: Moved DAG construction, rule compilation, encoding, and H2D upload from the per-AIR hot path to keygen time. The implementation is correct and architecturally clean, but the per-AIR overhead was ~0.05-0.1ms (not ~0.8ms as estimated), making the total savings ~5ms across 8 threads — well within measurement noise. The plan's estimate was based on overstated per-expression costs; in practice, the DAGs are small (2-10 expressions per AIR), pointer deduplication is O(1), and CUDA pool allocation handles tiny H2D uploads with near-zero latency.
+
+## 2026-04-14-0330-gpu-round0-poly-extraction
+
+**Idea**: Move per-AIR polynomial extraction (D2H sync + transpose + iDFT + Lagrange interpolation + coefficient adjustment) from CPU to a GPU kernel using pre-computed transformation matrices.
+
+**Result**: success — Round 0 at APC 300: 245ms → 202ms (3.28x lower vs baseline 662ms). STARK excl trace at APC 300: 1383ms → 1336ms, 1.84x lower vs baseline (vs previous: -47ms, 1.04x lower).
+
+**Summary**: Replaced per-AIR D2H sync + CPU post-processing with GPU-side matrix-vector multiply using pre-computed transformation matrices that capture the entire pipeline (transpose + iDFT + unshift + Lagrange interpolation + coefficient adjustment). Polynomial coefficients are written directly into a shared device batch array, with a single D2H copy replacing ~1246 per-AIR pipeline drains. Round 0 improved 21% at APC 300 with no regression at APC 0. The pre-computed matrix approach is simpler and more robust than implementing the Bowers iDFT on GPU.
+
+## 2026-04-14-0730-overlap-logup-precompute-round0
+
+**Idea**: Overlap logup combination precomputation (d_eq_3b upload + precompute kernels) with Round 0 multi-stream evaluation by running it on a background thread.
+
+**Result**: success — STARK excl trace at APC 300: 1370ms → 1306ms, 1.88x lower vs baseline (vs previous: -64ms, 1.05x lower). Round 0: 203ms → 182ms (-21ms, 1.12x lower).
+
+**Summary**: Spawned d_eq_3b upload + logup_combinations precompute on a background thread inside the existing thread::scope block, concurrent with Round 0 worker threads. The precompute output is only consumed during MLE rounds, making it fully independent of Round 0. Per-segment Round 0 improved by ~10ms (93ms → 82ms). LogUp GKR also improved by 44ms, likely due to improved CUDA memory pool state from overlapped allocations. No regression at APC 0 (single-threaded path unchanged).
