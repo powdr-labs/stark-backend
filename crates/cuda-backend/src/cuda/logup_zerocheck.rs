@@ -289,7 +289,6 @@ extern "C" {
         used_nodes_len: usize,
         height: u32,
         num_rows_per_tile: u32,
-        buffer_size: u32,
     ) -> i32;
 
     // logup_round0.cu
@@ -949,7 +948,6 @@ pub unsafe fn logup_gkr_input_eval(
     pair_idxs: &DeviceBuffer<u32>,
     height: u32,
     num_rows_per_tile: u32,
-    buffer_size: u32,
 ) -> Result<(), CudaError> {
     debug_assert_eq!(used_nodes.len(), pair_idxs.len());
     CudaError::from_result(_logup_gkr_input_eval(
@@ -966,7 +964,6 @@ pub unsafe fn logup_gkr_input_eval(
         used_nodes.len(),
         height,
         num_rows_per_tile,
-        buffer_size,
     ))
 }
 
