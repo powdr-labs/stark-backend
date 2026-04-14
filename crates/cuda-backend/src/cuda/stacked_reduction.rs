@@ -41,7 +41,7 @@ extern "C" {
     ) -> u32;
 
     // SP_DEG=1: no z_packets needed, outputs [NUM_G * skip_domain] to be ADDed
-    fn _stacked_reduction_sumcheck_round0(
+    pub fn _stacked_reduction_sumcheck_round0(
         eq_r_ns: *const EF,
         trace_ptr: *const F,
         lambda_pows: *const EF,
@@ -53,7 +53,7 @@ extern "C" {
         num_x: u32,
     ) -> i32;
 
-    fn _stacked_reduction_fold_ple(
+    pub fn _stacked_reduction_fold_ple(
         src: *const F,
         dst: *mut EF,
         omega_skip_pows: *const F,

@@ -1,5 +1,7 @@
 use std::{array::from_fn, cmp::max, ffi::c_void, iter::zip, mem, sync::Arc};
 
+use openvm_cuda_common::stream::current_stream_sync;
+
 use itertools::{zip_eq, Itertools};
 use openvm_cuda_common::{
     copy::{cuda_memcpy, MemCopyD2H, MemCopyH2D},
@@ -23,6 +25,8 @@ use p3_dft::TwoAdicSubgroupDft;
 use p3_field::{PrimeCharacteristicRing, TwoAdicField};
 use tracing::{debug, info_span, instrument};
 
+use openvm_cuda_common::error::check;
+
 use crate::{
     base::DeviceMatrix,
     cuda::{
@@ -30,6 +34,7 @@ use crate::{
         poly::vector_scalar_multiply_ext,
         stacked_reduction::{
             _stacked_reduction_r0_required_temp_buffer_size,
+            _stacked_reduction_fold_ple, _stacked_reduction_sumcheck_round0,
             batched_stacked_reduction_sumcheck_mle_round,
             batched_stacked_reduction_sumcheck_mle_round_degenerate,
             compute_mle_launch_params, initialize_k_rot_from_eq_segments,
@@ -50,6 +55,10 @@ use crate::{
 
 /// Degree of the sumcheck polynomial for stacked reduction.
 pub const STACKED_REDUCTION_S_DEG: usize = 2;
+
+/// Number of OS threads for parallel Stacked Reduction processing.
+const NUM_STACKED_REDUCTION_STREAMS: usize = 8;
+
 
 pub struct StackedReductionGpu<D = Digest> {
     sm_count: u32,
@@ -484,40 +493,31 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
         let l_skip = self.l_skip;
         let skip_domain = 1 << l_skip;
         let s_0_deg = sumcheck_round0_deg(l_skip, STACKED_REDUCTION_S_DEG);
+        let g_buf_len = NUM_G * skip_domain;
 
-        // Accumulation buffers for G0, G1, G2 (on identity coset)
-        // d_g_pos: for n >= 0 traces
-        let mut d_g_pos = DeviceBuffer::<EF>::with_capacity(NUM_G * skip_domain);
-        d_g_pos
-            .fill_zero()
-            .map_err(StackedReductionError::FillZero)?;
+        // Step 1: Pre-compute per-trace work items
+        struct R0WorkItem {
+            trace_ptr: *const F,
+            height: usize,
+            width: usize,
+            lambda_offset: usize, // offset into d_lambda_pows
+            n_value: isize,       // log_height - l_skip
+        }
+        // SAFETY: trace_ptr is a device pointer (Copy + Send + Sync), other fields are plain data.
+        unsafe impl Send for R0WorkItem {}
+        unsafe impl Sync for R0WorkItem {}
 
-        // d_g_neg[k]: for traces with |n| = k+1, where n < 0 and k in 0..l_skip
-        let mut d_g_neg: Vec<DeviceBuffer<EF>> = (0..l_skip)
-            .map(|_| {
-                let b = DeviceBuffer::with_capacity(NUM_G * skip_domain);
-                b.fill_zero().map_err(StackedReductionError::FillZero)?;
-                Ok(b)
-            })
-            .collect::<Result<Vec<_>, StackedReductionError>>()?;
+        let trace_ptrs = mem::take(&mut self.trace_ptrs);
+        let mut work_items: Vec<R0WorkItem> = Vec::with_capacity(trace_ptrs.len());
+        let mut max_block_sums_len: usize = 0;
 
-        // Process each trace - call kernel for each, accumulating into appropriate bucket
-        for ((trace_ptr, trace_height, trace_width), window) in zip(
-            mem::take(&mut self.trace_ptrs),
-            self.ht_diff_idxs.windows(2),
-        ) {
+        for ((trace_ptr, trace_height, trace_width), window) in
+            zip(trace_ptrs, self.ht_diff_idxs.windows(2))
+        {
             debug_assert_eq!(window[1] - window[0], trace_width);
             let log_height = trace_height.ilog2();
             let n = log_height as isize - l_skip as isize;
 
-            // Select output bucket based on n
-            let d_g_output = if n >= 0 {
-                &mut d_g_pos
-            } else {
-                &mut d_g_neg[(-n - 1) as usize]
-            };
-
-            // Allocate block_sums buffer for intermediate reduction
             let block_sums_len = unsafe {
                 _stacked_reduction_r0_required_temp_buffer_size(
                     trace_height as u32,
@@ -525,28 +525,188 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
                     l_skip as u32,
                 )
             } as usize;
+            max_block_sums_len = max_block_sums_len.max(block_sums_len);
 
-            if block_sums_len > self.d_block_sums.len() {
-                self.d_block_sums = DeviceBuffer::<EF>::with_capacity(block_sums_len);
+            work_items.push(R0WorkItem {
+                trace_ptr,
+                height: trace_height,
+                width: trace_width,
+                lambda_offset: 2 * window[0],
+                n_value: n,
+            });
+        }
+
+        // Step 2: Sort by descending height for load balance
+        work_items.sort_by(|a, b| b.height.cmp(&a.height));
+
+        let num_threads = if work_items.len() >= 100 {
+            NUM_STACKED_REDUCTION_STREAMS.min(work_items.len())
+        } else {
+            1
+        };
+
+        if num_threads <= 1 {
+            // Sequential fallback: single-threaded path
+            let mut d_g_pos = DeviceBuffer::<EF>::with_capacity(g_buf_len);
+            d_g_pos
+                .fill_zero()
+                .map_err(StackedReductionError::FillZero)?;
+            let mut d_g_neg: Vec<DeviceBuffer<EF>> = (0..l_skip)
+                .map(|_| {
+                    let b = DeviceBuffer::with_capacity(g_buf_len);
+                    b.fill_zero().map_err(StackedReductionError::FillZero)?;
+                    Ok(b)
+                })
+                .collect::<Result<Vec<_>, StackedReductionError>>()?;
+
+            for item in &work_items {
+                let d_g_output = if item.n_value >= 0 {
+                    &mut d_g_pos
+                } else {
+                    &mut d_g_neg[(-item.n_value - 1) as usize]
+                };
+                let block_sums_len = unsafe {
+                    _stacked_reduction_r0_required_temp_buffer_size(
+                        item.height as u32,
+                        item.width as u32,
+                        l_skip as u32,
+                    )
+                } as usize;
+                if block_sums_len > self.d_block_sums.len() {
+                    self.d_block_sums = DeviceBuffer::<EF>::with_capacity(block_sums_len);
+                }
+                unsafe {
+                    let lambda_pows_ptr = self.d_lambda_pows.as_ptr().add(item.lambda_offset);
+                    stacked_reduction_sumcheck_round0(
+                        &self.eq_r_ns,
+                        item.trace_ptr,
+                        lambda_pows_ptr,
+                        &mut self.d_block_sums,
+                        d_g_output,
+                        item.height,
+                        item.width,
+                        l_skip,
+                    )
+                    .map_err(StackedReductionError::SumcheckRound0)?;
+                }
             }
 
-            unsafe {
-                // 2 per column for (eq, k_rot) - coeff_eq and coeff_rot
-                let lambda_pows_ptr = self.d_lambda_pows.as_ptr().add(2 * window[0]);
-
-                stacked_reduction_sumcheck_round0(
-                    &self.eq_r_ns,
-                    trace_ptr,
-                    lambda_pows_ptr,
-                    &mut self.d_block_sums,
-                    d_g_output,
-                    trace_height,
-                    trace_width,
-                    l_skip,
-                )
-                .map_err(StackedReductionError::SumcheckRound0)?;
-            };
+            let s_0 = self.reconstruct_s0_from_g(d_g_pos, d_g_neg, s_0_deg)?;
+            self.mem.tracing_info("stacked_reduction_sumcheck round 0");
+            return Ok(s_0);
         }
+
+        // Step 3: Multi-threaded path — pre-allocate per-thread resources
+        // Each thread gets its own d_g_pos, d_g_neg, and d_block_sums
+        let num_buckets = 1 + l_skip; // 1 for d_g_pos + l_skip for d_g_neg
+        let mut thread_bufs: Vec<(DeviceBuffer<EF>, Vec<DeviceBuffer<EF>>, DeviceBuffer<EF>)> =
+            Vec::with_capacity(num_threads);
+        for _ in 0..num_threads {
+            let mut tg_pos = DeviceBuffer::<EF>::with_capacity(g_buf_len);
+            tg_pos
+                .fill_zero()
+                .map_err(StackedReductionError::FillZero)?;
+            let tg_neg: Vec<DeviceBuffer<EF>> = (0..l_skip)
+                .map(|_| {
+                    let b = DeviceBuffer::with_capacity(g_buf_len);
+                    b.fill_zero().map_err(StackedReductionError::FillZero)?;
+                    Ok(b)
+                })
+                .collect::<Result<Vec<_>, StackedReductionError>>()?;
+            let t_block_sums = if max_block_sums_len > 0 {
+                DeviceBuffer::<EF>::with_capacity(max_block_sums_len)
+            } else {
+                DeviceBuffer::new()
+            };
+            thread_bufs.push((tg_pos, tg_neg, t_block_sums));
+        }
+
+        // Round-robin assignment of work items to threads
+        let mut thread_indices: Vec<Vec<usize>> = vec![Vec::new(); num_threads];
+        for (i, _) in work_items.iter().enumerate() {
+            thread_indices[i % num_threads].push(i);
+        }
+
+        // Extract shared read-only pointers as usize for Send safety
+        let eq_r_ns_addr = self.eq_r_ns.buffer().as_ptr() as usize;
+        let lambda_pows_addr = self.d_lambda_pows.as_ptr() as usize;
+
+        // Step 4: Sync default stream to ensure all buffer zero-fills are visible
+        current_stream_sync().map_err(StackedReductionError::CurrentStreamSync)?;
+
+        // Step 5: Multi-threaded dispatch
+        let thread_results = std::thread::scope(|s| {
+            let handles: Vec<_> = thread_bufs
+                .into_iter()
+                .zip(thread_indices.into_iter())
+                .map(|((mut tg_pos, mut tg_neg, mut t_block_sums), indices)| {
+                    let items = &work_items;
+                    s.spawn(move || -> Result<(DeviceBuffer<EF>, Vec<DeviceBuffer<EF>>), StackedReductionError> {
+                        for &idx in &indices {
+                            let item = &items[idx];
+                            let d_g_output = if item.n_value >= 0 {
+                                &mut tg_pos
+                            } else {
+                                &mut tg_neg[(-item.n_value - 1) as usize]
+                            };
+                            unsafe {
+                                let eq_ptr = eq_r_ns_addr as *const EF;
+                                let lp = (lambda_pows_addr as *const EF).add(item.lambda_offset);
+                                check(
+                                    _stacked_reduction_sumcheck_round0(
+                                        eq_ptr,
+                                        item.trace_ptr,
+                                        lp,
+                                        t_block_sums.as_mut_ptr(),
+                                        d_g_output.as_mut_ptr(),
+                                        item.height as u32,
+                                        item.width as u32,
+                                        l_skip as u32,
+                                        (item.height >> l_skip).max(1) as u32,
+                                    ),
+                                )
+                                .map_err(StackedReductionError::SumcheckRound0)?;
+                            }
+                        }
+                        current_stream_sync().map_err(StackedReductionError::CurrentStreamSync)?;
+                        Ok((tg_pos, tg_neg))
+                    })
+                })
+                .collect();
+
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                results.push(handle.join().unwrap()?);
+            }
+            Ok::<_, StackedReductionError>(results)
+        })?;
+
+        // Step 6: Reduce per-thread accumulators on CPU
+        // Copy each thread's buffers to host and sum element-wise
+        let mut g_pos_sum = vec![EF::ZERO; g_buf_len];
+        let mut g_neg_sums: Vec<Vec<EF>> = (0..l_skip).map(|_| vec![EF::ZERO; g_buf_len]).collect();
+
+        for (tg_pos, tg_neg) in thread_results {
+            let h_pos = tg_pos.to_host().map_err(StackedReductionError::MemCopy)?;
+            for (dst, src) in g_pos_sum.iter_mut().zip(h_pos.iter()) {
+                *dst += *src;
+            }
+            for (k, tg_neg_k) in tg_neg.into_iter().enumerate() {
+                let h_neg = tg_neg_k.to_host().map_err(StackedReductionError::MemCopy)?;
+                for (dst, src) in g_neg_sums[k].iter_mut().zip(h_neg.iter()) {
+                    *dst += *src;
+                }
+            }
+        }
+
+        // Upload reduced sums back to device for reconstruct_s0_from_g
+        let d_g_pos = g_pos_sum
+            .to_device()
+            .map_err(StackedReductionError::MemCopy)?;
+        let d_g_neg: Vec<DeviceBuffer<EF>> = g_neg_sums
+            .into_iter()
+            .map(|v| v.to_device().map_err(StackedReductionError::MemCopy))
+            .collect::<Result<Vec<_>, _>>()?;
 
         // CPU reconstruction: s₀(Z) = E0(Z)*G0(Z) + E1(Z)*G1(Z) + E2(Z)*G2(Z)
         let s_0 = self.reconstruct_s0_from_g(d_g_pos, d_g_neg, s_0_deg)?;
@@ -700,6 +860,17 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
             compute_barycentric_inv_lagrange_denoms(l_skip, &self.omega_skip_pows, u_0);
         let d_inv_lagrange_denoms = inv_lagrange_denoms.to_device()?;
 
+        // Work item for fold_ple multi-stream dispatch
+        struct PleWorkItem {
+            src: *const F,
+            dst_offset: usize,
+            height: usize,
+            width: usize,
+        }
+        // SAFETY: src is a device pointer (Copy + Send + Sync), other fields are plain data.
+        unsafe impl Send for PleWorkItem {}
+        unsafe impl Sync for PleWorkItem {}
+
         for stacked in &self.stacked_per_commit {
             let layout = stacked.layout();
             let num_x = 1 << n_stack;
@@ -710,37 +881,98 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
             folded_evals
                 .fill_zero()
                 .map_err(StackedReductionError::FillZero)?;
+
+            // Pre-compute work items with dst_offset
+            let mut ple_items: Vec<PleWorkItem> = Vec::with_capacity(stacked.traces.len());
             let mut dst_offset = 0;
             for trace in &stacked.traces {
                 if trace.width() == 0 || trace.height() == 0 {
                     continue;
                 }
                 let new_height = max(trace.height(), skip_domain) / skip_domain;
-
-                // Launch single-trace kernel for this trace
-                // SAFETY:
-                // - `trace.buffer()` is a valid device pointer for `trace.height() * trace.width()`
-                //   elements
-                // - `folded_evals` at `dst_offset` is valid for `new_height * trace.width()`
-                //   elements since we allocated `num_x * stacked_width` and traces fill
-                //   contiguously
-                // - `d_omega_skip_pows` and `d_inv_lagrange_denoms` have length `>= skip_domain`
-                unsafe {
-                    let dst = folded_evals.as_mut_ptr().add(dst_offset);
-                    stacked_reduction_fold_ple(
-                        trace.buffer().as_ptr(),
-                        dst,
-                        &self.d_omega_skip_pows,
-                        &d_inv_lagrange_denoms,
-                        trace.height(),
-                        trace.width(),
-                        l_skip,
-                    )
-                    .map_err(StackedReductionError::FoldPle)?;
-                }
-
+                ple_items.push(PleWorkItem {
+                    src: trace.buffer().as_ptr(),
+                    dst_offset,
+                    height: trace.height(),
+                    width: trace.width(),
+                });
                 dst_offset += new_height * trace.width();
             }
+
+            let num_threads = if ple_items.len() >= 100 {
+                NUM_STACKED_REDUCTION_STREAMS.min(ple_items.len())
+            } else {
+                1
+            };
+
+            if num_threads <= 1 {
+                // Sequential fallback
+                for item in &ple_items {
+                    unsafe {
+                        let dst = folded_evals.as_mut_ptr().add(item.dst_offset);
+                        stacked_reduction_fold_ple(
+                            item.src,
+                            dst,
+                            &self.d_omega_skip_pows,
+                            &d_inv_lagrange_denoms,
+                            item.height,
+                            item.width,
+                            l_skip,
+                        )
+                        .map_err(StackedReductionError::FoldPle)?;
+                    }
+                }
+            } else {
+                // Multi-threaded path: distribute traces across threads
+                let mut thread_indices: Vec<Vec<usize>> = vec![Vec::new(); num_threads];
+                for (i, _) in ple_items.iter().enumerate() {
+                    thread_indices[i % num_threads].push(i);
+                }
+
+                // Extract raw pointers as usize for Send safety
+                let folded_evals_addr = folded_evals.as_mut_ptr() as usize;
+                let omega_skip_pows_addr = self.d_omega_skip_pows.as_ptr() as usize;
+                let inv_lagrange_denoms_addr = d_inv_lagrange_denoms.as_ptr() as usize;
+
+                // Sync default stream to ensure fill_zero is visible to worker streams
+                current_stream_sync().map_err(StackedReductionError::CurrentStreamSync)?;
+
+                std::thread::scope(|s| {
+                    let handles: Vec<_> = thread_indices
+                        .into_iter()
+                        .map(|indices| {
+                            let items = &ple_items;
+                            s.spawn(move || -> Result<(), StackedReductionError> {
+                                for &idx in &indices {
+                                    let item = &items[idx];
+                                    unsafe {
+                                        let dst = (folded_evals_addr as *mut EF).add(item.dst_offset);
+                                        check(_stacked_reduction_fold_ple(
+                                            item.src,
+                                            dst,
+                                            omega_skip_pows_addr as *const F,
+                                            inv_lagrange_denoms_addr as *const EF,
+                                            item.height as u32,
+                                            item.width as u32,
+                                            l_skip as u32,
+                                        ))
+                                        .map_err(StackedReductionError::FoldPle)?;
+                                    }
+                                }
+                                current_stream_sync()
+                                    .map_err(StackedReductionError::CurrentStreamSync)?;
+                                Ok(())
+                            })
+                        })
+                        .collect();
+
+                    for handle in handles {
+                        handle.join().unwrap()?;
+                    }
+                    Ok::<_, StackedReductionError>(())
+                })?;
+            }
+
             self.q_evals.push(folded_evals);
         }
 
