@@ -1,6 +1,11 @@
-use std::{fmt::Debug, marker::PhantomData, sync::Arc};
+use std::{ffi::c_void, fmt::Debug, marker::PhantomData, sync::Arc};
 
-use openvm_cuda_common::{copy::MemCopyD2H, d_buffer::DeviceBuffer, error::MemCopyError};
+use openvm_cuda_common::{
+    copy::{cuda_memcpy, MemCopyD2H},
+    d_buffer::DeviceBuffer,
+    error::MemCopyError,
+    stream::current_stream_sync,
+};
 use openvm_stark_backend::prover::MatrixDimensions;
 
 pub struct DeviceMatrix<T> {
@@ -152,6 +157,138 @@ impl<T> MatrixDimensions for DeviceMatrixView<'_, T> {
     #[inline]
     fn width(&self) -> usize {
         self.width
+    }
+}
+
+/// Non-owning matrix view into an arena-allocated GPU buffer.
+/// Does NOT free memory on drop — the backing `FoldArena` owns the memory.
+#[derive(Clone, Copy)]
+pub struct ArenaMatrix<T> {
+    ptr: *mut T,
+    height: usize,
+    width: usize,
+}
+
+unsafe impl<T> Send for ArenaMatrix<T> {}
+unsafe impl<T> Sync for ArenaMatrix<T> {}
+
+impl<T> ArenaMatrix<T> {
+    pub fn new(ptr: *mut T, height: usize, width: usize) -> Self {
+        Self { ptr, height, width }
+    }
+
+    pub fn as_ptr(&self) -> *const T {
+        self.ptr as *const T
+    }
+
+    pub fn as_mut_ptr(&self) -> *mut T {
+        self.ptr
+    }
+
+    pub fn buffer_len(&self) -> usize {
+        self.height * self.width
+    }
+
+    pub fn to_host(&self) -> Result<Vec<T>, MemCopyError> {
+        let len = self.buffer_len();
+        let mut host_vec = Vec::with_capacity(len);
+        let size_bytes = std::mem::size_of::<T>() * len;
+        unsafe {
+            cuda_memcpy::<true, false>(
+                host_vec.as_mut_ptr() as *mut c_void,
+                self.ptr as *const c_void,
+                size_bytes,
+            )?;
+        }
+        current_stream_sync().map_err(MemCopyError::from)?;
+        unsafe {
+            host_vec.set_len(len);
+        }
+        Ok(host_vec)
+    }
+}
+
+impl<T> MatrixDimensions for ArenaMatrix<T> {
+    #[inline]
+    fn height(&self) -> usize {
+        self.height
+    }
+
+    #[inline]
+    fn width(&self) -> usize {
+        self.width
+    }
+}
+
+/// Transitional enum: holds either an owned `DeviceMatrix` (from `fold_ple_evals`)
+/// or an arena-backed `ArenaMatrix` (from MLE fold rounds).
+#[derive(Clone)]
+pub enum MatrixRef<T> {
+    Owned(DeviceMatrix<T>),
+    Arena(ArenaMatrix<T>),
+}
+
+impl<T> MatrixRef<T> {
+    pub fn as_ptr(&self) -> *const T {
+        match self {
+            MatrixRef::Owned(m) => m.buffer().as_ptr(),
+            MatrixRef::Arena(m) => m.as_ptr(),
+        }
+    }
+
+    pub fn buffer_len(&self) -> usize {
+        match self {
+            MatrixRef::Owned(m) => m.buffer().len(),
+            MatrixRef::Arena(m) => m.buffer_len(),
+        }
+    }
+
+    pub fn to_host(&self) -> Result<Vec<T>, MemCopyError> {
+        match self {
+            MatrixRef::Owned(m) => m.buffer().to_host(),
+            MatrixRef::Arena(m) => m.to_host(),
+        }
+    }
+}
+
+impl<T> MatrixDimensions for MatrixRef<T> {
+    #[inline]
+    fn height(&self) -> usize {
+        match self {
+            MatrixRef::Owned(m) => m.height(),
+            MatrixRef::Arena(m) => m.height(),
+        }
+    }
+
+    #[inline]
+    fn width(&self) -> usize {
+        match self {
+            MatrixRef::Owned(m) => m.width(),
+            MatrixRef::Arena(m) => m.width(),
+        }
+    }
+}
+
+/// Arena allocator for MLE fold output buffers. Each `allocate_bulk` call
+/// creates one large `DeviceBuffer` and returns a raw pointer into it.
+/// All buffers are freed when the arena is dropped.
+pub struct FoldArena<T> {
+    buffers: Vec<DeviceBuffer<T>>,
+}
+
+impl<T> FoldArena<T> {
+    pub fn new() -> Self {
+        Self {
+            buffers: Vec::new(),
+        }
+    }
+
+    /// Allocate a contiguous buffer of `total_cells` elements and return a mutable pointer.
+    pub fn allocate_bulk(&mut self, total_cells: usize) -> *mut T {
+        let buf = DeviceBuffer::with_capacity(total_cells);
+        let ptr = buf.as_mut_ptr();
+        self.buffers.push(buf);
+        ptr
     }
 }
 
