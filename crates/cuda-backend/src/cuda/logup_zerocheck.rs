@@ -109,6 +109,31 @@ pub struct InterpColDesc {
 unsafe impl Send for InterpColDesc {}
 unsafe impl Sync for InterpColDesc {}
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct InterpMatrixInfo {
+    pub base: *const EF,
+    pub width: u32,
+}
+
+unsafe impl Send for InterpMatrixInfo {}
+unsafe impl Sync for InterpMatrixInfo {}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct InterpTraceDescM {
+    pub output: *mut EF,
+    pub matrix_offset: u32,
+    pub num_matrices: u32,
+    pub num_y: u32,
+    pub num_columns: u32,
+    pub total_threads: u32,
+    pub block_start: u32,
+}
+
+unsafe impl Send for InterpTraceDescM {}
+unsafe impl Sync for InterpTraceDescM {}
+
 // end of types for batch MLE
 
 extern "C" {
@@ -251,6 +276,14 @@ extern "C" {
     fn _batched_interpolate_columns(
         descs: *const InterpColDesc,
         all_columns: *const *const EF,
+        s_deg: usize,
+        num_descs: usize,
+        total_blocks: usize,
+    ) -> i32;
+
+    fn _batched_interpolate_columns_matrix(
+        descs: *const InterpTraceDescM,
+        matrices: *const InterpMatrixInfo,
         s_deg: usize,
         num_descs: usize,
         total_blocks: usize,
@@ -581,6 +614,21 @@ pub unsafe fn batched_interpolate_columns_gpu(
     CudaError::from_result(_batched_interpolate_columns(
         descs.as_ptr(),
         all_columns.as_ptr(),
+        s_deg,
+        descs.len(),
+        total_blocks,
+    ))
+}
+
+pub unsafe fn batched_interpolate_columns_matrix_gpu(
+    descs: &DeviceBuffer<InterpTraceDescM>,
+    matrices: &DeviceBuffer<InterpMatrixInfo>,
+    s_deg: usize,
+    total_blocks: usize,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_batched_interpolate_columns_matrix(
+        descs.as_ptr(),
+        matrices.as_ptr(),
         s_deg,
         descs.len(),
         total_blocks,

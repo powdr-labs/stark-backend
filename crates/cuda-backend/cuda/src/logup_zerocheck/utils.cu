@@ -77,6 +77,21 @@ struct InterpColDesc {
     uint32_t block_start;       // First block index assigned to this descriptor
 };
 
+struct InterpMatrixInfo {
+    const FpExt* base;   // Matrix base pointer (column-major data)
+    uint32_t width;      // Number of columns in this matrix
+};
+
+struct InterpTraceDescM {
+    FpExt* output;              // Base pointer for this trace's interpolated output
+    uint32_t matrix_offset;     // Index into the d_matrices array
+    uint32_t num_matrices;      // Number of matrices for this trace (typically 2-5)
+    uint32_t num_y;             // Number of y-values (height / 2)
+    uint32_t num_columns;       // Total columns across all matrices
+    uint32_t total_threads;     // = num_y * num_columns
+    uint32_t block_start;       // First block index assigned to this descriptor
+};
+
 __global__ void interpolate_columns_kernel(
     FpExt *__restrict__ interpolated,
     const FpExt *__restrict__ const *__restrict__ columns,
@@ -124,6 +139,51 @@ __global__ void batched_interpolate_columns_kernel(
     uint32_t col_local = tidx / d.num_y;
 
     const FpExt *column = all_columns[d.columns_offset + col_local];
+    auto t0 = column[y << 1];
+    auto t1 = column[(y << 1) | 1];
+    FpExt *this_out = d.output + col_local * s_deg * d.num_y;
+
+    for (int x = 0; x < s_deg; x++) {
+        this_out[x * d.num_y + y] = t0 + (t1 - t0) * Fp(x + 1u);
+    }
+}
+
+__global__ void batched_interpolate_columns_matrix_kernel(
+    const InterpTraceDescM* descs,
+    const InterpMatrixInfo* matrices,
+    uint32_t s_deg,
+    uint32_t num_descs
+) {
+    // Binary search: find descriptor owning this block (same as existing kernel)
+    uint32_t block_idx = blockIdx.x;
+    uint32_t lo = 0, hi = num_descs;
+    while (lo + 1 < hi) {
+        uint32_t mid = (lo + hi) / 2;
+        if (descs[mid].block_start <= block_idx) lo = mid;
+        else hi = mid;
+    }
+
+    const InterpTraceDescM& d = descs[lo];
+    uint32_t local_block = block_idx - d.block_start;
+    uint32_t tidx = local_block * blockDim.x + threadIdx.x;
+    if (tidx >= d.total_threads) return;
+
+    uint32_t y = tidx % d.num_y;
+    uint32_t col_local = tidx / d.num_y;
+
+    // Compute column pointer from matrix base + offset
+    // Linear scan over matrices (typically 2-5 per trace)
+    const FpExt *column = nullptr;
+    uint32_t rem = col_local;
+    for (uint32_t i = 0; i < d.num_matrices; i++) {
+        const InterpMatrixInfo& m = matrices[d.matrix_offset + i];
+        if (rem < m.width) {
+            column = m.base + rem * (2u * d.num_y);
+            break;
+        }
+        rem -= m.width;
+    }
+
     auto t0 = column[y << 1];
     auto t1 = column[(y << 1) | 1];
     FpExt *this_out = d.output + col_local * s_deg * d.num_y;
@@ -254,6 +314,22 @@ extern "C" int _batched_interpolate_columns(
     dim3 block(512);
     batched_interpolate_columns_kernel<<<grid, block>>>(
         descs, all_columns, s_deg, num_descs
+    );
+    return CHECK_KERNEL();
+}
+
+extern "C" int _batched_interpolate_columns_matrix(
+    const InterpTraceDescM* descs,
+    const InterpMatrixInfo* matrices,
+    size_t s_deg,
+    size_t num_descs,
+    size_t total_blocks
+) {
+    if (num_descs == 0) return 0;
+    dim3 grid(total_blocks);
+    dim3 block(512);
+    batched_interpolate_columns_matrix_kernel<<<grid, block>>>(
+        descs, matrices, s_deg, num_descs
     );
     return CHECK_KERNEL();
 }

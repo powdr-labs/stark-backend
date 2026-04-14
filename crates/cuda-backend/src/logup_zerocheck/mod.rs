@@ -49,7 +49,8 @@ use crate::{
     base::DeviceMatrix,
     cuda::{
         logup_zerocheck::{
-            batched_interpolate_columns_gpu, fold_selectors_round0, InterpColDesc, MainMatrixPtrs,
+            batched_interpolate_columns_matrix_gpu, fold_selectors_round0, InterpMatrixInfo,
+            InterpTraceDescM, MainMatrixPtrs,
         },
         sumcheck::batch_fold_mle,
     },
@@ -1597,7 +1598,8 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             num_y: usize,
             num_columns: usize, // total columns (selectors + preprocessed + mains)
             interp_offset: usize, // element offset within the big interpolated buffer
-            col_start: usize,   // start index in the flat all_columns array
+            matrix_offset: usize, // start index in the all_matrices array
+            num_matrices: usize,  // number of matrices for this trace
             has_preprocessed: bool,
             need_rot: bool,
             has_constraints: bool,
@@ -1605,7 +1607,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             norm_factor: F,
         }
         let mut case_b_traces: Vec<CaseBMeta> = Vec::new();
-        let mut all_columns: Vec<*const EF> = Vec::new();
+        let mut all_matrices: Vec<InterpMatrixInfo> = Vec::new();
         let mut total_interp_elems: usize = 0;
 
         for (trace_idx, (&n, mats, sels, eq_3bs, public_vals, &air_idx)) in izip!(
@@ -1692,18 +1694,22 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 let height = 2 * num_y;
                 debug_assert_eq!(height, mats[0].height());
 
-                let col_start = all_columns.len();
-                // Collect all column pointers: selectors + all matrices (preprocessed + mains)
-                all_columns.extend(
-                    iter::once(sels)
-                        .chain(mats.iter())
-                        .flat_map(|m| {
-                            assert_eq!(m.height(), height);
-                            (0..m.width())
-                                .map(|col| m.buffer().as_ptr().wrapping_add(col * m.height()))
-                        }),
-                );
-                let num_columns = all_columns.len() - col_start;
+                let matrix_offset = all_matrices.len();
+                // Collect per-matrix base pointers: selectors + all matrices (preprocessed + mains)
+                debug_assert_eq!(sels.height(), height);
+                all_matrices.push(InterpMatrixInfo {
+                    base: sels.buffer().as_ptr(),
+                    width: sels.width() as u32,
+                });
+                for m in mats.iter() {
+                    debug_assert_eq!(m.height(), height);
+                    all_matrices.push(InterpMatrixInfo {
+                        base: m.buffer().as_ptr(),
+                        width: m.width() as u32,
+                    });
+                }
+                let num_matrices = 1 + mats.len();
+                let num_columns = sels.width() + mats.iter().map(|m| m.width()).sum::<usize>();
                 let interp_size = sp_deg * num_y * num_columns;
 
                 case_b_traces.push(CaseBMeta {
@@ -1713,7 +1719,8 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     num_y,
                     num_columns,
                     interp_offset: total_interp_elems,
-                    col_start,
+                    matrix_offset,
+                    num_matrices,
                     has_preprocessed,
                     need_rot,
                     has_constraints,
@@ -1733,14 +1740,15 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             // Build descriptors with multi-block-per-trace assignment
             const THREADS_PER_BLOCK: u32 = 512;
             let mut block_offset: u32 = 0;
-            let descs: Vec<InterpColDesc> = case_b_traces
+            let descs: Vec<InterpTraceDescM> = case_b_traces
                 .iter()
                 .map(|meta| {
                     let total_threads = (meta.num_y * meta.num_columns) as u32;
                     let blocks = total_threads.div_ceil(THREADS_PER_BLOCK);
-                    let desc = InterpColDesc {
+                    let desc = InterpTraceDescM {
                         output: unsafe { big_ptr.add(meta.interp_offset) },
-                        columns_offset: meta.col_start as u32,
+                        matrix_offset: meta.matrix_offset as u32,
+                        num_matrices: meta.num_matrices as u32,
                         num_y: meta.num_y as u32,
                         num_columns: meta.num_columns as u32,
                         total_threads,
@@ -1752,11 +1760,16 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 .collect();
             let total_blocks = block_offset as usize;
 
+            let d_matrices = all_matrices.to_device()?;
             let d_descs = descs.to_device()?;
-            let d_all_columns = all_columns.to_device()?;
             unsafe {
-                batched_interpolate_columns_gpu(&d_descs, &d_all_columns, sp_deg, total_blocks)
-                    .map_err(|e| LogupZerocheckError::InterpolateColumns(e.into()))?;
+                batched_interpolate_columns_matrix_gpu(
+                    &d_descs,
+                    &d_matrices,
+                    sp_deg,
+                    total_blocks,
+                )
+                .map_err(|e| LogupZerocheckError::InterpolateColumns(e.into()))?;
             }
 
             Some(big_buf)
