@@ -75,7 +75,8 @@ __global__ void evaluate_interactions_gkr_kernel(
     const uint32_t *__restrict__ d_pair_idxs,
     const size_t used_nodes_len,
     const uint32_t permutation_height,
-    const uint32_t num_rows_per_tile
+    const uint32_t num_rows_per_tile,
+    const uint32_t buffer_size
 ) {
     uint32_t task_offset = blockIdx.x * blockDim.x + threadIdx.x;
     uint32_t task_stride = gridDim.x * blockDim.x;
@@ -83,8 +84,10 @@ __global__ void evaluate_interactions_gkr_kernel(
     FpExt *intermediates_ptr;
     uint32_t intermediate_stride;
     if constexpr (GLOBAL) {
-        intermediates_ptr = (FpExt *)d_intermediates + task_offset;
-        intermediate_stride = task_stride;
+        uint32_t warp_id = task_offset / WARP_SIZE;
+        uint32_t lane_id = task_offset % WARP_SIZE;
+        intermediates_ptr = (FpExt *)d_intermediates + warp_id * buffer_size * WARP_SIZE + lane_id;
+        intermediate_stride = WARP_SIZE;
     } else {
         FpExt intermediates[10];
         intermediates_ptr = intermediates;
@@ -226,7 +229,8 @@ extern "C" int _logup_gkr_input_eval(
     const uint32_t *d_pair_idxs,
     size_t used_nodes_len,
     uint32_t permutation_height,
-    uint32_t num_rows_per_tile
+    uint32_t num_rows_per_tile,
+    uint32_t buffer_size
 ) {
     auto count = is_global ? TASK_SIZE : permutation_height;
     auto [grid, block] = kernel_launch_params(count, 256);
@@ -243,7 +247,8 @@ extern "C" int _logup_gkr_input_eval(
             d_pair_idxs,
             used_nodes_len,
             permutation_height,
-            num_rows_per_tile
+            num_rows_per_tile,
+            buffer_size
         );
     } else {
         evaluate_interactions_gkr_kernel<false><<<grid, block>>>(
@@ -258,7 +263,8 @@ extern "C" int _logup_gkr_input_eval(
             d_pair_idxs,
             used_nodes_len,
             permutation_height,
-            num_rows_per_tile
+            num_rows_per_tile,
+            buffer_size
         );
     }
     return CHECK_KERNEL();

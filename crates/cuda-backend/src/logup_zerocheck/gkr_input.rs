@@ -184,6 +184,7 @@ fn process_gkr_input_air<HS: GpuHashScheme>(
             &rules.d_pair_idxs,
             height as u32,
             num_rows_per_tile as u32,
+            buffer_size as u32,
         )?;
     }
     if height != lifted_height {
