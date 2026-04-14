@@ -60,6 +60,15 @@ pub trait ProverDevice<PB: ProverBackend, TS>:
         + From<<Self as TraceCommitter<PB>>::Error>
         + From<<Self as MultiRapProver<PB, TS>>::Error>
         + From<<Self as OpeningProver<PB, TS>>::Error>;
+
+    /// Drain any pending device operations from prior phases.
+    /// Called before the STARK timing span to ensure accurate measurement.
+    /// Default implementation is a no-op (for CPU backends).
+    fn drain_pending_device_ops(
+        &self,
+    ) -> Result<(), <Self as ProverDevice<PB, TS>>::Error> {
+        Ok(())
+    }
 }
 
 /// Provides functionality for committing to a batch of trace matrices, possibly of different

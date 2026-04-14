@@ -80,6 +80,11 @@ where
     HS::Digest: MerkleProofQueryDigest,
 {
     type Error = ProverError;
+
+    fn drain_pending_device_ops(&self) -> Result<(), ProverError> {
+        openvm_cuda_common::stream::current_stream_sync()
+            .map_err(ProverError::CurrentStreamSync)
+    }
 }
 
 impl<HS: GpuHashScheme, TS: GpuFiatShamirTranscript<HS::SC>>
