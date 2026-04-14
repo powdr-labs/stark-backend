@@ -89,41 +89,23 @@ where
     where
         Self: 'a;
 
-    fn prove<'a>(
-        &'a mut self,
-        mpk: &'a DeviceMultiStarkProvingKey<PB>,
-        unsorted_ctx: ProvingContext<PB>,
-    ) -> Result<Self::Proof, Self::Error> {
-        // Drain pending GPU operations from prior phases (e.g., trace gen)
-        // so the timing span only measures STARK work.
-        let _drain_span = info_span!("prover.drain_pipeline", phase = "prover").entered();
-        self.device.drain_pending_device_ops()?;
-        drop(_drain_span);
-        self.prove_stark(mpk, unsorted_ctx)
-    }
-}
-
-impl<SC, PB, PD, TS> Coordinator<SC, PB, PD, TS>
-where
-    SC: StarkProtocolConfig,
-    PB: ProverBackend<Val = SC::F, Challenge = SC::EF, Commitment = SC::Digest>,
-    PD: ProverDevice<PB, TS>,
-    PD::Artifacts: Into<PD::OpeningPoints>,
-    PD::PartialProof: Into<(GkrProof<SC>, BatchConstraintProof<SC>)>,
-    PD::OpeningProof: Into<(StackingProof<SC>, WhirProof<SC>)>,
-    TS: FiatShamirTranscript<SC>,
-{
+    /// Specialized prove for InteractiveAirs.
+    /// Handles trace generation of the permutation traces.
+    /// Assumes the main traces have been generated and committed already.
+    ///
+    /// The [DeviceMultiStarkProvingKey] should already be filtered to only include the relevant
+    /// AIR's proving keys.
     #[instrument(
         name = "stark_prove_excluding_trace",
         level = "info",
         skip_all,
         fields(phase = "prover")
     )]
-    fn prove_stark<'a>(
+    fn prove<'a>(
         &'a mut self,
         mpk: &'a DeviceMultiStarkProvingKey<PB>,
         unsorted_ctx: ProvingContext<PB>,
-    ) -> Result<Proof<SC>, <PD as ProverDevice<PB, TS>>::Error> {
+    ) -> Result<Self::Proof, Self::Error> {
         let transcript = &mut self.transcript;
         transcript.observe_commit(mpk.vk_pre_hash);
 
