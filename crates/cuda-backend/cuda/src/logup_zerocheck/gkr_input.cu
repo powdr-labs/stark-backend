@@ -1,5 +1,4 @@
 #include "codec.cuh"
-#include "eval_ctx.cuh"
 #include "fp.h"
 #include "fpext.h"
 #include "frac_ext.cuh"
@@ -9,22 +8,6 @@
 #include <cstdint>
 
 namespace logup_gkr_input_evaluation {
-
-using logup_zerocheck_mle::BlockCtx;
-
-struct GkrInputScatterCtx {
-    FracExt *d_fracs;
-    const Fp *d_preprocessed;
-    const uint64_t *d_main;
-    const Fp *d_public_values;
-    const FpExt *d_challenges;
-    const Rule *d_rules;
-    const size_t *d_used_nodes;
-    const uint32_t *d_pair_idxs;
-    size_t used_nodes_len;
-    uint32_t permutation_height;
-    uint32_t num_blocks;
-};
 
 // ============================================================================
 // KERNELS
@@ -278,151 +261,6 @@ extern "C" int _logup_gkr_input_eval(
             num_rows_per_tile
         );
     }
-    return CHECK_KERNEL();
-}
-
-// ============================================================================
-// BATCHED SCATTER KERNEL
-// ============================================================================
-
-__global__ void batched_evaluate_interactions_scatter_kernel(
-    const BlockCtx *__restrict__ d_block_ctxs,
-    const GkrInputScatterCtx *__restrict__ d_air_ctxs
-) {
-    BlockCtx block_ctx = d_block_ctxs[blockIdx.x];
-    GkrInputScatterCtx ctx = d_air_ctxs[block_ctx.air_idx];
-
-    uint32_t local_block = block_ctx.local_block_idx_x;
-    uint32_t task_offset = local_block * blockDim.x + threadIdx.x;
-
-    FpExt intermediates[10];
-    uint32_t intermediate_stride = 1;
-
-    if (task_offset >= ctx.permutation_height) return;
-
-    // SCATTER mode: num_rows_per_tile = 1 (height <= TASK_SIZE)
-    uint32_t row = task_offset;
-
-    uint32_t rules_evaluated = 0;
-    for (uint32_t used_idx = 0; used_idx < ctx.used_nodes_len; used_idx++) {
-        uint32_t node_idx = ctx.d_used_nodes[used_idx];
-        FpExt result(0);
-        if (node_idx < rules_evaluated) {
-            Rule rule = ctx.d_rules[node_idx];
-            RuleHeader header = decode_rule_header(rule);
-            if (header.op == OP_VAR) {
-                result = evaluate_dag_entry_gkr(
-                    header.x,
-                    row,
-                    ctx.d_preprocessed,
-                    ctx.d_main,
-                    ctx.d_public_values,
-                    ctx.d_challenges,
-                    intermediates,
-                    intermediate_stride,
-                    ctx.permutation_height
-                );
-            } else {
-                uint32_t z_index = decode_z_index(rule);
-                result = intermediates[z_index * intermediate_stride];
-            }
-        } else {
-            for (; rules_evaluated <= node_idx; rules_evaluated++) {
-                Rule rule = ctx.d_rules[rules_evaluated];
-                RuleHeader header = decode_rule_header(rule);
-
-                FpExt x = evaluate_dag_entry_gkr(
-                    header.x,
-                    row,
-                    ctx.d_preprocessed,
-                    ctx.d_main,
-                    ctx.d_public_values,
-                    ctx.d_challenges,
-                    intermediates,
-                    intermediate_stride,
-                    ctx.permutation_height
-                );
-                FpExt y;
-
-                switch (header.op) {
-                case OP_ADD:
-                    y = evaluate_dag_entry_gkr(
-                        decode_y(rule),
-                        row,
-                        ctx.d_preprocessed,
-                        ctx.d_main,
-                        ctx.d_public_values,
-                        ctx.d_challenges,
-                        intermediates,
-                        intermediate_stride,
-                        ctx.permutation_height
-                    );
-                    result = x + y;
-                    break;
-                case OP_SUB:
-                    y = evaluate_dag_entry_gkr(
-                        decode_y(rule),
-                        row,
-                        ctx.d_preprocessed,
-                        ctx.d_main,
-                        ctx.d_public_values,
-                        ctx.d_challenges,
-                        intermediates,
-                        intermediate_stride,
-                        ctx.permutation_height
-                    );
-                    result = x - y;
-                    break;
-                case OP_MUL:
-                    y = evaluate_dag_entry_gkr(
-                        decode_y(rule),
-                        row,
-                        ctx.d_preprocessed,
-                        ctx.d_main,
-                        ctx.d_public_values,
-                        ctx.d_challenges,
-                        intermediates,
-                        intermediate_stride,
-                        ctx.permutation_height
-                    );
-                    x *= y;
-                    result = x;
-                    break;
-                case OP_NEG:
-                    result = -x;
-                    break;
-                case OP_VAR:
-                    result = x;
-                    break;
-                default:
-                    assert(0);
-                }
-
-                if (header.buffer_result) {
-                    uint32_t z_index = decode_z_index(rule);
-                    intermediates[z_index * intermediate_stride] = result;
-                }
-            }
-        }
-
-        uint32_t pair_idx = ctx.d_pair_idxs[used_idx];
-        size_t interaction_idx = pair_idx >> 1;
-        size_t out_idx = (interaction_idx * ctx.permutation_height + row) * 2;
-        reinterpret_cast<FpExt *>(ctx.d_fracs)[out_idx + (pair_idx & 1)] = result;
-    }
-}
-
-extern "C" int _batched_gkr_input_eval_scatter(
-    const BlockCtx *d_block_ctxs,
-    const GkrInputScatterCtx *d_air_ctxs,
-    uint32_t num_blocks
-) {
-    if (num_blocks == 0) return 0;
-    dim3 grid(num_blocks);
-    dim3 block(256);
-    batched_evaluate_interactions_scatter_kernel<<<grid, block>>>(
-        d_block_ctxs, d_air_ctxs
-    );
     return CHECK_KERNEL();
 }
 
