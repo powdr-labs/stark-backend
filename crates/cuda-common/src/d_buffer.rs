@@ -15,10 +15,14 @@ extern "C" {
 
 /// Struct that owns a buffer allocated on GPU device. The struct only holds the raw pointer and
 /// length, but this struct has a `Drop` implementation which frees the associated device memory.
+///
+/// When `owns_memory` is false, the buffer is a non-owning view into device memory and will NOT
+/// free the memory on drop. This is used for creating sub-region views into larger buffers.
 #[repr(C)]
 pub struct DeviceBuffer<T> {
     ptr: *mut T,
     len: usize,
+    owns_memory: bool,
 }
 
 /// A struct that packs a pointer with a size in bytes to pass on CUDA.
@@ -43,6 +47,7 @@ impl<T> DeviceBuffer<T> {
         DeviceBuffer {
             ptr: ptr::null_mut(),
             len: 0,
+            owns_memory: true,
         }
     }
 
@@ -53,7 +58,25 @@ impl<T> DeviceBuffer<T> {
     ///   either have been allocated by the internal memory manager (VPMM) or the caller must use
     ///   `ManuallyDrop` to prevent double-free.
     pub unsafe fn from_raw_parts(ptr: *mut T, len: usize) -> Self {
-        DeviceBuffer { ptr, len }
+        DeviceBuffer {
+            ptr,
+            len,
+            owns_memory: true,
+        }
+    }
+
+    /// Creates a non-owning view into device memory. The view will NOT free the memory on drop.
+    ///
+    /// # Safety
+    /// The caller must ensure that:
+    /// - `ptr` points to valid device memory for `len` elements of type `T`
+    /// - The underlying memory remains valid for the lifetime of this buffer
+    pub unsafe fn non_owning(ptr: *mut T, len: usize) -> Self {
+        DeviceBuffer {
+            ptr,
+            len,
+            owns_memory: false,
+        }
     }
 
     /// Allocate device memory for `len` elements of type `T`.
@@ -78,6 +101,7 @@ impl<T> DeviceBuffer<T> {
         DeviceBuffer {
             ptr: typed_ptr,
             len,
+            owns_memory: true,
         }
     }
 
@@ -152,6 +176,7 @@ impl<T> DeviceBuffer<T> {
         let res = DeviceBuffer {
             ptr: self.ptr as *mut U,
             len: self.len * (size_of::<T>() / size_of::<U>()),
+            owns_memory: self.owns_memory,
         };
         self.ptr = ptr::null_mut(); // for safe drop
         self.len = 0;
@@ -168,7 +193,7 @@ impl<T> DeviceBuffer<T> {
 
 impl<T> Drop for DeviceBuffer<T> {
     fn drop(&mut self) {
-        if !self.ptr.is_null() {
+        if self.owns_memory && !self.ptr.is_null() {
             tracing::debug!(
                 "Freeing device buffer of size {} (sizeof type = {})",
                 self.len,

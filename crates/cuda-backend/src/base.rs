@@ -61,6 +61,20 @@ impl<T> DeviceMatrix<T> {
         }
     }
 
+    /// Creates a non-owning view into a sub-region of device memory.
+    /// The view will NOT free the underlying memory on drop.
+    ///
+    /// # Safety
+    /// The caller must ensure `ptr` points to valid device memory for `height * width` elements
+    /// and that the underlying memory outlives this view.
+    pub unsafe fn non_owning_view(ptr: *mut T, height: usize, width: usize) -> Self {
+        Self {
+            buffer: Arc::new(DeviceBuffer::non_owning(ptr, height * width)),
+            height,
+            width,
+        }
+    }
+
     pub fn dummy() -> Self {
         Self {
             buffer: Arc::new(DeviceBuffer::new()),
