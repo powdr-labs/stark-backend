@@ -11,7 +11,6 @@ use std::{
     cmp::max,
     collections::hash_map::Entry,
     iter::{self, zip},
-    mem::size_of,
     sync::Arc,
 };
 
@@ -46,13 +45,14 @@ use rustc_hash::FxHashMap;
 use tracing::{debug, info, info_span, instrument};
 
 use crate::{
-    base::{ArenaMatrix, DeviceMatrix, FoldArena, MatrixRef},
+    base::DeviceMatrix,
     cuda::{
         logup_zerocheck::{
             batched_interpolate_columns_gpu, fold_selectors_round0, InterpColDesc, MainMatrixPtrs,
         },
         sumcheck::batch_fold_mle,
     },
+    data_transporter::transport_matrix_d2h_col_major,
     error::LogupZerocheckError,
     gpu_backend::GenericGpuBackend,
     hash_scheme::GpuHashScheme,
@@ -725,9 +725,8 @@ pub struct LogupZerocheckGpu<'a, HS: GpuHashScheme> {
     // Evaluations on hypercube only, for round 0
     sels_per_trace_base: Vec<DeviceMatrix<F>>,
     // After univariate round 0:
-    mat_evals_per_trace: Vec<Vec<MatrixRef<EF>>>,
-    sels_per_trace: Vec<MatrixRef<EF>>,
-    fold_arena: FoldArena<EF>,
+    mat_evals_per_trace: Vec<Vec<DeviceMatrix<EF>>>,
+    sels_per_trace: Vec<DeviceMatrix<EF>>,
     // Store public_values per trace (similar to CPU's EvalHelper)
     public_values_per_trace: Vec<DeviceBuffer<F>>,
     air_indices_per_trace: Vec<usize>,
@@ -845,7 +844,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             sels_per_trace_base: vec![],
             mat_evals_per_trace: vec![],
             sels_per_trace: vec![],
-            fold_arena: FoldArena::new(),
             public_values_per_trace: ctx
                 .per_trace
                 .iter()
@@ -1429,7 +1427,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             .map(|(air_idx, air_ctx)| {
                 let air_pk = &self.pk.per_air[*air_idx];
                 let need_rot = air_pk.vk.params.need_rot;
-                let mut results: Vec<MatrixRef<EF>> = Vec::new();
+                let mut results: Vec<DeviceMatrix<EF>> = Vec::new();
 
                 // Preprocessed (if exists)
                 if let Some(committed) = &air_pk.preprocessed_data {
@@ -1441,7 +1439,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                         &d_inv_lagrange_denoms_r0,
                         need_rot,
                     )?;
-                    results.push(MatrixRef::Owned(folded));
+                    results.push(folded);
                 }
 
                 // Cached mains
@@ -1454,7 +1452,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                         &d_inv_lagrange_denoms_r0,
                         need_rot,
                     )?;
-                    results.push(MatrixRef::Owned(folded));
+                    results.push(folded);
                 }
 
                 // Common main
@@ -1467,7 +1465,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     need_rot,
                 )?;
                 mem_limit = mem_limit.saturating_sub(folded.buffer().len() * size_of::<EF>());
-                results.push(MatrixRef::Owned(folded));
+                results.push(folded);
 
                 Ok(results)
             })
@@ -1507,11 +1505,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     )
                     .map_err(LogupZerocheckError::FoldSelectorsRound0)?;
                 }
-                Ok(MatrixRef::Owned(DeviceMatrix::new(
-                    Arc::new(folded_buf),
-                    num_x,
-                    3,
-                )))
+                Ok(DeviceMatrix::new(Arc::new(folded_buf), num_x, 3))
             })
             .collect::<Result<Vec<_>, LogupZerocheckError>>()?;
 
@@ -1607,7 +1601,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     // A.1: evaluate directly at (num_x=1, num_y=1)
                     let prep_ptr = if has_preprocessed {
                         MainMatrixPtrs {
-                            data: mats[0].as_ptr(),
+                            data: mats[0].buffer().as_ptr(),
                             air_width: air_width_for_mat(need_rot, mats[0].width()),
                         }
                     } else {
@@ -1619,7 +1613,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     let main_ptrs: Vec<MainMatrixPtrs<EF>> = mats[first_main_idx..]
                         .iter()
                         .map(|m| MainMatrixPtrs {
-                            data: m.as_ptr(),
+                            data: m.buffer().as_ptr(),
                             air_width: air_width_for_mat(need_rot, m.width()),
                         })
                         .collect_vec();
@@ -1634,7 +1628,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                         has_interactions,
                         norm_factor,
                         eq_xi_ptr: eq_xi_tree.get_ptr(0),
-                        sels_ptr: sels.as_ptr(),
+                        sels_ptr: sels.buffer().as_ptr(),
                         prep_ptr,
                         main_ptrs_dev,
                         public_ptr: public_vals.as_ptr(),
@@ -1667,7 +1661,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                         .flat_map(|m| {
                             assert_eq!(m.height(), height);
                             (0..m.width())
-                                .map(|col| m.as_ptr().wrapping_add(col * m.height()))
+                                .map(|col| m.buffer().as_ptr().wrapping_add(col * m.height()))
                         }),
                 );
                 let num_columns = all_columns.len() - col_start;
@@ -2004,88 +1998,56 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
 
     #[instrument(name = "LogupZerocheck::fold_mle_evals", level = "debug", skip_all, fields(round = round))]
     fn fold_mle_evals(&mut self, round: usize, r_round: EF) -> Result<(), LogupZerocheckError> {
-        // Assumes that input_mats are sorted by height.
-        // Uses arena bulk allocation: one cudaMallocAsync per batch_fold call instead of ~1869.
-        let batch_fold =
-            |input_mats: Vec<MatrixRef<EF>>,
-             arena: &mut FoldArena<EF>|
-             -> Result<Vec<MatrixRef<EF>>, LogupZerocheckError> {
-                let num_matrices = input_mats.partition_point(|mat| mat.height() > 1);
-
-                // Compute total output cells and per-matrix metadata
-                let mut total_cells = 0usize;
-                let mut offsets = Vec::with_capacity(num_matrices);
-                let mut log_output_heights = Vec::with_capacity(num_matrices);
-                let mut widths_u32 = Vec::with_capacity(num_matrices);
-                let mut max_output_cells = 0usize;
-
-                for mat in input_mats.iter().take(num_matrices) {
-                    let h = mat.height() >> 1;
-                    let w = mat.width();
-                    let cells = h * w;
-                    offsets.push(total_cells);
-                    total_cells += cells;
-                    max_output_cells = max(max_output_cells, cells);
-                    log_output_heights.push(h.ilog2() as u8);
-                    widths_u32.push(w as u32);
-                }
-
-                if total_cells == 0 {
-                    // All matrices already at height 1
-                    return Ok(input_mats);
-                }
-
-                // ONE allocation instead of ~1869
-                let arena_ptr = arena.allocate_bulk(total_cells);
-
-                // Build output matrices as arena views
-                let output_arena_mats: Vec<ArenaMatrix<EF>> = offsets
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &off)| {
-                        let h = input_mats[i].height() >> 1;
-                        let w = input_mats[i].width();
-                        ArenaMatrix::new(unsafe { arena_ptr.add(off) }, h, w)
-                    })
-                    .collect();
-
-                // Collect pointers for CUDA kernel
-                let input_ptrs: Vec<_> = input_mats
+        // Assumes that input_mats are sorted by height
+        let batch_fold = |input_mats: Vec<DeviceMatrix<EF>>| -> Result<Vec<DeviceMatrix<EF>>, LogupZerocheckError> {
+            let num_matrices = input_mats.partition_point(|mat| mat.height() > 1);
+            let mut max_output_cells = 0;
+            let (log_output_heights, widths, mut output_mats): (Vec<_>, Vec<_>, Vec<_>) =
+                input_mats
                     .iter()
                     .take(num_matrices)
-                    .map(|mat| mat.as_ptr())
-                    .collect();
-                let output_ptrs: Vec<_> =
-                    output_arena_mats.iter().map(|mat| mat.as_mut_ptr()).collect();
+                    .map(|mat| {
+                        let height = mat.height();
+                        let width = mat.width();
+                        let output_height = height >> 1;
+                        max_output_cells = max(max_output_cells, output_height * width);
+                        let output_mat = DeviceMatrix::<EF>::with_capacity(output_height, width);
+                        (output_height.ilog2() as u8, width as u32, output_mat)
+                    })
+                    .multiunzip();
 
-                let d_input_ptrs = input_ptrs.to_device()?;
-                let d_output_ptrs = output_ptrs.to_device()?;
-                let d_log_output_heights = log_output_heights.to_device()?;
-                let d_widths = widths_u32.to_device()?;
+            let input_ptrs = input_mats
+                .iter()
+                .take(num_matrices)
+                .map(|mat| mat.buffer().as_ptr())
+                .collect_vec();
+            let output_ptrs = output_mats
+                .iter()
+                .map(|mat| mat.buffer().as_mut_ptr())
+                .collect_vec();
 
-                unsafe {
-                    batch_fold_mle(
-                        &d_input_ptrs,
-                        &d_output_ptrs,
-                        &d_widths,
-                        num_matrices.try_into().unwrap(),
-                        &d_log_output_heights,
-                        max_output_cells.try_into().unwrap(),
-                        r_round,
-                    )
-                    .map_err(LogupZerocheckError::BatchFoldMle)?;
-                }
+            let d_input_ptrs = input_ptrs.to_device()?;
+            let d_output_ptrs = output_ptrs.to_device()?;
+            let d_log_output_heights = log_output_heights.to_device()?;
+            let d_widths = widths.to_device()?;
 
-                // Build output: arena matrices for folded + carried forward for height-1
-                let mut output_mats: Vec<MatrixRef<EF>> =
-                    output_arena_mats.into_iter().map(MatrixRef::Arena).collect();
-                for mat in &input_mats[num_matrices..] {
-                    output_mats.push(mat.clone());
-                }
-                Ok(output_mats)
-            };
+            unsafe {
+                batch_fold_mle(
+                    &d_input_ptrs,
+                    &d_output_ptrs,
+                    &d_widths,
+                    num_matrices.try_into().unwrap(),
+                    &d_log_output_heights,
+                    max_output_cells.try_into().unwrap(),
+                    r_round,
+                )
+                .map_err(LogupZerocheckError::BatchFoldMle)?;
+            }
+            output_mats.extend_from_slice(&input_mats[num_matrices..]);
+            Ok(output_mats)
+        };
 
-        // Fold mat_evals_per_trace: Vec<Vec<MatrixRef<EF>>>
+        // Fold mat_evals_per_trace: Vec<Vec<DeviceMatrix<EF>>>
         self.mat_evals_per_trace = {
             let lengths = self
                 .mat_evals_per_trace
@@ -2096,7 +2058,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 .into_iter()
                 .flatten()
                 .collect_vec();
-            let mut output_mats = batch_fold(input_mats, &mut self.fold_arena)?.into_iter();
+            let mut output_mats = batch_fold(input_mats)?.into_iter();
             lengths
                 .into_iter()
                 .map(|len| output_mats.by_ref().take(len).collect())
@@ -2107,14 +2069,13 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 self.mat_evals_per_trace
                     .iter()
                     .flatten()
-                    .map(|m| m.buffer_len() * size_of::<EF>())
+                    .map(|m| m.buffer().len() * size_of::<EF>())
                     .sum(),
             );
         }
 
-        // Fold sels_per_trace: Vec<MatrixRef<EF>>
-        self.sels_per_trace =
-            batch_fold(std::mem::take(&mut self.sels_per_trace), &mut self.fold_arena)?;
+        // Fold sels_per_trace: Vec<DeviceMatrix<EF>>
+        self.sels_per_trace = batch_fold(std::mem::take(&mut self.sels_per_trace))?;
 
         for tree in self.eq_xis.values_mut() {
             // trim the back (which corresponds to r_{j-1}) because we don't need it anymore
@@ -2150,10 +2111,9 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             let mut split_mats: Vec<Option<ColMajorMatrix<EF>>> = mat_evals
                 .into_iter()
                 .map(|mat| {
-                    let host_data = mat.to_host()?;
-                    let width = mat.width();
-                    let height = mat.height();
-                    let mat_host = ColMajorMatrix::new(host_data, width);
+                    let mat_host = transport_matrix_d2h_col_major(&mat)?;
+                    let width = mat_host.width();
+                    let height = mat_host.height();
                     debug_assert_eq!(height, 1, "Matrices should have height=1 after folding");
                     let air_width = if need_rot {
                         debug_assert_eq!(
