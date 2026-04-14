@@ -16,9 +16,9 @@ use std::{
 
 use itertools::{izip, Itertools};
 use openvm_cuda_common::{
-    copy::{MemCopyD2H, MemCopyD2HStreamSync, MemCopyH2D},
+    copy::{MemCopyD2H, MemCopyH2D},
     d_buffer::DeviceBuffer,
-    error::MemCopyError,
+    error::{CudaError, MemCopyError},
     memory_manager::MemTracker,
     stream::current_stream_sync,
 };
@@ -58,6 +58,7 @@ use crate::{
     hash_scheme::GpuHashScheme,
     cuda::logup_zerocheck::{
         _logup_r0_intermediates_buffer_size, _logup_r0_temp_sums_buffer_size,
+        _round0_extract_logup_polys, _round0_extract_zerocheck_poly,
         _zerocheck_r0_intermediates_buffer_size, _zerocheck_r0_temp_sums_buffer_size,
     },
     logup_zerocheck::{
@@ -114,12 +115,95 @@ pub(crate) fn air_width_for_mat(need_rot: bool, mat_width: usize) -> u32 {
     }
 }
 
-/// Result of processing one AIR in Round 0.
-struct Round0AirResult {
-    trace_idx: usize,
-    zerocheck_poly: Option<UnivariatePoly<EF>>,
-    logup_numer_poly: Option<UnivariatePoly<EF>>,
-    logup_denom_poly: Option<UnivariatePoly<EF>>,
+/// Pre-computed transformation matrices for GPU-side polynomial extraction in Round 0.
+/// Captures the entire pipeline: transpose + iDFT + unshift + Lagrange interpolation
+/// + coefficient adjustment (for zerocheck only).
+struct Round0ExtractTables {
+    /// Zerocheck: maps eval values to final poly coefficients (with adjustment).
+    /// Row-major [output_size × input_size].
+    zc_transform: DeviceBuffer<EF>,
+    zc_input_size: u32,
+    zc_output_size: u32,
+    /// Logup: maps eval values to poly coefficients (no adjustment).
+    /// Row-major [size × size].
+    logup_transform: DeviceBuffer<EF>,
+    logup_size: u32,
+}
+
+/// Compute transform matrices for a given constraint degree `d` and `l_skip`.
+/// These are pre-computed on the CPU by running the polynomial extraction pipeline
+/// on unit vectors, then uploaded to the GPU.
+fn compute_round0_extract_tables(d: usize, l_skip: usize) -> Result<Round0ExtractTables, MemCopyError> {
+    let skip_domain = 1usize << l_skip;
+    let omega_root = F::two_adic_generator(log2_ceil_usize(d << l_skip));
+
+    // Zerocheck transform: input is (d-1)*skip_domain evals, output is sp_0_deg+1 coefficients
+    let (zc_host, zc_in, zc_out) = {
+        let w = d.saturating_sub(1); // num_cosets_zc
+        if w == 0 {
+            (vec![], 0u32, 0u32)
+        } else {
+            let input_size = w * skip_domain;
+            let output_size = sumcheck_round0_deg(l_skip, d) + 1;
+            let mut transform = vec![EF::ZERO; output_size * input_size];
+            for j in 0..input_size {
+                let src_c = j / skip_domain;
+                let src_i = j % skip_domain;
+                let mut values = EF::zero_vec(input_size);
+                values[src_i * w + src_c] = EF::ONE; // transpose baked in
+                let q = UnivariatePoly::<EF>::from_geometric_cosets_evals_idft(
+                    RowMajorMatrix::new(values, w),
+                    omega_root,
+                    omega_root,
+                );
+                for i in 0..output_size {
+                    let mut c = -*q.coeffs().get(i).unwrap_or(&EF::ZERO);
+                    if i >= skip_domain {
+                        c += q.coeffs()[i - skip_domain];
+                    }
+                    transform[i * input_size + j] = c;
+                }
+            }
+            (transform, input_size as u32, output_size as u32)
+        }
+    };
+
+    // Logup transform: input and output are both d*skip_domain
+    let (logup_host, logup_sz) = {
+        let w = d; // num_cosets_logup
+        let size = w * skip_domain;
+        let mut transform = vec![EF::ZERO; size * size];
+        for j in 0..size {
+            let src_c = j / skip_domain;
+            let src_i = j % skip_domain;
+            let mut values = EF::zero_vec(size);
+            values[src_i * w + src_c] = EF::ONE;
+            let poly = UnivariatePoly::<EF>::from_geometric_cosets_evals_idft(
+                RowMajorMatrix::new(values, w),
+                omega_root,
+                F::ONE,
+            );
+            for i in 0..size {
+                transform[i * size + j] = *poly.coeffs().get(i).unwrap_or(&EF::ZERO);
+            }
+        }
+        (transform, size as u32)
+    };
+
+    let d_zc = if zc_host.is_empty() {
+        DeviceBuffer::new()
+    } else {
+        zc_host.to_device()?
+    };
+    let d_logup = logup_host.to_device()?;
+
+    Ok(Round0ExtractTables {
+        zc_transform: d_zc,
+        zc_input_size: zc_in,
+        zc_output_size: zc_out,
+        logup_transform: d_logup,
+        logup_size: logup_sz,
+    })
 }
 
 /// All read-only references needed to process one AIR in Round 0.
@@ -147,12 +231,20 @@ struct Round0AirWorkItem<'a, HS: GpuHashScheme> {
     logup_intermed_cap: usize,
     /// Pre-computed logup temp sums buffer capacity needed
     logup_temp_sums_cap: usize,
+    /// Offset into the device batch array for this AIR's zerocheck poly
+    zc_batch_offset: usize,
+    /// Offset for logup numerator poly
+    numer_batch_offset: usize,
+    /// Offset for logup denominator poly
+    denom_batch_offset: usize,
 }
 
 fn process_air_round0<HS: GpuHashScheme>(
     w: &Round0AirWorkItem<HS>,
     bufs: &mut round0::Round0ThreadBuffers,
-) -> Result<Round0AirResult, LogupZerocheckError> {
+    d_batch_ptr: *mut EF,
+    extract_tables: &FxHashMap<usize, Round0ExtractTables>,
+) -> Result<(), LogupZerocheckError> {
     let single_pk = w.single_pk;
     let single_air_constraints = SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
     let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
@@ -211,35 +303,25 @@ fn process_air_round0<HS: GpuHashScheme>(
         zc_prealloc_temp,
     )?;
 
-    let zerocheck_poly = if !sum_buffer.is_empty() {
-        let q_evals = sum_buffer.to_host_on_current_stream()?;
-        let q = {
-            let mut values = EF::zero_vec(num_cosets_zc << w.l_skip);
-            for coset_idx in 0..num_cosets_zc {
-                for i in 0..1 << w.l_skip {
-                    values[i * num_cosets_zc + coset_idx] = q_evals[(coset_idx << w.l_skip) + i];
-                }
-            }
-            UnivariatePoly::from_geometric_cosets_evals_idft(
-                RowMajorMatrix::new(values, num_cosets_zc),
-                omega_root,
-                omega_root,
+    // GPU-side polynomial extraction: launch a small kernel to compute
+    // iDFT + Lagrange interpolation + coefficient adjustment on-device,
+    // writing directly into the batch array. No D2H sync needed.
+    if !sum_buffer.is_empty() {
+        let tables = &extract_tables[&local_constraint_deg];
+        let err = unsafe {
+            _round0_extract_zerocheck_poly(
+                d_batch_ptr.add(w.zc_batch_offset),
+                sum_buffer.as_ptr(),
+                tables.zc_transform.as_ptr(),
+                tables.zc_input_size,
+                tables.zc_output_size,
             )
         };
-        let sp_0_deg = sumcheck_round0_deg(w.l_skip, local_constraint_deg);
-        let coeffs = (0..=sp_0_deg)
-            .map(|i| {
-                let mut c = -*q.coeffs().get(i).unwrap_or(&EF::ZERO);
-                if i >= 1 << w.l_skip {
-                    c += q.coeffs()[i - (1 << w.l_skip)];
-                }
-                c
-            })
-            .collect_vec();
-        Some(UnivariatePoly::new(coeffs))
-    } else {
-        None
-    };
+        if err != 0 {
+            return Err(Round0EvalError::Cuda(CudaError::new(err)).into());
+        }
+    }
+    // sum_buffer dropped here; cudaFreeAsync is ordered after the kernel on the same stream
 
     let num_cosets_logup = local_constraint_deg;
 
@@ -278,47 +360,30 @@ fn process_air_round0<HS: GpuHashScheme>(
         logup_prealloc_temp,
     )?;
 
-    let (logup_numer_poly, logup_denom_poly) = if !sum.is_empty() {
-        let evals = sum.to_host_on_current_stream()?;
-        let (mut numer, denom): (Vec<EF>, Vec<EF>) =
-            evals.into_iter().map(|frac| (frac.p, frac.q)).unzip();
-        if w.n.is_negative() {
-            let norm_factor = F::from_u32(1 << w.n.unsigned_abs()).inverse();
-            for s in &mut numer {
-                *s *= norm_factor;
-            }
+    if !sum.is_empty() {
+        let tables = &extract_tables[&local_constraint_deg];
+        let norm_factor: EF = if w.n.is_negative() {
+            EF::from(F::from_u32(1 << w.n.unsigned_abs()).inverse())
+        } else {
+            EF::ONE
+        };
+        let err = unsafe {
+            _round0_extract_logup_polys(
+                d_batch_ptr.add(w.numer_batch_offset),
+                d_batch_ptr.add(w.denom_batch_offset),
+                sum.as_ptr(),
+                tables.logup_transform.as_ptr(),
+                tables.logup_size,
+                tables.logup_size,
+                norm_factor,
+            )
+        };
+        if err != 0 {
+            return Err(Round0EvalError::Cuda(CudaError::new(err)).into());
         }
-        let mut numer_values = EF::zero_vec(num_cosets_logup << w.l_skip);
-        let mut denom_values = EF::zero_vec(num_cosets_logup << w.l_skip);
-        for coset_idx in 0..num_cosets_logup {
-            for i in 0..1 << w.l_skip {
-                let src = (coset_idx << w.l_skip) + i;
-                let dst = i * num_cosets_logup + coset_idx;
-                numer_values[dst] = numer[src];
-                denom_values[dst] = denom[src];
-            }
-        }
-        let numer_poly = UnivariatePoly::from_geometric_cosets_evals_idft(
-            RowMajorMatrix::new(numer_values, num_cosets_logup),
-            omega_root,
-            F::ONE,
-        );
-        let denom_poly = UnivariatePoly::from_geometric_cosets_evals_idft(
-            RowMajorMatrix::new(denom_values, num_cosets_logup),
-            omega_root,
-            F::ONE,
-        );
-        (Some(numer_poly), Some(denom_poly))
-    } else {
-        (None, None)
-    };
+    }
 
-    Ok(Round0AirResult {
-        trace_idx: w.trace_idx,
-        zerocheck_poly,
-        logup_numer_poly,
-        logup_denom_poly,
-    })
+    Ok(())
 }
 
 #[allow(clippy::type_complexity)]
@@ -1028,12 +1093,81 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 zc_temp_sums_cap,
                 logup_intermed_cap,
                 logup_temp_sums_cap,
+                zc_batch_offset: 0,    // set after max_poly_len is computed
+                numer_batch_offset: 0,
+                denom_batch_offset: 0,
             }
         })
         .collect();
 
         // Sort by descending height for better load balance across thread chunks.
         work_items.sort_by(|a, b| b.common_main.height().cmp(&a.common_main.height()));
+
+        // Pre-compute polynomial extraction transform matrices per unique constraint degree.
+        let skip_domain = 1usize << l_skip;
+        let mut extract_tables: FxHashMap<usize, Round0ExtractTables> = FxHashMap::default();
+        for w in &work_items {
+            let d = w.single_pk.vk.max_constraint_degree as usize;
+            if !extract_tables.contains_key(&d) {
+                extract_tables.insert(d, compute_round0_extract_tables(d, l_skip)?);
+            }
+        }
+
+        // Pre-allocate device batch polynomial array.
+        // All polynomial coefficients are written here by GPU extraction kernels,
+        // then copied to host in a single D2H transfer.
+        let max_poly_len = work_items
+            .iter()
+            .map(|w| {
+                let d = w.single_pk.vk.max_constraint_degree as usize;
+                let zc_len = sumcheck_round0_deg(l_skip, d) + 1;
+                let logup_len = d * skip_domain;
+                zc_len.max(logup_len)
+            })
+            .max()
+            .unwrap_or(0);
+
+        let batch_total = 3 * num_present_airs * max_poly_len;
+        let d_batch_array = if batch_total > 0 {
+            let buf = DeviceBuffer::<EF>::with_capacity(batch_total);
+            buf.fill_zero().map_err(MemCopyError::from)?;
+            buf
+        } else {
+            DeviceBuffer::new()
+        };
+
+        // Set per-AIR batch offsets.
+        for w in &mut work_items {
+            w.zc_batch_offset = (2 * num_present_airs + w.trace_idx) * max_poly_len;
+            w.numer_batch_offset = (2 * w.trace_idx) * max_poly_len;
+            w.denom_batch_offset = (2 * w.trace_idx + 1) * max_poly_len;
+        }
+
+        // Track per-AIR polynomial lengths for host-side reconstruction.
+        let poly_lens: Vec<(usize, usize, usize)> = {
+            // Build a map from trace_idx to (zc_len, logup_len)
+            let mut lens = vec![(0usize, 0usize, 0usize); num_present_airs];
+            for w in &work_items {
+                let d = w.single_pk.vk.max_constraint_degree as usize;
+                let has_constraints = d > 1
+                    && !w
+                        .single_pk
+                        .vk
+                        .symbolic_constraints
+                        .constraints
+                        .constraint_idx
+                        .is_empty();
+                let has_interactions = !w.eq_3bs.is_empty();
+                let zc_len = if has_constraints {
+                    sumcheck_round0_deg(l_skip, d) + 1
+                } else {
+                    0
+                };
+                let logup_len = if has_interactions { d * skip_domain } else { 0 };
+                lens[w.trace_idx] = (zc_len, logup_len, logup_len);
+            }
+            lens
+        };
 
         // Pre-compute buffer sizes for pre-allocation using a percentile threshold.
         // Using the max would require enormous buffers (driven by a few large AIRs),
@@ -1130,20 +1264,25 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 .collect()
         };
 
-        let results: Vec<Round0AirResult> = if num_threads <= 1 {
+        // Transmit batch array pointer as usize for thread-safety.
+        // Worker threads write to non-overlapping offsets (by unique trace_idx),
+        // and CUDA guarantees non-overlapping device writes from different streams are safe.
+        let batch_ptr_val = d_batch_array.as_mut_ptr() as usize;
+
+        if num_threads <= 1 {
             let mut bufs = thread_buffers.into_iter().next().unwrap();
-            work_items
-                .iter()
-                .map(|w| process_air_round0(w, &mut bufs))
-                .collect::<Result<Vec<_>, _>>()?
+            for w in &work_items {
+                process_air_round0(w, &mut bufs, batch_ptr_val as *mut EF, &extract_tables)?;
+            }
+            current_stream_sync().map_err(MemCopyError::from)?;
         } else {
             // Interleaved (round-robin) assignment on the height-sorted list.
             // Work items are already sorted by descending height. Round-robin
             // distributes them so each thread gets a balanced mix of large and
             // small AIRs (thread 0 gets items 0, N, 2N, ...; thread 1 gets
             // items 1, N+1, 2N+1, ...). This balances both per-AIR fixed
-            // overhead (kernel launches, D2H copies) and height-proportional
-            // GPU kernel time without needing a calibrated cost model.
+            // overhead (kernel launches) and height-proportional GPU kernel time
+            // without needing a calibrated cost model.
             let mut thread_items: Vec<Vec<usize>> =
                 (0..num_threads).map(|_| Vec::new()).collect();
             for (item_idx, _) in work_items.iter().enumerate() {
@@ -1157,35 +1296,50 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     .enumerate()
                     .map(|(thread_id, (mut bufs, indices))| {
                         let items = &work_items;
-                        s.spawn(move || -> Result<Vec<Round0AirResult>, LogupZerocheckError> {
+                        let tables = &extract_tables;
+                        s.spawn(move || -> Result<(), LogupZerocheckError> {
                             let t0 = std::time::Instant::now();
-                            let results: Vec<_> = indices
-                                .iter()
-                                .map(|&idx| process_air_round0(&items[idx], &mut bufs))
-                                .collect::<Result<_, _>>()?;
+                            let d_batch_ptr = batch_ptr_val as *mut EF;
+                            for &idx in &indices {
+                                process_air_round0(&items[idx], &mut bufs, d_batch_ptr, tables)?;
+                            }
+                            // Sync this thread's stream to ensure all extraction kernels
+                            // complete before the thread exits. Required so the main thread's
+                            // D2H copy sees the final data.
+                            current_stream_sync().map_err(MemCopyError::from)?;
                             tracing::debug!(thread_id, elapsed_ms = t0.elapsed().as_millis(), num_airs = indices.len(), "round0 thread done");
-                            Ok(results)
+                            Ok(())
                         })
                     })
                     .collect();
-                let mut all_results = Vec::with_capacity(work_items.len());
                 for handle in handles {
-                    all_results.extend(handle.join().unwrap()?);
+                    handle.join().unwrap()?;
                 }
-                Ok::<_, LogupZerocheckError>(all_results)
-            })?
-        };
+                Ok::<_, LogupZerocheckError>(())
+            })?;
+        }
 
-        // Phase 3: Scatter results into batch_sp_poly (main thread, pure CPU)
-        for result in results {
-            if let Some(poly) = result.zerocheck_poly {
-                batch_sp_poly[2 * num_present_airs + result.trace_idx] = poly;
+        // Phase 3: Single D2H copy of the batch array, then reconstruct batch_sp_poly.
+        let host_batch = if batch_total > 0 {
+            d_batch_array.to_host()?
+        } else {
+            vec![]
+        };
+        for (trace_idx, &(zc_len, numer_len, denom_len)) in poly_lens.iter().enumerate() {
+            if zc_len > 0 {
+                let offset = (2 * num_present_airs + trace_idx) * max_poly_len;
+                batch_sp_poly[2 * num_present_airs + trace_idx] =
+                    UnivariatePoly::new(host_batch[offset..offset + zc_len].to_vec());
             }
-            if let Some(poly) = result.logup_numer_poly {
-                batch_sp_poly[2 * result.trace_idx] = poly;
+            if numer_len > 0 {
+                let offset = (2 * trace_idx) * max_poly_len;
+                batch_sp_poly[2 * trace_idx] =
+                    UnivariatePoly::new(host_batch[offset..offset + numer_len].to_vec());
             }
-            if let Some(poly) = result.logup_denom_poly {
-                batch_sp_poly[2 * result.trace_idx + 1] = poly;
+            if denom_len > 0 {
+                let offset = (2 * trace_idx + 1) * max_poly_len;
+                batch_sp_poly[2 * trace_idx + 1] =
+                    UnivariatePoly::new(host_batch[offset..offset + denom_len].to_vec());
             }
         }
         self.mem
