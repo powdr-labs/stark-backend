@@ -588,35 +588,6 @@ extern "C" {
         num_airs: u32,
         threads_per_block: u32,
     ) -> i32;
-
-    // Warp-per-trace kernels
-    fn _warp_zerocheck_monomial_batched(
-        output: *mut EF,
-        air_ctxs: *const MonomialAirCtx,
-        trace_ids: *const u32,
-        output_offsets: *const u32,
-        num_traces: u32,
-        num_x: u32,
-    ) -> i32;
-
-    fn _warp_logup_monomial_batched(
-        output: *mut Frac<EF>,
-        common_ctxs: *const LogupMonomialCommonCtx,
-        numer_ctxs: *const LogupMonomialCtx,
-        denom_ctxs: *const LogupMonomialCtx,
-        trace_ids: *const u32,
-        output_offsets: *const u32,
-        num_traces: u32,
-        num_x: u32,
-    ) -> i32;
-
-    fn _scatter_fpext_blocks(
-        dst: *mut EF,
-        src: *const EF,
-        dst_offsets: *const u32,
-        num_items: u32,
-        block_size: u32,
-    ) -> i32;
 }
 
 pub unsafe fn interpolate_columns_gpu(
@@ -1419,80 +1390,6 @@ pub unsafe fn logup_monomial_batched(
         num_x,
         num_airs,
         threads_per_block,
-    ))
-}
-
-pub unsafe fn warp_zerocheck_monomial_batched(
-    output: &mut DeviceBuffer<EF>,
-    air_ctxs: &DeviceBuffer<MonomialAirCtx>,
-    trace_ids: &DeviceBuffer<u32>,
-    output_offsets: &DeviceBuffer<u32>,
-    num_traces: u32,
-    num_x: u32,
-) -> Result<(), CudaError> {
-    CudaError::from_result(_warp_zerocheck_monomial_batched(
-        output.as_mut_ptr(),
-        air_ctxs.as_ptr(),
-        trace_ids.as_ptr(),
-        output_offsets.as_ptr(),
-        num_traces,
-        num_x,
-    ))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub unsafe fn warp_logup_monomial_batched(
-    output: &mut DeviceBuffer<Frac<EF>>,
-    common_ctxs: &DeviceBuffer<LogupMonomialCommonCtx>,
-    numer_ctxs: &DeviceBuffer<LogupMonomialCtx>,
-    denom_ctxs: &DeviceBuffer<LogupMonomialCtx>,
-    trace_ids: &DeviceBuffer<u32>,
-    output_offsets: &DeviceBuffer<u32>,
-    num_traces: u32,
-    num_x: u32,
-) -> Result<(), CudaError> {
-    CudaError::from_result(_warp_logup_monomial_batched(
-        output.as_mut_ptr(),
-        common_ctxs.as_ptr(),
-        numer_ctxs.as_ptr(),
-        denom_ctxs.as_ptr(),
-        trace_ids.as_ptr(),
-        output_offsets.as_ptr(),
-        num_traces,
-        num_x,
-    ))
-}
-
-pub unsafe fn scatter_fpext_blocks(
-    dst: &mut DeviceBuffer<EF>,
-    src: &DeviceBuffer<EF>,
-    dst_offsets: &DeviceBuffer<u32>,
-    num_items: u32,
-    block_size: u32,
-) -> Result<(), CudaError> {
-    CudaError::from_result(_scatter_fpext_blocks(
-        dst.as_mut_ptr(),
-        src.as_ptr(),
-        dst_offsets.as_ptr(),
-        num_items,
-        block_size,
-    ))
-}
-
-/// Scatter-copy FracExt blocks. Reinterprets Frac<EF> as 2×EF.
-pub unsafe fn scatter_frac_blocks(
-    dst: &mut DeviceBuffer<Frac<EF>>,
-    src: &DeviceBuffer<Frac<EF>>,
-    dst_offsets: &DeviceBuffer<u32>,
-    num_items: u32,
-    num_x: u32,
-) -> Result<(), CudaError> {
-    CudaError::from_result(_scatter_fpext_blocks(
-        dst.as_mut_ptr() as *mut EF,
-        src.as_ptr() as *const EF,
-        dst_offsets.as_ptr(),
-        num_items,
-        2 * num_x,
     ))
 }
 
