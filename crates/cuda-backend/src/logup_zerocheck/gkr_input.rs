@@ -17,7 +17,9 @@ use tracing::instrument;
 use super::errors::InteractionGpuError;
 use crate::{
     cuda::logup_zerocheck::{
-        frac_matrix_vertically_repeat, frac_vector_scalar_multiply_ext_fp, logup_gkr_input_eval,
+        batched_gkr_input_eval_scatter, frac_matrix_vertically_repeat,
+        frac_vector_scalar_multiply_ext_fp, logup_gkr_input_eval, BlockCtx,
+        GkrInputScatterCtx,
     },
     gpu_backend::GenericGpuBackend,
     hash_scheme::GpuHashScheme,
@@ -251,7 +253,18 @@ pub fn log_gkr_input_evals<HS: GpuHashScheme>(
 
     work_items.sort_by(|a, b| b.air_ctx.height().cmp(&a.air_ctx.height()));
 
-    // Pre-compute max buffer sizes across all work items.
+    // Partition into SCATTER (buffer_size <= 10) and GLOBAL (buffer_size > 10) indices.
+    let mut scatter_indices: Vec<usize> = Vec::new();
+    let mut global_indices: Vec<usize> = Vec::new();
+    for (i, w) in work_items.iter().enumerate() {
+        if w.pk_air.other_data.interaction_rules.inner.buffer_size > 10 {
+            global_indices.push(i);
+        } else {
+            scatter_indices.push(i);
+        }
+    }
+
+    // Pre-compute max buffer sizes across all work items (needed for single-threaded fallback).
     let mut max_intermediates_len: usize = 1;
     let mut max_public_values_len: usize = 0;
     let mut max_partition_ptrs_len: usize = 0;
@@ -278,33 +291,26 @@ pub fn log_gkr_input_evals<HS: GpuHashScheme>(
         }
     }
 
+    // Compute scatter tmp layout: each lifted AIR gets its own section (non-overlapping).
+    let mut scatter_tmp_offsets: Vec<Option<usize>> = vec![None; scatter_indices.len()];
+    let mut total_scatter_tmp: usize = 0;
+    for (local_idx, &idx) in scatter_indices.iter().enumerate() {
+        let w = &work_items[idx];
+        let height = w.air_ctx.height();
+        let lifted = max(height, 1 << w.l_skip);
+        if height != lifted {
+            let n_int = w.pk_air.vk.symbolic_constraints.interactions.len();
+            scatter_tmp_offsets[local_idx] = Some(total_scatter_tmp);
+            total_scatter_tmp += height * n_int;
+        }
+    }
+
     // Barrier: ensure fill_zero() and all prior GPU work is visible to worker thread streams.
     current_stream_sync().map_err(InteractionGpuError::from)?;
 
-    // Phase 2: Process AIRs in parallel across N OS threads.
-    let mut num_threads = if work_items.len() >= 100 {
-        NUM_GKR_INPUT_STREAMS.min(work_items.len())
-    } else {
-        1
-    };
-
-    // Memory budget check: reduce num_threads if pre-allocation would exceed 2 GB.
-    let per_thread_bytes = max_intermediates_len * std::mem::size_of::<EF>()
-        + max_public_values_len * std::mem::size_of::<F>()
-        + max_partition_ptrs_len * std::mem::size_of::<u64>()
-        + max_tmp_len * std::mem::size_of::<Frac<EF>>();
-    while num_threads > 1 && num_threads * per_thread_bytes > 2_000_000_000 {
-        num_threads /= 2;
-        tracing::warn!(
-            "Reducing GKR input eval thread count to {} due to memory budget ({}MB per thread)",
-            num_threads,
-            per_thread_bytes / (1024 * 1024)
-        );
-    }
-
-    // Pre-allocate per-thread buffer pools to avoid per-AIR mutex contention.
-    let thread_buffers: Vec<GkrThreadBuffers> = (0..num_threads)
-        .map(|_| GkrThreadBuffers {
+    if work_items.len() < 100 {
+        // Single-threaded path: process ALL AIRs (unchanged for APC 0 fallback).
+        let mut bufs = GkrThreadBuffers {
             intermediates: DeviceBuffer::with_capacity(max_intermediates_len),
             public_values: if max_public_values_len > 0 {
                 DeviceBuffer::with_capacity(max_public_values_len)
@@ -317,31 +323,241 @@ pub fn log_gkr_input_evals<HS: GpuHashScheme>(
             } else {
                 DeviceBuffer::new()
             },
-        })
-        .collect();
-
-    if num_threads <= 1 {
-        let mut bufs = thread_buffers.into_iter().next().unwrap();
+        };
         for w in &work_items {
             process_gkr_input_air(w, &mut bufs)?;
         }
     } else {
-        let chunk_size = work_items.len().div_ceil(num_threads);
+        // Multi-threaded path with SCATTER batching.
+        let mut num_global_threads = NUM_GKR_INPUT_STREAMS.min(global_indices.len().max(1));
+
+        // Memory budget check: reduce thread count if pre-allocation would exceed 2 GB.
+        let per_thread_bytes = max_intermediates_len * std::mem::size_of::<EF>()
+            + max_public_values_len * std::mem::size_of::<F>()
+            + max_partition_ptrs_len * std::mem::size_of::<u64>()
+            + max_tmp_len * std::mem::size_of::<Frac<EF>>();
+        while num_global_threads > 1 && num_global_threads * per_thread_bytes > 2_000_000_000 {
+            num_global_threads /= 2;
+            tracing::warn!(
+                "Reducing GKR input eval thread count to {} due to memory budget ({}MB per thread)",
+                num_global_threads,
+                per_thread_bytes / (1024 * 1024)
+            );
+        }
+
+        // Pre-allocate per-thread buffer pools for GLOBAL workers.
+        let thread_buffers: Vec<GkrThreadBuffers> = (0..num_global_threads)
+            .map(|_| GkrThreadBuffers {
+                intermediates: DeviceBuffer::with_capacity(max_intermediates_len),
+                public_values: if max_public_values_len > 0 {
+                    DeviceBuffer::with_capacity(max_public_values_len)
+                } else {
+                    DeviceBuffer::new()
+                },
+                partition_ptrs: DeviceBuffer::with_capacity(max_partition_ptrs_len),
+                tmp: if max_tmp_len > 0 {
+                    DeviceBuffer::with_capacity(max_tmp_len)
+                } else {
+                    DeviceBuffer::new()
+                },
+            })
+            .collect();
+
+        // Allocate scatter tmp buffer for lifted SCATTER AIRs.
+        let d_scatter_tmp = if total_scatter_tmp > 0 {
+            DeviceBuffer::<Frac<EF>>::with_capacity(total_scatter_tmp)
+        } else {
+            DeviceBuffer::<Frac<EF>>::new()
+        };
+
+        let work_items_ref = &work_items;
+        let scatter_indices_ref = &scatter_indices;
+        let scatter_tmp_offsets_ref = &scatter_tmp_offsets;
+        let d_scatter_tmp_ref = &d_scatter_tmp;
+
         std::thread::scope(|s| {
-            let handles: Vec<_> = thread_buffers
+            // Spawn background thread for batched SCATTER processing.
+            let scatter_handle = if !scatter_indices.is_empty() {
+                Some(s.spawn(move || -> Result<(), InteractionGpuError> {
+                    // Step 1: Concatenate host arrays for partition pointers and
+                    // public values.
+                    let mut all_partition_ptrs: Vec<u64> = Vec::new();
+                    let mut all_public_values: Vec<F> = Vec::new();
+                    let mut scatter_partition_offsets: Vec<usize> = Vec::new();
+                    let mut scatter_pv_offsets: Vec<usize> = Vec::new();
+
+                    for &work_idx in scatter_indices_ref {
+                        let w = &work_items_ref[work_idx];
+                        let air_ctx = w.air_ctx;
+
+                        scatter_partition_offsets.push(all_partition_ptrs.len());
+                        for committed in &air_ctx.cached_mains {
+                            all_partition_ptrs
+                                .push(committed.trace.buffer().as_ptr() as u64);
+                        }
+                        all_partition_ptrs
+                            .push(air_ctx.common_main.buffer().as_ptr() as u64);
+
+                        scatter_pv_offsets.push(all_public_values.len());
+                        all_public_values.extend_from_slice(&air_ctx.public_values);
+                    }
+
+                    // 2 bulk H2D uploads (on this thread's per-thread CUDA stream).
+                    let d_all_partition_ptrs = all_partition_ptrs.to_device()?;
+                    let d_all_public_values = if all_public_values.is_empty() {
+                        DeviceBuffer::new()
+                    } else {
+                        all_public_values.to_device()?
+                    };
+
+                    // Step 2: Build BlockCtx and GkrInputScatterCtx arrays.
+                    let mut block_ctxs: Vec<BlockCtx> = Vec::new();
+                    let mut air_ctxs: Vec<GkrInputScatterCtx> = Vec::new();
+
+                    for (air_local_idx, &work_idx) in
+                        scatter_indices_ref.iter().enumerate()
+                    {
+                        let w = &work_items_ref[work_idx];
+                        let air_ctx = w.air_ctx;
+                        let pk_air = w.pk_air;
+                        let height = air_ctx.height() as u32;
+                        let num_air_blocks = height.div_ceil(256);
+                        let rules = &pk_air.other_data.interaction_rules;
+
+                        for local_block in 0..num_air_blocks {
+                            block_ctxs.push(BlockCtx {
+                                local_block_idx_x: local_block,
+                                air_idx: air_local_idx as u32,
+                            });
+                        }
+
+                        let preprocessed_ptr = pk_air
+                            .preprocessed_data
+                            .as_ref()
+                            .map(|c| c.trace.buffer().as_ptr())
+                            .unwrap_or(std::ptr::null());
+
+                        let pv_ptr = if air_ctx.public_values.is_empty() {
+                            std::ptr::null()
+                        } else {
+                            unsafe {
+                                d_all_public_values
+                                    .as_ptr()
+                                    .add(scatter_pv_offsets[air_local_idx])
+                            }
+                        };
+
+                        let fracs_ptr =
+                            if let Some(offset) = scatter_tmp_offsets_ref[air_local_idx]
+                            {
+                                unsafe {
+                                    d_scatter_tmp_ref.as_mut_ptr().add(offset)
+                                }
+                            } else {
+                                w.leaves_ptr.0
+                            };
+
+                        air_ctxs.push(GkrInputScatterCtx {
+                            d_fracs: fracs_ptr,
+                            d_preprocessed: preprocessed_ptr,
+                            d_main: unsafe {
+                                d_all_partition_ptrs
+                                    .as_ptr()
+                                    .add(scatter_partition_offsets[air_local_idx])
+                            },
+                            d_public_values: pv_ptr,
+                            d_challenges: w.d_challenges.as_ptr(),
+                            d_rules: rules.inner.d_rules.as_raw_ptr(),
+                            d_used_nodes: rules.inner.d_used_nodes.as_ptr(),
+                            d_pair_idxs: rules.d_pair_idxs.as_ptr(),
+                            used_nodes_len: rules.inner.d_used_nodes.len(),
+                            permutation_height: height,
+                            num_blocks: num_air_blocks,
+                        });
+                    }
+
+                    let total_scatter_blocks = block_ctxs.len() as u32;
+                    let d_block_ctxs = block_ctxs.to_device()?;
+                    let d_air_ctxs = air_ctxs.to_device()?;
+
+                    // Step 3: Launch batched kernel.
+                    unsafe {
+                        batched_gkr_input_eval_scatter(
+                            &d_block_ctxs,
+                            &d_air_ctxs,
+                            total_scatter_blocks,
+                        )?;
+                    }
+
+                    // Step 4: Sequential lifting for SCATTER AIRs that need it.
+                    for (air_local_idx, &work_idx) in
+                        scatter_indices_ref.iter().enumerate()
+                    {
+                        if let Some(offset) =
+                            scatter_tmp_offsets_ref[air_local_idx]
+                        {
+                            let w = &work_items_ref[work_idx];
+                            let height = w.air_ctx.height();
+                            let lifted_height = max(height, 1 << w.l_skip);
+                            let n_int = w
+                                .pk_air
+                                .vk
+                                .symbolic_constraints
+                                .interactions
+                                .len();
+                            let norm_factor =
+                                F::from_usize(lifted_height / height).inverse();
+                            let tmp_ptr = unsafe {
+                                d_scatter_tmp_ref.as_mut_ptr().add(offset)
+                            };
+                            unsafe {
+                                frac_vector_scalar_multiply_ext_fp(
+                                    tmp_ptr,
+                                    norm_factor,
+                                    (height * n_int) as u32,
+                                )?;
+                                frac_matrix_vertically_repeat(
+                                    w.leaves_ptr.0,
+                                    tmp_ptr as *const _,
+                                    n_int as u32,
+                                    lifted_height as u32,
+                                    height as u32,
+                                )?;
+                            }
+                        }
+                    }
+
+                    current_stream_sync().map_err(InteractionGpuError::from)?;
+                    Ok(())
+                }))
+            } else {
+                None
+            };
+
+            // Spawn GLOBAL worker threads.
+            let global_chunk_size = if global_indices.is_empty() {
+                1
+            } else {
+                global_indices.len().div_ceil(num_global_threads)
+            };
+            let global_handles: Vec<_> = thread_buffers
                 .into_iter()
-                .zip(work_items.chunks(chunk_size))
-                .map(|(mut bufs, chunk)| {
+                .zip(global_indices.chunks(global_chunk_size))
+                .map(|(mut bufs, idx_chunk)| {
                     s.spawn(move || -> Result<(), InteractionGpuError> {
-                        for w in chunk {
-                            process_gkr_input_air(w, &mut bufs)?;
+                        for &idx in idx_chunk {
+                            process_gkr_input_air(&work_items_ref[idx], &mut bufs)?;
                         }
                         current_stream_sync().map_err(InteractionGpuError::from)?;
                         Ok(())
                     })
                 })
                 .collect();
-            for handle in handles {
+
+            for handle in global_handles {
+                handle.join().unwrap()?;
+            }
+            if let Some(handle) = scatter_handle {
                 handle.join().unwrap()?;
             }
             Ok::<_, InteractionGpuError>(())
