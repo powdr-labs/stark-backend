@@ -21,17 +21,14 @@ use crate::{
         logup_zerocheck::{
             _frac_compute_round_temp_buffer_size, fold_ef_frac_columns,
             fold_ef_frac_columns_inplace, frac_build_tree_layer, frac_build_tree_two_layers,
-            frac_compute_round, frac_compute_round_and_fold,
-            frac_compute_round_and_fold_dptr, frac_compute_round_and_fold_inplace,
-            frac_compute_round_and_fold_inplace_dptr, frac_compute_round_and_revert,
-            gkr_round_postprocess, frac_multifold_raw, frac_precompute_m_build_raw,
+            frac_compute_round, frac_compute_round_and_fold, frac_compute_round_and_fold_inplace,
+            frac_compute_round_and_revert, frac_multifold_raw, frac_precompute_m_build_raw,
             frac_precompute_m_eval_round_raw,
         },
         ntt::{bit_rev_frac_ext, bit_rev_frac_ext_build_k2},
     },
     poly::SqrtEqLayers,
     prelude::EF,
-    sponge::DuplexSpongeGpu,
 };
 
 const GKR_S_DEG: usize = 3;
@@ -318,15 +315,19 @@ fn copy_to_device_ptr<T: Copy>(dst: *mut T, src: &[T]) -> Result<(), FractionalS
 
 /// Observes s_evals in transcript, updates accumulators, and returns the sampled challenge.
 #[allow(clippy::too_many_arguments)]
-fn observe_and_update(
+fn observe_and_update<SC, TS>(
     d_sum_evals: &DeviceBuffer<EF>,
-    transcript: &mut DuplexSpongeGpu,
+    transcript: &mut TS,
     round_polys_eval: &mut Vec<[EF; GKR_S_DEG]>,
     r_vec: &mut Vec<EF>,
     prev_s_eval: &mut EF,
     xi_j: EF,
     eq_r_acc: &mut EF,
-) -> Result<EF, FractionalSumcheckError> {
+) -> Result<EF, FractionalSumcheckError>
+where
+    SC: StarkProtocolConfig<EF = EF>,
+    TS: FiatShamirTranscript<SC>,
+{
     let (s_evals, sp_evals) = reconstruct_s_evals(d_sum_evals, *prev_s_eval, xi_j, *eq_r_acc)?;
 
     for &eval in &s_evals {
@@ -348,12 +349,12 @@ fn observe_and_update(
 ///
 /// See `docs/cuda-backend/gkr-prover.md` § "Sumcheck round strategies" for context.
 #[allow(clippy::too_many_arguments)]
-fn do_sumcheck_round_and_revert(
+fn do_sumcheck_round_and_revert<SC, TS>(
     eq_buffer: &mut SqrtEqLayers,
     layer: &mut DeviceBuffer<Frac<EF>>,
     pq_size: usize,
     lambda: EF,
-    transcript: &mut DuplexSpongeGpu,
+    transcript: &mut TS,
     d_sum_evals: &mut DeviceBuffer<EF>,
     tmp_block_sums: &mut DeviceBuffer<EF>,
     round_polys_eval: &mut Vec<[EF; GKR_S_DEG]>,
@@ -361,7 +362,11 @@ fn do_sumcheck_round_and_revert(
     prev_s_eval: &mut EF,
     xi_j: EF,
     eq_r_acc: &mut EF,
-) -> Result<EF, FractionalSumcheckError> {
+) -> Result<EF, FractionalSumcheckError>
+where
+    SC: StarkProtocolConfig<EF = EF>,
+    TS: FiatShamirTranscript<SC>,
+{
     unsafe {
         frac_compute_round_and_revert(
             eq_buffer,
@@ -389,15 +394,15 @@ fn do_sumcheck_round_and_revert(
 ///
 /// This kernel fuses the fold operation (using `r_prev` from the previous round) into the current
 /// round's compute, eliminating one kernel launch and reducing memory traffic.
-#[allow(clippy::too_many_arguments, dead_code)]
-fn do_fused_sumcheck_round(
+#[allow(clippy::too_many_arguments)]
+fn do_fused_sumcheck_round<SC, TS>(
     eq_buffer: &mut SqrtEqLayers,
     src_pq_buffer: &DeviceBuffer<Frac<EF>>,
     dst_pq_buffer: &mut DeviceBuffer<Frac<EF>>,
     src_pq_size: usize,
     lambda: EF,
     r_prev: EF,
-    transcript: &mut DuplexSpongeGpu,
+    transcript: &mut TS,
     d_sum_evals: &mut DeviceBuffer<EF>,
     tmp_block_sums: &mut DeviceBuffer<EF>,
     round_polys_eval: &mut Vec<[EF; GKR_S_DEG]>,
@@ -405,7 +410,11 @@ fn do_fused_sumcheck_round(
     prev_s_eval: &mut EF,
     xi_j: EF,
     eq_r_acc: &mut EF,
-) -> Result<EF, FractionalSumcheckError> {
+) -> Result<EF, FractionalSumcheckError>
+where
+    SC: StarkProtocolConfig<EF = EF>,
+    TS: FiatShamirTranscript<SC>,
+{
     unsafe {
         frac_compute_round_and_fold(
             eq_buffer,
@@ -433,13 +442,13 @@ fn do_fused_sumcheck_round(
 
 /// In-place variant of [`do_fused_sumcheck_round`]. Reads and writes to the same buffer.
 #[allow(clippy::too_many_arguments)]
-fn do_fused_sumcheck_round_inplace(
+fn do_fused_sumcheck_round_inplace<SC, TS>(
     eq_buffer: &mut SqrtEqLayers,
     pq_buffer: &mut DeviceBuffer<Frac<EF>>,
     src_pq_size: usize,
     lambda: EF,
     r_prev: EF,
-    transcript: &mut DuplexSpongeGpu,
+    transcript: &mut TS,
     d_sum_evals: &mut DeviceBuffer<EF>,
     tmp_block_sums: &mut DeviceBuffer<EF>,
     round_polys_eval: &mut Vec<[EF; GKR_S_DEG]>,
@@ -447,7 +456,11 @@ fn do_fused_sumcheck_round_inplace(
     prev_s_eval: &mut EF,
     xi_j: EF,
     eq_r_acc: &mut EF,
-) -> Result<EF, FractionalSumcheckError> {
+) -> Result<EF, FractionalSumcheckError>
+where
+    SC: StarkProtocolConfig<EF = EF>,
+    TS: FiatShamirTranscript<SC>,
+{
     unsafe {
         frac_compute_round_and_fold_inplace(
             eq_buffer,
@@ -474,12 +487,9 @@ fn do_fused_sumcheck_round_inplace(
 
 /// GKR fractional sumcheck prover. See `docs/cuda-backend/gkr-prover.md` (repo root) for the
 /// protocol and implementation details.
-///
-/// Specialized to `DuplexSpongeGpu` transcript to enable GPU-side transcript processing
-/// in the FoldEval inner loop (eliminates per-round CPU-GPU roundtrips).
 #[instrument(skip_all)]
-pub fn fractional_sumcheck_gpu<SC>(
-    transcript: &mut DuplexSpongeGpu,
+pub fn fractional_sumcheck_gpu<SC, TS>(
+    transcript: &mut TS,
     leaves: DeviceBuffer<Frac<EF>>,
     alpha: EF,
     assert_zero: bool,
@@ -487,6 +497,7 @@ pub fn fractional_sumcheck_gpu<SC>(
 ) -> Result<(FracSumcheckProof<SC>, Vec<EF>), FractionalSumcheckError>
 where
     SC: StarkProtocolConfig<EF = EF>,
+    TS: FiatShamirTranscript<SC>,
 {
     let mut layer = leaves;
     if layer.is_empty() {
@@ -705,186 +716,82 @@ where
 
         match backend {
             GkrRoundStrategy::FoldEval => {
-                // GPU-accelerated FoldEval path: after round 0 (CPU), run all inner
-                // rounds' postprocessing on GPU to eliminate per-round D2H roundtrips.
-                let inner_count = xi_prev.len() - 1; // number of FoldEval inner rounds
+                // Existing fused path.
+                let mut scheduler = BufferScheduler::new(max_work_size);
+                for &xi_j in xi_prev.iter().skip(1) {
+                    let src_pq_size = pq_size;
+                    let post_fold_size = pq_size >> 1;
 
-                if inner_count > 0 {
-                    // Allocate GPU buffers for inner round results
-                    let d_challenges = DeviceBuffer::<EF>::with_capacity(inner_count);
-                    let d_s_evals = DeviceBuffer::<EF>::with_capacity(inner_count * GKR_S_DEG);
-                    let mut d_prev_s_eval_buf = DeviceBuffer::<EF>::with_capacity(1);
-                    let mut d_eq_r_acc_buf = DeviceBuffer::<EF>::with_capacity(1);
+                    let r = match scheduler.next_target(post_fold_size, last_outer_round) {
+                        BufferTarget::LayerToWork => do_fused_sumcheck_round(
+                            &mut eq_buffer,
+                            &layer,
+                            &mut work_buffer,
+                            src_pq_size,
+                            lambda,
+                            prev_r,
+                            transcript,
+                            &mut d_sum_evals,
+                            &mut tmp_block_sums,
+                            &mut round_polys_eval,
+                            &mut r_vec,
+                            &mut prev_s_eval,
+                            xi_j,
+                            &mut eq_r_acc,
+                        )?,
+                        BufferTarget::WorkToLayer => do_fused_sumcheck_round(
+                            &mut eq_buffer,
+                            &work_buffer,
+                            &mut layer,
+                            src_pq_size,
+                            lambda,
+                            prev_r,
+                            transcript,
+                            &mut d_sum_evals,
+                            &mut tmp_block_sums,
+                            &mut round_polys_eval,
+                            &mut r_vec,
+                            &mut prev_s_eval,
+                            xi_j,
+                            &mut eq_r_acc,
+                        )?,
+                        BufferTarget::InPlaceLayer => do_fused_sumcheck_round_inplace(
+                            &mut eq_buffer,
+                            &mut layer,
+                            src_pq_size,
+                            lambda,
+                            prev_r,
+                            transcript,
+                            &mut d_sum_evals,
+                            &mut tmp_block_sums,
+                            &mut round_polys_eval,
+                            &mut r_vec,
+                            &mut prev_s_eval,
+                            xi_j,
+                            &mut eq_r_acc,
+                        )?,
+                        BufferTarget::InPlaceWork => do_fused_sumcheck_round_inplace(
+                            &mut eq_buffer,
+                            &mut work_buffer,
+                            src_pq_size,
+                            lambda,
+                            prev_r,
+                            transcript,
+                            &mut d_sum_evals,
+                            &mut tmp_block_sums,
+                            &mut round_polys_eval,
+                            &mut r_vec,
+                            &mut prev_s_eval,
+                            xi_j,
+                            &mut eq_r_acc,
+                        )?,
+                    };
 
-                    // Upload sponge state AFTER round 0 observe_and_update
-                    transcript.sync_h2d()?;
-                    let sponge_ptr = transcript
-                        .device_ptr_mut()
-                        .expect("device sponge allocated after sync_h2d");
-
-                    // Upload current accumulators
-                    copy_to_device_ptr(d_prev_s_eval_buf.as_mut_ptr(), &[prev_s_eval])?;
-                    copy_to_device_ptr(d_eq_r_acc_buf.as_mut_ptr(), &[eq_r_acc])?;
-
-                    let mut scheduler = BufferScheduler::new(max_work_size);
-                    let mut challenge_idx = 0usize;
-
-                    for &xi_j in xi_prev.iter().skip(1) {
-                        let src_pq_size = pq_size;
-                        let post_fold_size = pq_size >> 1;
-
-                        // Launch compute kernel. First inner round uses r0 (scalar);
-                        // subsequent rounds read r_prev from device pointer.
-                        match scheduler.next_target(post_fold_size, last_outer_round) {
-                            BufferTarget::LayerToWork => {
-                                if challenge_idx == 0 {
-                                    unsafe {
-                                        frac_compute_round_and_fold(
-                                            &eq_buffer, &layer, &mut work_buffer,
-                                            src_pq_size, lambda, prev_r,
-                                            &mut d_sum_evals, &mut tmp_block_sums,
-                                        ).map_err(FractionalSumcheckError::ComputeRound)?;
-                                    }
-                                } else {
-                                    unsafe {
-                                        frac_compute_round_and_fold_dptr(
-                                            &eq_buffer, &layer, &mut work_buffer,
-                                            src_pq_size, lambda,
-                                            d_challenges.as_ptr().add(challenge_idx - 1),
-                                            &mut d_sum_evals, &mut tmp_block_sums,
-                                        ).map_err(FractionalSumcheckError::ComputeRound)?;
-                                    }
-                                }
-                            }
-                            BufferTarget::WorkToLayer => {
-                                if challenge_idx == 0 {
-                                    unsafe {
-                                        frac_compute_round_and_fold(
-                                            &eq_buffer, &work_buffer, &mut layer,
-                                            src_pq_size, lambda, prev_r,
-                                            &mut d_sum_evals, &mut tmp_block_sums,
-                                        ).map_err(FractionalSumcheckError::ComputeRound)?;
-                                    }
-                                } else {
-                                    unsafe {
-                                        frac_compute_round_and_fold_dptr(
-                                            &eq_buffer, &work_buffer, &mut layer,
-                                            src_pq_size, lambda,
-                                            d_challenges.as_ptr().add(challenge_idx - 1),
-                                            &mut d_sum_evals, &mut tmp_block_sums,
-                                        ).map_err(FractionalSumcheckError::ComputeRound)?;
-                                    }
-                                }
-                            }
-                            BufferTarget::InPlaceLayer => {
-                                if challenge_idx == 0 {
-                                    unsafe {
-                                        frac_compute_round_and_fold_inplace(
-                                            &eq_buffer, &mut layer,
-                                            src_pq_size, lambda, prev_r,
-                                            &mut d_sum_evals, &mut tmp_block_sums,
-                                        ).map_err(FractionalSumcheckError::ComputeRound)?;
-                                    }
-                                } else {
-                                    unsafe {
-                                        frac_compute_round_and_fold_inplace_dptr(
-                                            &eq_buffer, &mut layer,
-                                            src_pq_size, lambda,
-                                            d_challenges.as_ptr().add(challenge_idx - 1),
-                                            &mut d_sum_evals, &mut tmp_block_sums,
-                                        ).map_err(FractionalSumcheckError::ComputeRound)?;
-                                    }
-                                }
-                            }
-                            BufferTarget::InPlaceWork => {
-                                if challenge_idx == 0 {
-                                    unsafe {
-                                        frac_compute_round_and_fold_inplace(
-                                            &eq_buffer, &mut work_buffer,
-                                            src_pq_size, lambda, prev_r,
-                                            &mut d_sum_evals, &mut tmp_block_sums,
-                                        ).map_err(FractionalSumcheckError::ComputeRound)?;
-                                    }
-                                } else {
-                                    unsafe {
-                                        frac_compute_round_and_fold_inplace_dptr(
-                                            &eq_buffer, &mut work_buffer,
-                                            src_pq_size, lambda,
-                                            d_challenges.as_ptr().add(challenge_idx - 1),
-                                            &mut d_sum_evals, &mut tmp_block_sums,
-                                        ).map_err(FractionalSumcheckError::ComputeRound)?;
-                                    }
-                                }
-                            }
-                        }
-                        eq_buffer.drop_layer();
-
-                        // GPU postprocess: reconstruct s_evals, observe/sample, update accumulators
-                        unsafe {
-                            gkr_round_postprocess(
-                                d_sum_evals.as_ptr(),
-                                sponge_ptr,
-                                d_prev_s_eval_buf.as_mut_ptr(),
-                                d_eq_r_acc_buf.as_mut_ptr(),
-                                xi_j,
-                                d_challenges.as_ptr().add(challenge_idx) as *mut EF,
-                                d_s_evals.as_ptr().add(challenge_idx * GKR_S_DEG) as *mut EF,
-                            )
-                            .map_err(FractionalSumcheckError::ComputeRound)?;
-                        }
-
-                        pq_size >>= 1;
-                        challenge_idx += 1;
-                    }
-
-                    // D2H: retrieve all inner round results and replay on CPU transcript
-                    let gpu_s_evals = d_s_evals.to_host()?;
-                    let gpu_challenges = d_challenges.to_host()?;
-                    let new_eq_r_acc = d_eq_r_acc_buf.to_host()?;
-                    let new_prev_s_eval = d_prev_s_eval_buf.to_host()?;
-
-                    for i in 0..challenge_idx {
-                        let s = &gpu_s_evals[i * GKR_S_DEG..(i + 1) * GKR_S_DEG];
-                        for &eval in s {
-                            transcript.observe_ext(eval);
-                        }
-                        let r_cpu = transcript.sample_ext();
-                        debug_assert_eq!(
-                            r_cpu, gpu_challenges[i],
-                            "GPU/CPU sponge mismatch at FoldEval inner round {i}"
-                        );
-                        round_polys_eval
-                            .push([s[0], s[1], s[2]]);
-                        r_vec.push(gpu_challenges[i]);
-                    }
-                    eq_r_acc = new_eq_r_acc[0];
-                    prev_s_eval = new_prev_s_eval[0];
-                    prev_r = gpu_challenges[challenge_idx - 1];
+                    pq_size >>= 1;
+                    prev_r = r;
                 }
 
                 // Final fold after last r (no next compute to fuse with).
-                let mut scheduler = BufferScheduler::new(max_work_size);
-                // Replay scheduler decisions to find final fold target
-                for _ in xi_prev.iter().skip(1) {
-                    let post_fold_size = pq_size; // pq_size was already halved in the loop above
-                    // Advance the scheduler by replaying the same decisions.
-                    // Note: pq_size was already halved inside the GPU loop, so
-                    // post_fold_size here is the same as what was passed to scheduler
-                    // inside the loop. But we need to use the original sizes...
-                    // Actually, we need a separate scheduler tracking.
-                    let _ = scheduler.next_target(post_fold_size, last_outer_round);
-                }
-                // The above replay doesn't work because pq_size was modified.
-                // Let me use a simpler approach: recompute from scratch.
-                drop(scheduler);
-                let mut scheduler = BufferScheduler::new(max_work_size);
-                let mut replay_pq_size = 2 << round;
-                for _ in xi_prev.iter().skip(1) {
-                    let post_fold_size = replay_pq_size >> 1;
-                    let _ = scheduler.next_target(post_fold_size, last_outer_round);
-                    replay_pq_size >>= 1;
-                }
-
                 active = match scheduler.final_fold_target(last_outer_round) {
                     BufferTarget::InPlaceWork => {
                         unsafe {

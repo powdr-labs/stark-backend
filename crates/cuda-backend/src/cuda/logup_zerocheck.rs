@@ -2,7 +2,6 @@ use super::*;
 use crate::{
     monomial::{InteractionMonomialTerm, LambdaTerm, MonomialHeader, PackedVar},
     poly::SqrtEqLayers,
-    sponge::DeviceSpongeState,
 };
 
 #[repr(C)]
@@ -191,33 +190,6 @@ extern "C" {
         tmp_block_sums: *mut EF,
     ) -> i32;
 
-    /// Device-pointer variant of frac_compute_round_and_fold: reads r_prev from device memory.
-    fn _frac_compute_round_and_fold_dptr(
-        eq_xi_low: *const EF,
-        eq_xi_high: *const EF,
-        src_pq_buffer: *const Frac<EF>,
-        dst_pq_buffer: *mut Frac<EF>,
-        src_pq_size: usize,
-        eq_low_cap: usize,
-        lambda: EF,
-        d_r_prev: *const EF,
-        out_device: *mut EF,
-        tmp_block_sums: *mut EF,
-    ) -> i32;
-
-    /// Device-pointer variant of frac_compute_round_and_fold_inplace.
-    fn _frac_compute_round_and_fold_inplace_dptr(
-        eq_xi_low: *const EF,
-        eq_xi_high: *const EF,
-        pq_buffer: *mut Frac<EF>,
-        src_pq_size: usize,
-        eq_low_cap: usize,
-        lambda: EF,
-        d_r_prev: *const EF,
-        out_device: *mut EF,
-        tmp_block_sums: *mut EF,
-    ) -> i32;
-
     fn _frac_precompute_m_build(
         pq: *const Frac<EF>,
         rem_n: usize,
@@ -254,17 +226,6 @@ extern "C" {
     fn _frac_add_alpha(data: *mut std::ffi::c_void, len: usize, alpha: EF) -> i32;
 
     fn _frac_vector_scalar_multiply_ext_fp(frac_vec: *mut Frac<EF>, scalar: F, length: u32) -> i32;
-
-    // gkr_postprocess.cu
-    fn _gkr_round_postprocess(
-        d_sum_evals: *const EF,
-        sponge: *mut DeviceSpongeState,
-        d_prev_s_eval: *mut EF,
-        d_eq_r_acc: *mut EF,
-        xi_j: EF,
-        d_challenge_out: *mut EF,
-        d_s_evals_out: *mut EF,
-    ) -> i32;
 
     // utils.cu
     fn _fold_ple_from_evals(
@@ -872,89 +833,6 @@ pub unsafe fn frac_compute_round_and_fold_inplace(
         r_prev,
         out_device.as_mut_ptr(),
         tmp_block_sums.as_mut_ptr(),
-    ))
-}
-
-/// Device-pointer variant of [`frac_compute_round_and_fold`]: reads `r_prev` from a device
-/// pointer instead of a scalar argument. Used in the GPU-side transcript processing path to
-/// avoid D2H roundtrips for the challenge between rounds.
-#[allow(clippy::too_many_arguments)]
-pub unsafe fn frac_compute_round_and_fold_dptr(
-    eq_xi: &SqrtEqLayers,
-    src_pq_buffer: &DeviceBuffer<Frac<EF>>,
-    dst_pq_buffer: &mut DeviceBuffer<Frac<EF>>,
-    src_pq_size: usize,
-    lambda: EF,
-    d_r_prev: *const EF,
-    out_device: &mut DeviceBuffer<EF>,
-    tmp_block_sums: &mut DeviceBuffer<EF>,
-) -> Result<(), CudaError> {
-    let low_n = eq_xi.low_n();
-    let high_n = eq_xi.high_n();
-    let num_x = src_pq_size >> 2;
-    debug_assert_eq!(2 << (low_n + high_n), num_x);
-    CudaError::from_result(_frac_compute_round_and_fold_dptr(
-        eq_xi.low.get_ptr(low_n),
-        eq_xi.high.get_ptr(high_n),
-        src_pq_buffer.as_ptr(),
-        dst_pq_buffer.as_mut_ptr(),
-        src_pq_size,
-        1 << low_n,
-        lambda,
-        d_r_prev,
-        out_device.as_mut_ptr(),
-        tmp_block_sums.as_mut_ptr(),
-    ))
-}
-
-/// Device-pointer variant of [`frac_compute_round_and_fold_inplace`].
-#[allow(clippy::too_many_arguments)]
-pub unsafe fn frac_compute_round_and_fold_inplace_dptr(
-    eq_xi: &SqrtEqLayers,
-    pq_buffer: &mut DeviceBuffer<Frac<EF>>,
-    src_pq_size: usize,
-    lambda: EF,
-    d_r_prev: *const EF,
-    out_device: &mut DeviceBuffer<EF>,
-    tmp_block_sums: &mut DeviceBuffer<EF>,
-) -> Result<(), CudaError> {
-    let low_n = eq_xi.low_n();
-    let high_n = eq_xi.high_n();
-    let num_x = src_pq_size >> 2;
-    debug_assert_eq!(2 << (low_n + high_n), num_x);
-    CudaError::from_result(_frac_compute_round_and_fold_inplace_dptr(
-        eq_xi.low.get_ptr(low_n),
-        eq_xi.high.get_ptr(high_n),
-        pq_buffer.as_mut_ptr(),
-        src_pq_size,
-        1 << low_n,
-        lambda,
-        d_r_prev,
-        out_device.as_mut_ptr(),
-        tmp_block_sums.as_mut_ptr(),
-    ))
-}
-
-/// GPU-side GKR round postprocessing: reconstruct s_evals, observe/sample in GPU sponge,
-/// update accumulators. Replaces per-round D2H + CPU observe_and_update.
-#[allow(clippy::too_many_arguments)]
-pub unsafe fn gkr_round_postprocess(
-    d_sum_evals: *const EF,
-    sponge: *mut DeviceSpongeState,
-    d_prev_s_eval: *mut EF,
-    d_eq_r_acc: *mut EF,
-    xi_j: EF,
-    d_challenge_out: *mut EF,
-    d_s_evals_out: *mut EF,
-) -> Result<(), CudaError> {
-    CudaError::from_result(_gkr_round_postprocess(
-        d_sum_evals,
-        sponge,
-        d_prev_s_eval,
-        d_eq_r_acc,
-        xi_j,
-        d_challenge_out,
-        d_s_evals_out,
     ))
 }
 
