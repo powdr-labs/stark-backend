@@ -54,8 +54,6 @@ pub enum StackedReductionError {
     FoldMle(CudaError),
     #[error("triangular_fold_mle: {0}")]
     TriangularFoldMle(CudaError),
-    #[error("current_stream_sync: {0}")]
-    CurrentStreamSync(CudaError),
 }
 
 #[derive(Error, Debug)]
