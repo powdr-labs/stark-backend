@@ -29,27 +29,10 @@ pub struct AirDataGpu {
     pub zerocheck_mle: ConstraintOnlyRules<false>,
     pub zerocheck_monomials: Option<ZerocheckMonomials>,
     pub interaction_monomials: Option<InteractionMonomials>,
-    /// Pre-computed logup Round 0 interaction evaluation rules.
-    /// Stores encoded rules on device and a weight mapping so the hot path
-    /// only needs to compute challenge-dependent weights.
-    pub logup_round0: Option<LogupRound0Rules>,
-}
-
-/// Pre-computed logup Round 0 interaction evaluation rules.
-pub struct LogupRound0Rules {
-    pub(crate) inner: EvalRules,
-    /// For each interaction: maps to rule indices for weight computation.
-    pub(crate) weight_map: Vec<InteractionWeightEntry>,
-    /// Number of rules (length of numer_weights/denom_weights arrays).
-    pub(crate) num_rules: usize,
-}
-
-/// Maps one interaction to its rule indices for weight computation.
-pub struct InteractionWeightEntry {
-    pub count_rule_idx: usize,
-    pub message_rule_indices: Vec<usize>,
-    /// Bus index for this interaction.
-    pub bus_index: u32,
+    /// Buffer size for the logup round0 interaction evaluation DAG.
+    /// Pre-computed at keygen time so Round 0 work item preparation can
+    /// determine per-AIR buffer sizes without rebuilding the DAG.
+    pub logup_round0_buffer_size: u32,
 }
 
 /// Used for GKR input evaluation and logup MLE sumcheck rounds.
@@ -127,11 +110,10 @@ impl AirDataGpu {
             None
         };
 
-        // Pre-compute the logup round0 interaction evaluation rules.
+        // Pre-compute the logup round0 buffer_size from the interaction DAG.
         // This mirrors the DAG construction in evaluate_round0_interactions_gpu
-        // but keeps the full rules and weight mapping so the hot path can skip
-        // all DAG reconstruction.
-        let logup_round0 = if !symbolic_constraints.interactions.is_empty() {
+        // but only extracts the buffer_size (no weights or device uploads needed).
+        let logup_round0_buffer_size = if !symbolic_constraints.interactions.is_empty() {
             let mut dag_builder = SymbolicDagBuilder::new();
             let mut sorted_used_dag_idxs = Vec::new();
             for interaction in &symbolic_constraints.interactions {
@@ -151,53 +133,12 @@ impl AirDataGpu {
                 constraint_idx: sorted_used_dag_idxs,
             };
             let rules = SymbolicRulesGpu::new(&dag, true);
-
-            // Build weight mapping: interaction -> rule indices
-            // NOTE: dag_builder.expr_to_idx pointers reference into symbolic_constraints.interactions
-            // which is still alive in this scope (not moved).
-            let weight_map: Vec<InteractionWeightEntry> = symbolic_constraints
-                .interactions
-                .iter()
-                .map(|interaction| {
-                    let count_dag_idx = dag_builder.expr_to_idx
-                        [&(&interaction.count as *const SymbolicExpression<_>)];
-                    let count_rule_idx = rules.dag_idx_to_rule_idx[&count_dag_idx];
-                    let message_rule_indices: Vec<usize> = interaction
-                        .message
-                        .iter()
-                        .map(|msg| {
-                            let msg_dag_idx = dag_builder.expr_to_idx
-                                [&(msg as *const SymbolicExpression<_>)];
-                            rules.dag_idx_to_rule_idx[&msg_dag_idx]
-                        })
-                        .collect();
-                    InteractionWeightEntry {
-                        count_rule_idx,
-                        message_rule_indices,
-                        bus_index: interaction.bus_index as u32,
-                    }
-                })
-                .collect();
-
-            let num_rules = rules.rules.len();
-            let encoded_rules = rules.rules.iter().map(|c| c.encode()).collect_vec();
-            let d_rules = encoded_rules.to_device()?;
-            let d_used_nodes = DeviceBuffer::new();
-
-            Some(LogupRound0Rules {
-                inner: EvalRules {
-                    d_rules,
-                    d_used_nodes,
-                    buffer_size: rules
-                        .buffer_size
-                        .try_into()
-                        .expect("logup round0 buffer_size exceeds u32"),
-                },
-                weight_map,
-                num_rules,
-            })
+            rules
+                .buffer_size
+                .try_into()
+                .expect("logup round0 buffer_size exceeds u32")
         } else {
-            None
+            0
         };
 
         Ok(Self {
@@ -206,7 +147,7 @@ impl AirDataGpu {
             zerocheck_mle,
             zerocheck_monomials,
             interaction_monomials,
-            logup_round0,
+            logup_round0_buffer_size,
         })
     }
 }
