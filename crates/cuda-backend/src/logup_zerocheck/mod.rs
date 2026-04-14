@@ -942,38 +942,6 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 }
             })
             .collect_vec();
-        self.d_eq_3b_per_trace = self
-            .eq_3b_per_trace
-            .iter()
-            .map(|eq_3bs| {
-                if eq_3bs.is_empty() {
-                    Ok(DeviceBuffer::new())
-                } else {
-                    eq_3bs.to_device()
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // Precompute logup combinations for all traces with interaction monomials
-        for (trace_idx, (air_idx, _)) in ctx.per_trace.iter().enumerate() {
-            let air_pk = &self.pk.per_air[*air_idx];
-            if air_pk.other_data.interaction_monomials.is_some()
-                && !self.eq_3b_per_trace[trace_idx].is_empty()
-            {
-                self.logup_combinations[trace_idx] = Some(
-                    compute_logup_combinations(
-                        self.pk,
-                        *air_idx,
-                        &self.d_beta_pows,
-                        &self.d_eq_3b_per_trace[trace_idx],
-                        &self.eq_3b_per_trace[trace_idx],
-                        &self.beta_pows,
-                    )
-                    .map_err(LogupZerocheckError::LogupCombinations)?,
-                );
-            }
-        }
-
         // PERF[jpw]: we could also build the layers for different n in a transposed way using
         // eq_nonoverlapping_stage_ext, which is more memory efficient
         for &n in &self.n_per_trace {
@@ -1270,6 +1238,39 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         let batch_ptr_val = d_batch_array.as_mut_ptr() as usize;
 
         if num_threads <= 1 {
+            // Single-threaded path: run d_eq_3b upload + logup precompute sequentially,
+            // then process Round 0 AIRs. No overlap benefit here since few large AIRs
+            // already saturate the GPU.
+            self.d_eq_3b_per_trace = self
+                .eq_3b_per_trace
+                .iter()
+                .map(|eq_3bs| {
+                    if eq_3bs.is_empty() {
+                        Ok(DeviceBuffer::new())
+                    } else {
+                        eq_3bs.to_device()
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            for (trace_idx, (air_idx, _)) in ctx.per_trace.iter().enumerate() {
+                let air_pk = &self.pk.per_air[*air_idx];
+                if air_pk.other_data.interaction_monomials.is_some()
+                    && !self.eq_3b_per_trace[trace_idx].is_empty()
+                {
+                    self.logup_combinations[trace_idx] = Some(
+                        compute_logup_combinations(
+                            self.pk,
+                            *air_idx,
+                            &self.d_beta_pows,
+                            &self.d_eq_3b_per_trace[trace_idx],
+                            &self.eq_3b_per_trace[trace_idx],
+                            &self.beta_pows,
+                        )
+                        .map_err(LogupZerocheckError::LogupCombinations)?,
+                    );
+                }
+            }
+
             let mut bufs = thread_buffers.into_iter().next().unwrap();
             for w in &work_items {
                 process_air_round0(w, &mut bufs, batch_ptr_val as *mut EF, &extract_tables)?;
@@ -1289,7 +1290,58 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 thread_items[item_idx % num_threads].push(item_idx);
             }
 
-            std::thread::scope(|s| {
+            // Capture shared references for the background precompute thread.
+            // All are immutable borrows that coexist with Round 0 work item borrows.
+            let pk_ref = self.pk;
+            let eq_3b_ref = &self.eq_3b_per_trace;
+            let d_beta_pows_ref = &self.d_beta_pows;
+            let beta_pows_ref = &self.beta_pows;
+            let per_trace_ref = &ctx.per_trace;
+
+            let precompute_result = std::thread::scope(|s| {
+                // Background thread: upload d_eq_3b + precompute logup combinations.
+                // These are only consumed during MLE rounds, not by Round 0, so they
+                // can run concurrently on the background thread's cudaStreamPerThread.
+                let precompute_handle = s.spawn(|| -> Result<(Vec<DeviceBuffer<EF>>, Vec<Option<LogupCombinations>>), LogupZerocheckError> {
+                    let d_eq_3b: Vec<DeviceBuffer<EF>> = eq_3b_ref
+                        .iter()
+                        .map(|eq_3bs| {
+                            if eq_3bs.is_empty() {
+                                Ok(DeviceBuffer::new())
+                            } else {
+                                eq_3bs.to_device().map_err(MemCopyError::from)
+                            }
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+
+                    let mut logup_combs: Vec<Option<LogupCombinations>> =
+                        (0..num_present_airs).map(|_| None).collect();
+                    for (trace_idx, (air_idx, _)) in per_trace_ref.iter().enumerate() {
+                        let air_pk = &pk_ref.per_air[*air_idx];
+                        if air_pk.other_data.interaction_monomials.is_some()
+                            && !eq_3b_ref[trace_idx].is_empty()
+                        {
+                            logup_combs[trace_idx] = Some(
+                                compute_logup_combinations(
+                                    pk_ref,
+                                    *air_idx,
+                                    d_beta_pows_ref,
+                                    &d_eq_3b[trace_idx],
+                                    &eq_3b_ref[trace_idx],
+                                    beta_pows_ref,
+                                )
+                                .map_err(LogupZerocheckError::LogupCombinations)?,
+                            );
+                        }
+                    }
+
+                    // Sync this thread's stream so all GPU work (uploads + precompute
+                    // kernels) is globally visible before we return the DeviceBuffers.
+                    current_stream_sync().map_err(MemCopyError::from)?;
+                    Ok((d_eq_3b, logup_combs))
+                });
+
+                // Spawn Round 0 worker threads (same as before).
                 let handles: Vec<_> = thread_buffers
                     .into_iter()
                     .zip(thread_items.into_iter())
@@ -1312,11 +1364,19 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                         })
                     })
                     .collect();
+
+                // Join Round 0 workers first.
                 for handle in handles {
                     handle.join().unwrap()?;
                 }
-                Ok::<_, LogupZerocheckError>(())
+                // Join precompute thread.
+                let precompute = precompute_handle.join().unwrap()?;
+                Ok::<_, LogupZerocheckError>(precompute)
             })?;
+
+            // Store precompute results into self (after scope exits, all threads done).
+            self.d_eq_3b_per_trace = precompute_result.0;
+            self.logup_combinations = precompute_result.1;
         }
 
         // Phase 3: Single D2H copy of the batch array, then reconstruct batch_sp_poly.
