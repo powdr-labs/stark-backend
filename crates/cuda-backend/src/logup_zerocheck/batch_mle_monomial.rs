@@ -16,8 +16,10 @@ use crate::{
     cuda::logup_zerocheck::{
         logup_monomial_batched, precompute_lambda_combinations,
         precompute_logup_denom_combinations, precompute_logup_numer_combinations,
-        zerocheck_monomial_batched, zerocheck_monomial_par_y_batched, BlockCtx, EvalCoreCtx,
-        LogupMonomialCommonCtx, LogupMonomialCtx, MonomialAirCtx,
+        scatter_fpext_blocks, scatter_frac_blocks, warp_logup_monomial_batched,
+        warp_zerocheck_monomial_batched, zerocheck_monomial_batched,
+        zerocheck_monomial_par_y_batched, BlockCtx, EvalCoreCtx, LogupMonomialCommonCtx,
+        LogupMonomialCtx, MonomialAirCtx,
     },
     error::KernelError,
     gpu_backend::GenericGpuBackend,
@@ -27,6 +29,16 @@ use crate::{
 };
 
 const THREADS_PER_BLOCK: u32 = 256;
+const WARP_SIZE: u32 = 32;
+
+/// Upload a Vec to device, returning an empty DeviceBuffer if the Vec is empty.
+fn to_device_or_empty<T>(v: Vec<T>) -> Result<DeviceBuffer<T>, MemCopyError> {
+    if v.is_empty() {
+        Ok(DeviceBuffer::new())
+    } else {
+        v.to_device()
+    }
+}
 
 /// Returns true if the trace can use the monomial evaluation path.
 ///
@@ -101,18 +113,43 @@ pub(crate) fn compute_lambda_combinations<HS: GpuHashScheme>(
 
 /// Batch evaluator for monomial-based zerocheck MLE evaluation.
 ///
-/// Pre-builds GPU contexts for all traces, then evaluates in a single kernel launch.
+/// Pre-builds GPU contexts for all traces, then evaluates using a two-path strategy:
+/// - **Warp path**: traces with `num_y <= 32` and `num_monomials <= 32` use a warp-per-trace
+///   kernel where each thread handles one y-value and loops over all monomials.
+/// - **Block path**: remaining traces use the existing block kernel with block reduction.
 ///
 /// The caller must filter traces using [`trace_has_monomials`] before constructing.
 /// The batch must contain at least one trace.
-///
-/// The struct holds references to `TraceCtx` which guarantees the underlying
-/// device buffers (including `main_ptrs_dev`) remain valid for the struct's lifetime.
 pub(crate) struct ZerocheckMonomialBatch<'a> {
     traces: Vec<&'a TraceCtx>,
+    // Warp path: air_ctxs in original order, trace_ids/output_offsets for scatter
+    warp_air_ctxs: DeviceBuffer<MonomialAirCtx>,
+    warp_trace_ids: DeviceBuffer<u32>,
+    warp_output_offsets: DeviceBuffer<u32>,
+    num_warp_traces: u32,
+    // Block path: block-local air_ctxs + block_ctxs + air_offsets
+    block_air_ctxs: DeviceBuffer<MonomialAirCtx>,
     block_ctxs: DeviceBuffer<BlockCtx>,
-    air_ctxs: DeviceBuffer<MonomialAirCtx>,
-    air_offsets: DeviceBuffer<u32>,
+    block_air_offsets: DeviceBuffer<u32>,
+    block_output_offsets: DeviceBuffer<u32>,
+    num_block_traces: u32,
+}
+
+fn build_monomial_air_ctx(t: &TraceCtx, monomials: &crate::pkey::ZerocheckMonomials, lc: &DeviceBuffer<EF>) -> MonomialAirCtx {
+    MonomialAirCtx {
+        d_headers: monomials.d_headers.as_ptr(),
+        d_variables: monomials.d_variables.as_ptr(),
+        d_lambda_combinations: lc.as_ptr(),
+        num_monomials: monomials.num_monomials,
+        eval_ctx: EvalCoreCtx {
+            d_selectors: t.sels_ptr,
+            d_preprocessed: t.prep_ptr,
+            d_main: t.main_ptrs_dev.as_ptr(),
+            d_public: t.public_ptr,
+        },
+        d_eq_xi: t.eq_xi_ptr,
+        num_y: t.num_y,
+    }
 }
 
 impl<'a> ZerocheckMonomialBatch<'a> {
@@ -140,79 +177,79 @@ impl<'a> ZerocheckMonomialBatch<'a> {
             "lambda_combinations must have one buffer per trace"
         );
 
-        let threads_per_block = THREADS_PER_BLOCK;
+        // Partition traces into warp-eligible and block-eligible, building air_ctxs for each
+        let mut warp_air_ctxs_h: Vec<MonomialAirCtx> = Vec::new();
+        let mut warp_trace_ids_h: Vec<u32> = Vec::new();
+        let mut warp_output_offsets_h: Vec<u32> = Vec::new();
 
-        // Build block_ctxs and air_offsets
-        // For each AIR: total_blocks = ceil(num_monomials / tpb) * num_y
-        // local_block_idx_x encodes (y_int * mono_blocks + mono_block_idx)
+        let mut block_air_ctxs_h: Vec<MonomialAirCtx> = Vec::new();
         let mut block_ctxs_h: Vec<BlockCtx> = Vec::new();
-        let mut air_offsets: Vec<u32> = Vec::with_capacity(traces.len() + 1);
-        air_offsets.push(0);
+        let mut block_air_offsets_h: Vec<u32> = vec![0];
+        let mut block_output_offsets_h: Vec<u32> = Vec::new();
 
-        for (local_air, t) in traces.iter().enumerate() {
+        for (i, (t, lc)) in traces.iter().zip(lambda_combinations).enumerate() {
             let monomials = pk.per_air[t.air_idx]
                 .other_data
                 .zerocheck_monomials
                 .as_ref()
                 .unwrap();
-            let mono_blocks = monomials.num_monomials.div_ceil(threads_per_block);
-            let total_blocks = mono_blocks * t.num_y;
 
-            for local_idx in 0..total_blocks {
-                block_ctxs_h.push(BlockCtx {
-                    local_block_idx_x: local_idx,
-                    air_idx: local_air as u32,
-                });
+            let air_ctx = build_monomial_air_ctx(t, monomials, lc);
+
+            if t.num_y <= WARP_SIZE && monomials.num_monomials <= WARP_SIZE {
+                // Warp path: store air_ctx, trace_id indexes into warp_air_ctxs
+                let warp_local = warp_air_ctxs_h.len() as u32;
+                warp_air_ctxs_h.push(air_ctx);
+                warp_trace_ids_h.push(warp_local);
+                warp_output_offsets_h.push(i as u32);
+            } else {
+                // Block path: block-local air_ctxs + block assignments
+                let block_local = block_air_ctxs_h.len() as u32;
+                block_air_ctxs_h.push(air_ctx);
+                let mono_blocks = monomials.num_monomials.div_ceil(THREADS_PER_BLOCK);
+                let total_blocks = mono_blocks * t.num_y;
+                for local_idx in 0..total_blocks {
+                    block_ctxs_h.push(BlockCtx {
+                        local_block_idx_x: local_idx,
+                        air_idx: block_local,
+                    });
+                }
+                block_air_offsets_h.push(block_ctxs_h.len() as u32);
+                block_output_offsets_h.push(i as u32);
             }
-            air_offsets.push(block_ctxs_h.len() as u32);
         }
 
-        // Build MonomialAirCtx for each trace
-        let air_ctxs_h: Vec<MonomialAirCtx> = traces
-            .iter()
-            .zip(lambda_combinations)
-            .map(|(t, lc)| {
-                let monomials = pk.per_air[t.air_idx]
-                    .other_data
-                    .zerocheck_monomials
-                    .as_ref()
-                    .unwrap();
+        let num_warp_traces = warp_air_ctxs_h.len() as u32;
+        let num_block_traces = block_air_ctxs_h.len() as u32;
 
-                let eval_ctx = EvalCoreCtx {
-                    d_selectors: t.sels_ptr,
-                    d_preprocessed: t.prep_ptr,
-                    d_main: t.main_ptrs_dev.as_ptr(),
-                    d_public: t.public_ptr,
-                };
-
-                MonomialAirCtx {
-                    d_headers: monomials.d_headers.as_ptr(),
-                    d_variables: monomials.d_variables.as_ptr(),
-                    d_lambda_combinations: lc.as_ptr(),
-                    num_monomials: monomials.num_monomials,
-                    eval_ctx,
-                    d_eq_xi: t.eq_xi_ptr,
-                    num_y: t.num_y,
-                }
-            })
-            .collect();
-
-        // Upload to device
-        let block_ctxs = block_ctxs_h.to_device()?;
-        let air_ctxs = air_ctxs_h.to_device()?;
-        let air_offsets = air_offsets.to_device()?;
+        // Upload to device (handle empty partitions)
+        let warp_air_ctxs = to_device_or_empty(warp_air_ctxs_h)?;
+        let warp_trace_ids = to_device_or_empty(warp_trace_ids_h)?;
+        let warp_output_offsets = to_device_or_empty(warp_output_offsets_h)?;
+        let block_air_ctxs = to_device_or_empty(block_air_ctxs_h)?;
+        let block_ctxs = to_device_or_empty(block_ctxs_h)?;
+        let block_air_offsets = to_device_or_empty(block_air_offsets_h)?;
+        let block_output_offsets = to_device_or_empty(block_output_offsets_h)?;
 
         debug!(
             num_airs = traces.len(),
-            num_blocks = block_ctxs.len(),
+            num_warp_traces,
+            num_block_traces,
+            num_block_ctxs = block_ctxs.len(),
             "ZerocheckMonomialBatch created"
         );
 
         Ok(Self {
             traces,
+            warp_air_ctxs,
+            warp_trace_ids,
+            warp_output_offsets,
+            num_warp_traces,
+            block_air_ctxs,
             block_ctxs,
-            air_ctxs,
-            air_offsets,
+            block_air_offsets,
+            block_output_offsets,
+            num_block_traces,
         })
     }
 
@@ -225,41 +262,55 @@ impl<'a> ZerocheckMonomialBatch<'a> {
     ///
     /// The buffer contains `num_airs * num_x` elements, laid out as
     /// `[air0_x0, air0_x1, ..., air1_x0, air1_x1, ...]`.
-    /// See [`crate::logup_zerocheck`] module docs for async-free/peak memory behavior.
     pub fn evaluate(&self, num_x: u32) -> Result<DeviceBuffer<EF>, KernelError> {
-        let num_blocks = self.block_ctxs.len();
-        let num_airs = self.air_ctxs.len();
+        let total_traces = self.traces.len();
+        let mut output = DeviceBuffer::<EF>::with_capacity(total_traces * num_x as usize);
 
-        debug!(
-            %num_blocks,
-            %num_x,
-            %num_airs,
-            "zerocheck_monomial_batched"
-        );
+        // Launch 1: warp kernel for small traces (scatter output via output_offsets)
+        if self.num_warp_traces > 0 {
+            unsafe {
+                warp_zerocheck_monomial_batched(
+                    &mut output,
+                    &self.warp_air_ctxs,
+                    &self.warp_trace_ids,
+                    &self.warp_output_offsets,
+                    self.num_warp_traces,
+                    num_x,
+                )?;
+            }
+        }
 
-        let mut tmp_sums = DeviceBuffer::<EF>::with_capacity(num_blocks * num_x as usize);
-        let mut output = DeviceBuffer::<EF>::with_capacity(num_airs * num_x as usize);
+        // Launch 2: block kernel for larger traces (contiguous output, then scatter)
+        if self.num_block_traces > 0 {
+            let num_blocks = self.block_ctxs.len();
+            let mut tmp_sums = DeviceBuffer::<EF>::with_capacity(num_blocks * num_x as usize);
+            let mut block_output =
+                DeviceBuffer::<EF>::with_capacity(self.num_block_traces as usize * num_x as usize);
 
-        debug_assert_eq!(
-            self.air_offsets.len(),
-            num_airs + 1,
-            "air_offsets must have num_airs + 1 elements"
-        );
-        // SAFETY: All device pointers in block_ctxs and air_ctxs were constructed from
-        // valid DeviceBuffers that outlive this call (TraceCtx references, pk monomial data,
-        // lambda_combinations). The air_offsets buffer has length num_airs + 1 as required.
-        unsafe {
-            zerocheck_monomial_batched(
-                &mut tmp_sums,
-                &mut output,
-                &self.block_ctxs,
-                &self.air_ctxs,
-                &self.air_offsets,
-                num_blocks as u32,
-                num_x,
-                num_airs as u32,
-                THREADS_PER_BLOCK,
-            )?;
+            unsafe {
+                zerocheck_monomial_batched(
+                    &mut tmp_sums,
+                    &mut block_output,
+                    &self.block_ctxs,
+                    &self.block_air_ctxs,
+                    &self.block_air_offsets,
+                    num_blocks as u32,
+                    num_x,
+                    self.num_block_traces,
+                    THREADS_PER_BLOCK,
+                )?;
+            }
+
+            // Scatter block results into correct positions in the shared output
+            unsafe {
+                scatter_fpext_blocks(
+                    &mut output,
+                    &block_output,
+                    &self.block_output_offsets,
+                    self.num_block_traces,
+                    num_x,
+                )?;
+            }
         }
 
         Ok(output)
@@ -583,16 +634,27 @@ const THREADS_PER_BLOCK_LOGUP: u32 = 128;
 
 /// Batch evaluator for logup monomial MLE evaluation.
 ///
-/// Each block evaluates a monomial chunk for a y_int, producing a FracExt output
-/// compatible with standard reduction.
+/// Uses a two-path strategy like [`ZerocheckMonomialBatch`]:
+/// - **Warp path**: traces with small num_y and few monomials use a warp-per-trace kernel.
+/// - **Block path**: remaining traces use the existing block kernel with block reduction.
 pub(crate) struct LogupMonomialBatch<'a> {
     traces: Vec<&'a TraceCtx>,
+    // Warp path
+    warp_common_ctxs: DeviceBuffer<LogupMonomialCommonCtx>,
+    warp_numer_ctxs: DeviceBuffer<LogupMonomialCtx>,
+    warp_denom_ctxs: DeviceBuffer<LogupMonomialCtx>,
+    warp_trace_ids: DeviceBuffer<u32>,
+    warp_output_offsets: DeviceBuffer<u32>,
+    num_warp_traces: u32,
+    // Block path
+    block_common_ctxs: DeviceBuffer<LogupMonomialCommonCtx>,
+    block_numer_ctxs: DeviceBuffer<LogupMonomialCtx>,
+    block_denom_ctxs: DeviceBuffer<LogupMonomialCtx>,
     block_ctxs: DeviceBuffer<BlockCtx>,
-    common_ctxs: DeviceBuffer<LogupMonomialCommonCtx>,
-    numer_ctxs: DeviceBuffer<LogupMonomialCtx>,
-    denom_ctxs: DeviceBuffer<LogupMonomialCtx>,
-    air_offsets: DeviceBuffer<u32>,
-    num_blocks: u32,
+    block_air_offsets: DeviceBuffer<u32>,
+    block_output_offsets: DeviceBuffer<u32>,
+    block_num_blocks: u32,
+    num_block_traces: u32,
 }
 
 impl<'a> LogupMonomialBatch<'a> {
@@ -622,13 +684,21 @@ impl<'a> LogupMonomialBatch<'a> {
 
         let threads_per_block = THREADS_PER_BLOCK_LOGUP;
 
-        // Build block_ctxs: one block per (y_int, mono_block) per trace
-        // local_block_idx_x = y_int * mono_blocks + mono_block
-        let mut block_ctxs_h: Vec<BlockCtx> = Vec::new();
-        let mut air_offsets: Vec<u32> = Vec::with_capacity(traces.len() + 1);
-        air_offsets.push(0);
+        // Partition into warp-eligible and block-eligible
+        let mut warp_common_h: Vec<LogupMonomialCommonCtx> = Vec::new();
+        let mut warp_numer_h: Vec<LogupMonomialCtx> = Vec::new();
+        let mut warp_denom_h: Vec<LogupMonomialCtx> = Vec::new();
+        let mut warp_trace_ids_h: Vec<u32> = Vec::new();
+        let mut warp_output_offsets_h: Vec<u32> = Vec::new();
 
-        for (local_air, t) in traces.iter().enumerate() {
+        let mut block_common_h: Vec<LogupMonomialCommonCtx> = Vec::new();
+        let mut block_numer_h: Vec<LogupMonomialCtx> = Vec::new();
+        let mut block_denom_h: Vec<LogupMonomialCtx> = Vec::new();
+        let mut block_ctxs_h: Vec<BlockCtx> = Vec::new();
+        let mut block_air_offsets_h: Vec<u32> = vec![0];
+        let mut block_output_offsets_h: Vec<u32> = Vec::new();
+
+        for (i, (t, lc)) in traces.iter().zip(logup_combinations).enumerate() {
             let monomials = pk.per_air[t.air_idx]
                 .other_data
                 .interaction_monomials
@@ -637,106 +707,107 @@ impl<'a> LogupMonomialBatch<'a> {
             let max_monomials = monomials
                 .num_numer_monomials
                 .max(monomials.num_denom_monomials);
-            let mono_blocks = max_monomials.div_ceil(threads_per_block).max(1);
-            for y_int in 0..t.num_y {
-                for mono_block in 0..mono_blocks {
-                    block_ctxs_h.push(BlockCtx {
-                        local_block_idx_x: y_int * mono_blocks + mono_block,
-                        air_idx: local_air as u32,
-                    });
-                }
-            }
-            air_offsets.push(block_ctxs_h.len() as u32);
-        }
 
-        let num_blocks = block_ctxs_h.len() as u32;
+            let eval_ctx = EvalCoreCtx {
+                d_selectors: t.sels_ptr,
+                d_preprocessed: t.prep_ptr,
+                d_main: t.main_ptrs_dev.as_ptr(),
+                d_public: t.public_ptr,
+            };
 
-        // Build logup monomial ctxs for each trace
-        let common_ctxs_h: Vec<LogupMonomialCommonCtx> = traces
-            .iter()
-            .zip(logup_combinations)
-            .map(|(t, lc)| {
-                let monomials = pk.per_air[t.air_idx]
-                    .other_data
-                    .interaction_monomials
-                    .as_ref()
-                    .unwrap();
-                let max_monomials = monomials
-                    .num_numer_monomials
-                    .max(monomials.num_denom_monomials);
+            let numer_ctx = LogupMonomialCtx {
+                d_headers: monomials.d_numer_headers.as_ptr(),
+                d_variables: monomials.d_numer_variables.as_ptr(),
+                d_combinations: lc.d_numer_combinations.as_ptr(),
+                num_monomials: monomials.num_numer_monomials,
+            };
+            let denom_ctx = LogupMonomialCtx {
+                d_headers: monomials.d_denom_headers.as_ptr(),
+                d_variables: monomials.d_denom_variables.as_ptr(),
+                d_combinations: lc.d_denom_combinations.as_ptr(),
+                num_monomials: monomials.num_denom_monomials,
+            };
+
+            if t.num_y <= WARP_SIZE && max_monomials <= WARP_SIZE {
+                let warp_local = warp_common_h.len() as u32;
                 let mono_blocks = max_monomials.div_ceil(threads_per_block).max(1);
-
-                let eval_ctx = EvalCoreCtx {
-                    d_selectors: t.sels_ptr,
-                    d_preprocessed: t.prep_ptr,
-                    d_main: t.main_ptrs_dev.as_ptr(),
-                    d_public: t.public_ptr,
-                };
-
-                LogupMonomialCommonCtx {
+                warp_common_h.push(LogupMonomialCommonCtx {
                     eval_ctx,
                     d_eq_xi: t.eq_xi_ptr,
                     bus_term_sum: lc.bus_term_sum,
                     num_y: t.num_y,
                     mono_blocks,
+                });
+                warp_numer_h.push(numer_ctx);
+                warp_denom_h.push(denom_ctx);
+                warp_trace_ids_h.push(warp_local);
+                warp_output_offsets_h.push(i as u32);
+            } else {
+                let block_local = block_common_h.len() as u32;
+                let mono_blocks = max_monomials.div_ceil(threads_per_block).max(1);
+                block_common_h.push(LogupMonomialCommonCtx {
+                    eval_ctx,
+                    d_eq_xi: t.eq_xi_ptr,
+                    bus_term_sum: lc.bus_term_sum,
+                    num_y: t.num_y,
+                    mono_blocks,
+                });
+                block_numer_h.push(numer_ctx);
+                block_denom_h.push(denom_ctx);
+                for y_int in 0..t.num_y {
+                    for mono_block in 0..mono_blocks {
+                        block_ctxs_h.push(BlockCtx {
+                            local_block_idx_x: y_int * mono_blocks + mono_block,
+                            air_idx: block_local,
+                        });
+                    }
                 }
-            })
-            .collect();
-        let numer_ctxs_h: Vec<LogupMonomialCtx> = traces
-            .iter()
-            .zip(logup_combinations)
-            .map(|(t, lc)| {
-                let monomials = pk.per_air[t.air_idx]
-                    .other_data
-                    .interaction_monomials
-                    .as_ref()
-                    .unwrap();
-                LogupMonomialCtx {
-                    d_headers: monomials.d_numer_headers.as_ptr(),
-                    d_variables: monomials.d_numer_variables.as_ptr(),
-                    d_combinations: lc.d_numer_combinations.as_ptr(),
-                    num_monomials: monomials.num_numer_monomials,
-                }
-            })
-            .collect();
-        let denom_ctxs_h: Vec<LogupMonomialCtx> = traces
-            .iter()
-            .zip(logup_combinations)
-            .map(|(t, lc)| {
-                let monomials = pk.per_air[t.air_idx]
-                    .other_data
-                    .interaction_monomials
-                    .as_ref()
-                    .unwrap();
-                LogupMonomialCtx {
-                    d_headers: monomials.d_denom_headers.as_ptr(),
-                    d_variables: monomials.d_denom_variables.as_ptr(),
-                    d_combinations: lc.d_denom_combinations.as_ptr(),
-                    num_monomials: monomials.num_denom_monomials,
-                }
-            })
-            .collect();
+                block_air_offsets_h.push(block_ctxs_h.len() as u32);
+                block_output_offsets_h.push(i as u32);
+            }
+        }
 
-        // Upload to device
-        let block_ctxs = block_ctxs_h.to_device()?;
-        let common_ctxs = common_ctxs_h.to_device()?;
-        let numer_ctxs = numer_ctxs_h.to_device()?;
-        let denom_ctxs = denom_ctxs_h.to_device()?;
-        let air_offsets = air_offsets.to_device()?;
+        let num_warp_traces = warp_common_h.len() as u32;
+        let num_block_traces = block_common_h.len() as u32;
+        let block_num_blocks = block_ctxs_h.len() as u32;
+
+        // Upload to device (handle empty partitions)
+        let warp_common_ctxs = to_device_or_empty(warp_common_h)?;
+        let warp_numer_ctxs = to_device_or_empty(warp_numer_h)?;
+        let warp_denom_ctxs = to_device_or_empty(warp_denom_h)?;
+        let warp_trace_ids = to_device_or_empty(warp_trace_ids_h)?;
+        let warp_output_offsets = to_device_or_empty(warp_output_offsets_h)?;
+        let block_common_ctxs = to_device_or_empty(block_common_h)?;
+        let block_numer_ctxs = to_device_or_empty(block_numer_h)?;
+        let block_denom_ctxs = to_device_or_empty(block_denom_h)?;
+        let block_ctxs = to_device_or_empty(block_ctxs_h)?;
+        let block_air_offsets = to_device_or_empty(block_air_offsets_h)?;
+        let block_output_offsets = to_device_or_empty(block_output_offsets_h)?;
 
         debug!(
             num_airs = traces.len(),
-            num_blocks, "LogupMonomialBatch created"
+            num_warp_traces,
+            num_block_traces,
+            block_num_blocks,
+            "LogupMonomialBatch created"
         );
 
         Ok(Self {
             traces,
+            warp_common_ctxs,
+            warp_numer_ctxs,
+            warp_denom_ctxs,
+            warp_trace_ids,
+            warp_output_offsets,
+            num_warp_traces,
+            block_common_ctxs,
+            block_numer_ctxs,
+            block_denom_ctxs,
             block_ctxs,
-            common_ctxs,
-            numer_ctxs,
-            denom_ctxs,
-            air_offsets,
-            num_blocks,
+            block_air_offsets,
+            block_output_offsets,
+            block_num_blocks,
+            num_block_traces,
         })
     }
 
@@ -749,43 +820,60 @@ impl<'a> LogupMonomialBatch<'a> {
     ///
     /// The buffer contains `num_airs * num_x` FracExt elements, laid out as
     /// `[air0_x0, air0_x1, ..., air1_x0, air1_x1, ...]`.
-    /// See [`crate::logup_zerocheck`] module docs for async-free/peak memory behavior.
     pub fn evaluate(&self, num_x: u32) -> Result<DeviceBuffer<Frac<EF>>, KernelError> {
-        let num_airs = self.common_ctxs.len();
+        let total_traces = self.traces.len();
+        let mut output = DeviceBuffer::<Frac<EF>>::with_capacity(total_traces * num_x as usize);
 
-        debug!(
-            num_blocks = %self.num_blocks,
-            %num_x,
-            %num_airs,
-            "logup_monomial_batched"
-        );
+        // Launch 1: warp kernel for small traces (scatter output)
+        if self.num_warp_traces > 0 {
+            unsafe {
+                warp_logup_monomial_batched(
+                    &mut output,
+                    &self.warp_common_ctxs,
+                    &self.warp_numer_ctxs,
+                    &self.warp_denom_ctxs,
+                    &self.warp_trace_ids,
+                    &self.warp_output_offsets,
+                    self.num_warp_traces,
+                    num_x,
+                )?;
+            }
+        }
 
-        let mut tmp_sums =
-            DeviceBuffer::<Frac<EF>>::with_capacity(self.num_blocks as usize * num_x as usize);
-        let mut output = DeviceBuffer::<Frac<EF>>::with_capacity(num_airs * num_x as usize);
+        // Launch 2: block kernel for larger traces (contiguous output, then scatter)
+        if self.num_block_traces > 0 {
+            let num_blocks = self.block_num_blocks;
+            let mut tmp_sums =
+                DeviceBuffer::<Frac<EF>>::with_capacity(num_blocks as usize * num_x as usize);
+            let mut block_output =
+                DeviceBuffer::<Frac<EF>>::with_capacity(self.num_block_traces as usize * num_x as usize);
 
-        debug_assert_eq!(
-            self.air_offsets.len(),
-            num_airs + 1,
-            "air_offsets must have num_airs + 1 elements"
-        );
+            unsafe {
+                logup_monomial_batched(
+                    &mut tmp_sums,
+                    &mut block_output,
+                    &self.block_ctxs,
+                    &self.block_common_ctxs,
+                    &self.block_numer_ctxs,
+                    &self.block_denom_ctxs,
+                    &self.block_air_offsets,
+                    num_blocks,
+                    num_x,
+                    self.num_block_traces,
+                    THREADS_PER_BLOCK_LOGUP,
+                )?;
+            }
 
-        // SAFETY: All device pointers were constructed from valid DeviceBuffers that outlive this
-        // call.
-        unsafe {
-            logup_monomial_batched(
-                &mut tmp_sums,
-                &mut output,
-                &self.block_ctxs,
-                &self.common_ctxs,
-                &self.numer_ctxs,
-                &self.denom_ctxs,
-                &self.air_offsets,
-                self.num_blocks,
-                num_x,
-                num_airs as u32,
-                THREADS_PER_BLOCK_LOGUP,
-            )?;
+            // Scatter block results into correct positions in the shared output
+            unsafe {
+                scatter_frac_blocks(
+                    &mut output,
+                    &block_output,
+                    &self.block_output_offsets,
+                    self.num_block_traces,
+                    num_x,
+                )?;
+            }
         }
 
         Ok(output)
