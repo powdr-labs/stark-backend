@@ -23,7 +23,6 @@ use openvm_cuda_common::{
     stream::current_stream_sync,
 };
 use openvm_stark_backend::{
-    air_builders::symbolic::SymbolicConstraints,
     calculate_n_logup,
     dft::Radix2BowersSerial,
     p3_matrix::dense::RowMajorMatrix,
@@ -154,7 +153,6 @@ fn process_air_round0<HS: GpuHashScheme>(
     bufs: &mut round0::Round0ThreadBuffers,
 ) -> Result<Round0AirResult, LogupZerocheckError> {
     let single_pk = w.single_pk;
-    let single_air_constraints = SymbolicConstraints::from(&single_pk.vk.symbolic_constraints);
     let local_constraint_deg = single_pk.vk.max_constraint_degree as usize;
     assert!(
         local_constraint_deg <= w.constraint_degree,
@@ -261,7 +259,6 @@ fn process_air_round0<HS: GpuHashScheme>(
 
     let sum = evaluate_round0_interactions_gpu(
         single_pk,
-        &single_air_constraints,
         w.selectors_cube.buffer(),
         &d_main_parts,
         w.public_values,
@@ -986,8 +983,12 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 0
             };
 
-            // Pre-compute logup buffer sizes (using logup_round0_buffer_size from Step 1)
-            let logup_buffer_size = single_pk.other_data.logup_round0_buffer_size;
+            // Pre-compute logup buffer sizes (using pre-computed logup_round0 rules)
+            let logup_buffer_size = single_pk
+                .other_data
+                .logup_round0
+                .as_ref()
+                .map_or(0, |r| r.inner.buffer_size);
             let has_interactions = !eq3b.is_empty();
             let logup_intermed_cap = if has_interactions && logup_buffer_size > 0 {
                 unsafe {
