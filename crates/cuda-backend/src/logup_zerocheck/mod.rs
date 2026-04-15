@@ -83,6 +83,7 @@ mod fractional;
 mod gkr_input;
 mod mle_round;
 mod round0;
+mod round0_batched;
 pub(crate) mod rules;
 
 use batch_mle::{evaluate_logup_batched, TraceCtx};
@@ -1277,6 +1278,24 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         // and CUDA guarantees non-overlapping device writes from different streams are safe.
         let batch_ptr_val = d_batch_array.as_mut_ptr() as usize;
 
+        // Batch eval for small AIRs on the default stream.
+        // Runs batched eval+reduce kernels, deferring extraction to Phase 2 workers.
+        let batch_mask = round0_batched::identify_batchable_airs(&work_items, l_skip);
+        let batch_eval_state = if batch_mask.iter().any(|&b| b) {
+            let state = round0_batched::batch_round0_eval_only(
+                &work_items,
+                &batch_mask,
+                l_skip,
+                &self.eq_xis,
+                &self.eq_3b_per_trace,
+                &self.beta_pows,
+            )?;
+            current_stream_sync().map_err(MemCopyError::from)?; // batch eval results visible to all streams
+            Some(state)
+        } else {
+            None
+        };
+
         if num_threads <= 1 {
             // Single-threaded path: run d_eq_3b upload + logup precompute sequentially,
             // then process Round 0 AIRs. No overlap benefit here since few large AIRs
@@ -1381,7 +1400,10 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                     Ok((d_eq_3b, logup_combs))
                 });
 
-                // Spawn Round 0 worker threads (same as before).
+                // Spawn Round 0 worker threads.
+                // Batched AIRs only need extraction; non-batched get full processing.
+                let batch_mask_ref = &batch_mask;
+                let batch_state_ref = &batch_eval_state;
                 let handles: Vec<_> = thread_buffers
                     .into_iter()
                     .zip(thread_items.into_iter())
@@ -1393,7 +1415,21 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                             let t0 = std::time::Instant::now();
                             let d_batch_ptr = batch_ptr_val as *mut EF;
                             for &idx in &indices {
-                                process_air_round0(&items[idx], &mut bufs, d_batch_ptr, tables)?;
+                                if batch_mask_ref[idx] {
+                                    // Batch eval already done; only run extraction
+                                    if let Some(ref state) = batch_state_ref {
+                                        let local_deg = items[idx].single_pk.vk.max_constraint_degree as usize;
+                                        round0_batched::extract_batched_air(
+                                            idx,
+                                            local_deg,
+                                            state,
+                                            d_batch_ptr,
+                                            tables,
+                                        )?;
+                                    }
+                                } else {
+                                    process_air_round0(&items[idx], &mut bufs, d_batch_ptr, tables)?;
+                                }
                             }
                             // Sync this thread's stream to ensure all extraction kernels
                             // complete before the thread exits. Required so the main thread's
