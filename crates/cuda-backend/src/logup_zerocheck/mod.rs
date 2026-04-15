@@ -646,6 +646,12 @@ where
         }
     }
 
+    // Pre-compute fold descriptor arrays for all MLE rounds. This uploads 4 flat arrays
+    // once, eliminating 112 per-round to_device() calls and fusing 2 kernel launches into 1.
+    if n_max > 0 {
+        prover.fold_plan = prover.build_fold_plan(n_max)?;
+    }
+
     // Sumcheck rounds:
     // - each round the prover needs to compute univariate polynomial `s_round`. This poly is linear
     //   since we are taking MLE of `evals`.
@@ -785,6 +791,37 @@ pub struct LogupZerocheckGpu<'a, HS: GpuHashScheme> {
     fold_mat_buf_b: Option<DeviceBuffer<EF>>,
     fold_sel_buf_a: Option<DeviceBuffer<EF>>,
     fold_sel_buf_b: Option<DeviceBuffer<EF>>,
+
+    /// Pre-computed fold descriptor arrays for all MLE rounds. When set, fold_mle_evals uses
+    /// a single fused kernel launch per round instead of two separate fold_pingpong calls.
+    fold_plan: Option<FoldPlan>,
+}
+
+/// Per-round metadata for the pre-computed fold plan.
+struct FoldRoundMeta {
+    /// Start index into the flat descriptor arrays.
+    start: usize,
+    /// Total number of descriptor entries (mat + sel foldable matrices).
+    total_count: u16,
+    /// Number of mat entries (the first `mat_count` entries are mat, rest are sel).
+    mat_count: u16,
+    /// Maximum output cells across all entries (for kernel grid sizing).
+    max_output_cells: u32,
+    /// Per-matrix output offsets within the write buffer, for view reconstruction.
+    /// Length = number of mat foldable matrices at this round.
+    mat_view_offsets: Vec<usize>,
+    /// Per-matrix output offsets for sel foldable matrices.
+    sel_view_offsets: Vec<usize>,
+}
+
+/// Pre-computed fold descriptor arrays, uploaded once before the MLE loop.
+/// Eliminates per-round to_device() calls and fuses mat+sel fold into one kernel launch.
+struct FoldPlan {
+    d_input_ptrs: DeviceBuffer<*const EF>,
+    d_output_ptrs: DeviceBuffer<*mut EF>,
+    d_log_heights: DeviceBuffer<u8>,
+    d_widths: DeviceBuffer<u32>,
+    round_meta: Vec<FoldRoundMeta>,
 }
 
 impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
@@ -913,6 +950,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             fold_mat_buf_b: None,
             fold_sel_buf_a: None,
             fold_sel_buf_b: None,
+            fold_plan: None,
         })
     }
 
@@ -2048,146 +2086,422 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         UnivariatePoly::new(coeffs)
     }
 
+    /// Pre-compute fold descriptor arrays for all MLE rounds.
+    /// Returns None if there are no foldable matrices.
+    fn build_fold_plan(
+        &self,
+        n_max: usize,
+    ) -> Result<Option<FoldPlan>, LogupZerocheckError> {
+        let mat_bufs = match (&self.fold_mat_buf_a, &self.fold_mat_buf_b) {
+            (Some(a), Some(b)) => Some((a.as_mut_ptr(), b.as_mut_ptr())),
+            _ => None,
+        };
+        let sel_bufs = match (&self.fold_sel_buf_a, &self.fold_sel_buf_b) {
+            (Some(a), Some(b)) => Some((a.as_mut_ptr(), b.as_mut_ptr())),
+            _ => None,
+        };
+
+        if mat_bufs.is_none() && sel_bufs.is_none() {
+            return Ok(None);
+        }
+
+        // Collect initial matrix info: (height, width, device_ptr) for mat and sel groups.
+        struct MatInfo {
+            initial_height: usize,
+            width: usize,
+            initial_ptr: *const EF,
+        }
+
+        let mat_infos: Vec<MatInfo> = self
+            .mat_evals_per_trace
+            .iter()
+            .flatten()
+            .map(|m| MatInfo {
+                initial_height: m.height(),
+                width: m.width(),
+                initial_ptr: m.buffer().as_ptr(),
+            })
+            .collect();
+
+        let sel_infos: Vec<MatInfo> = self
+            .sels_per_trace
+            .iter()
+            .map(|m| MatInfo {
+                initial_height: m.height(),
+                width: m.width(),
+                initial_ptr: m.buffer().as_ptr(),
+            })
+            .collect();
+
+        // For each round, track the output offset of each matrix in the write buffer.
+        // This is needed for building input pointers for the next round.
+        let mut mat_prev_offsets: Vec<usize> = vec![0; mat_infos.len()];
+        let mut sel_prev_offsets: Vec<usize> = vec![0; sel_infos.len()];
+
+        let mut all_input_ptrs: Vec<*const EF> = Vec::new();
+        let mut all_output_ptrs: Vec<*mut EF> = Vec::new();
+        let mut all_log_heights: Vec<u8> = Vec::new();
+        let mut all_widths: Vec<u32> = Vec::new();
+        let mut round_meta: Vec<FoldRoundMeta> = Vec::with_capacity(n_max);
+
+        for round in 1..=n_max {
+            let start = all_input_ptrs.len();
+            let mut max_output_cells: u32 = 0;
+            let mut mat_count: u16 = 0;
+            let mut mat_view_offsets: Vec<usize> = Vec::new();
+
+            // Write buffer for this round: odd rounds → phys_B, even rounds → phys_A
+            // Read buffer for round >= 2: what previous round wrote to (opposite)
+            let (mat_read_base, mat_write_base) = if let Some((phys_a, phys_b)) = mat_bufs {
+                if round % 2 == 1 {
+                    (phys_a, phys_b) // round 1: read from original (special), write to B
+                } else {
+                    (phys_b, phys_a) // round 2: read from B, write to A
+                }
+            } else {
+                (std::ptr::null_mut(), std::ptr::null_mut())
+            };
+
+            // Process mat entries
+            let mut mat_out_off: usize = 0;
+            for (i, info) in mat_infos.iter().enumerate() {
+                let height_at_round = info.initial_height >> (round - 1);
+                if height_at_round <= 1 {
+                    continue;
+                }
+                let output_height = height_at_round >> 1;
+                let out_cells = output_height * info.width;
+
+                // Input pointer
+                let input_ptr = if round == 1 {
+                    info.initial_ptr
+                } else {
+                    unsafe { mat_read_base.add(mat_prev_offsets[i]) as *const EF }
+                };
+
+                let output_ptr = unsafe { mat_write_base.add(mat_out_off) };
+
+                all_input_ptrs.push(input_ptr);
+                all_output_ptrs.push(output_ptr);
+                all_log_heights.push(output_height.ilog2() as u8);
+                all_widths.push(info.width as u32);
+                max_output_cells = max(max_output_cells, out_cells as u32);
+
+                mat_view_offsets.push(mat_out_off);
+                mat_prev_offsets[i] = mat_out_off;
+                mat_out_off += out_cells;
+                mat_count += 1;
+            }
+
+            // Process sel entries (appended after mat entries)
+            let (sel_read_base, sel_write_base) = if let Some((phys_a, phys_b)) = sel_bufs {
+                if round % 2 == 1 {
+                    (phys_a, phys_b)
+                } else {
+                    (phys_b, phys_a)
+                }
+            } else {
+                (std::ptr::null_mut(), std::ptr::null_mut())
+            };
+
+            let mut sel_view_offsets: Vec<usize> = Vec::new();
+            let mut sel_out_off: usize = 0;
+            for (i, info) in sel_infos.iter().enumerate() {
+                let height_at_round = info.initial_height >> (round - 1);
+                if height_at_round <= 1 {
+                    continue;
+                }
+                let output_height = height_at_round >> 1;
+                let out_cells = output_height * info.width;
+
+                let input_ptr = if round == 1 {
+                    info.initial_ptr
+                } else {
+                    unsafe { sel_read_base.add(sel_prev_offsets[i]) as *const EF }
+                };
+
+                let output_ptr = unsafe { sel_write_base.add(sel_out_off) };
+
+                all_input_ptrs.push(input_ptr);
+                all_output_ptrs.push(output_ptr);
+                all_log_heights.push(output_height.ilog2() as u8);
+                all_widths.push(info.width as u32);
+                max_output_cells = max(max_output_cells, out_cells as u32);
+
+                sel_view_offsets.push(sel_out_off);
+                sel_prev_offsets[i] = sel_out_off;
+                sel_out_off += out_cells;
+            }
+
+            let total_count = (all_input_ptrs.len() - start) as u16;
+            round_meta.push(FoldRoundMeta {
+                start,
+                total_count,
+                mat_count,
+                max_output_cells,
+                mat_view_offsets,
+                sel_view_offsets,
+            });
+        }
+
+        if all_input_ptrs.is_empty() {
+            return Ok(None);
+        }
+
+        // Bulk upload all descriptor arrays to device (4 H2D transfers total)
+        let d_input_ptrs = all_input_ptrs.to_device()?;
+        let d_output_ptrs = all_output_ptrs.to_device()?;
+        let d_log_heights = all_log_heights.to_device()?;
+        let d_widths = all_widths.to_device()?;
+
+        Ok(Some(FoldPlan {
+            d_input_ptrs,
+            d_output_ptrs,
+            d_log_heights,
+            d_widths,
+            round_meta,
+        }))
+    }
+
     #[instrument(name = "LogupZerocheck::fold_mle_evals", level = "debug", skip_all, fields(round = round))]
     fn fold_mle_evals(&mut self, round: usize, r_round: EF) -> Result<(), LogupZerocheckError> {
-        // Fold a set of matrices using ping-pong buffers: read from current locations, write
-        // foldable output to buf_b, swap. Non-foldable (height=1) matrices keep their existing
-        // views (pointing to whichever buffer they last landed in) since both buffers stay alive.
-        // This avoids per-round D2D copies for non-foldable matrices.
-        // Assumes input_mats are sorted by height descending.
-        fn fold_pingpong(
-            input_mats: Vec<DeviceMatrix<EF>>,
-            buf_a: &mut DeviceBuffer<EF>,
-            buf_b: &mut DeviceBuffer<EF>,
-            r_round: EF,
-        ) -> Result<Vec<DeviceMatrix<EF>>, LogupZerocheckError> {
-            let num_foldable = input_mats.partition_point(|mat| mat.height() > 1);
-            if num_foldable == 0 {
-                return Ok(input_mats);
+        if let Some(plan) = &self.fold_plan {
+            let meta = &plan.round_meta[round - 1];
+
+            // Single fused kernel launch for both mat + sel groups
+            if meta.total_count > 0 {
+                let start = meta.start;
+                let count = meta.total_count as usize;
+                let d_input_slice = unsafe {
+                    DeviceBuffer::non_owning(
+                        plan.d_input_ptrs.as_mut_ptr().add(start) as *mut *const EF,
+                        count,
+                    )
+                };
+                let d_output_slice = unsafe {
+                    DeviceBuffer::non_owning(
+                        plan.d_output_ptrs.as_mut_ptr().add(start),
+                        count,
+                    )
+                };
+                let d_widths_slice = unsafe {
+                    DeviceBuffer::non_owning(
+                        plan.d_widths.as_mut_ptr().add(start),
+                        count,
+                    )
+                };
+                let d_log_heights_slice = unsafe {
+                    DeviceBuffer::non_owning(
+                        plan.d_log_heights.as_mut_ptr().add(start),
+                        count,
+                    )
+                };
+
+                unsafe {
+                    batch_fold_mle(
+                        &d_input_slice,
+                        &d_output_slice,
+                        &d_widths_slice,
+                        meta.total_count,
+                        &d_log_heights_slice,
+                        meta.max_output_cells,
+                        r_round,
+                    )
+                    .map_err(LogupZerocheckError::BatchFoldMle)?;
+                }
             }
 
-            let input_ptrs: Vec<_> = input_mats
-                .iter()
-                .take(num_foldable)
-                .map(|mat| mat.buffer().as_ptr())
-                .collect();
-            let log_heights: Vec<u8> = input_mats
-                .iter()
-                .take(num_foldable)
-                .map(|mat| (mat.height() >> 1).ilog2() as u8)
-                .collect();
-            let widths: Vec<u32> = input_mats
-                .iter()
-                .take(num_foldable)
-                .map(|mat| mat.width() as u32)
-                .collect();
-
-            let mut max_output_cells = 0usize;
-            let mut out_off = 0usize;
-            let output_ptrs: Vec<_> = input_mats
-                .iter()
-                .take(num_foldable)
-                .map(|mat| {
-                    let ptr = unsafe { buf_b.as_mut_ptr().add(out_off) };
-                    let out_cells = (mat.height() >> 1) * mat.width();
-                    max_output_cells = max(max_output_cells, out_cells);
-                    out_off += out_cells;
-                    ptr
-                })
-                .collect();
-
-            let d_input_ptrs = input_ptrs.to_device()?;
-            let d_output_ptrs = output_ptrs.to_device()?;
-            let d_log_heights = log_heights.to_device()?;
-            let d_widths = widths.to_device()?;
-
-            unsafe {
-                batch_fold_mle(
-                    &d_input_ptrs,
-                    &d_output_ptrs,
-                    &d_widths,
-                    num_foldable.try_into().unwrap(),
-                    &d_log_heights,
-                    max_output_cells.try_into().unwrap(),
-                    r_round,
-                )
-                .map_err(LogupZerocheckError::BatchFoldMle)?;
+            // Swap mat buffers and reconstruct views
+            if meta.mat_count > 0 {
+                if let (Some(mat_a), Some(mat_b)) =
+                    (&mut self.fold_mat_buf_a, &mut self.fold_mat_buf_b)
+                {
+                    std::mem::swap(mat_a, mat_b);
+                    let new_ptr = mat_a.as_mut_ptr();
+                    let mut offset_idx = 0;
+                    for mats in &mut self.mat_evals_per_trace {
+                        for mat in mats.iter_mut() {
+                            if mat.height() > 1 {
+                                let new_height = mat.height() >> 1;
+                                *mat = unsafe {
+                                    DeviceMatrix::non_owning_view(
+                                        new_ptr.add(meta.mat_view_offsets[offset_idx]),
+                                        new_height,
+                                        mat.width(),
+                                    )
+                                };
+                                offset_idx += 1;
+                            }
+                        }
+                    }
+                }
             }
 
-            // Swap: buf_a now has the foldable output data
-            std::mem::swap(buf_a, buf_b);
+            if self.save_memory {
+                self.memory_limit_bytes = self.gkr_mem_contribution.saturating_sub(
+                    self.mat_evals_per_trace
+                        .iter()
+                        .flatten()
+                        .map(|m| m.buffer().len() * size_of::<EF>())
+                        .sum(),
+                );
+            }
 
-            // Create new non-owning views for foldable outputs from (new) buf_a.
-            // Non-foldable matrices keep their existing views (clone via Arc).
-            let new_ptr = buf_a.as_mut_ptr();
-            let mut view_off = 0usize;
-            let mut output_mats: Vec<DeviceMatrix<EF>> = input_mats
-                .iter()
-                .take(num_foldable)
-                .map(|mat| {
-                    let new_height = mat.height() >> 1;
-                    let cells = new_height * mat.width();
-                    let view = unsafe {
-                        DeviceMatrix::non_owning_view(
-                            new_ptr.add(view_off),
-                            new_height,
-                            mat.width(),
-                        )
-                    };
-                    view_off += cells;
-                    view
-                })
-                .collect();
-            // Retain non-foldable views unchanged
-            output_mats.extend_from_slice(&input_mats[num_foldable..]);
+            // Swap sel buffers and reconstruct views
+            if !meta.sel_view_offsets.is_empty() {
+                if let (Some(sel_a), Some(sel_b)) =
+                    (&mut self.fold_sel_buf_a, &mut self.fold_sel_buf_b)
+                {
+                    std::mem::swap(sel_a, sel_b);
+                    let new_ptr = sel_a.as_mut_ptr();
+                    let mut offset_idx = 0;
+                    for mat in &mut self.sels_per_trace {
+                        if mat.height() > 1 {
+                            let new_height = mat.height() >> 1;
+                            *mat = unsafe {
+                                DeviceMatrix::non_owning_view(
+                                    new_ptr.add(meta.sel_view_offsets[offset_idx]),
+                                    new_height,
+                                    mat.width(),
+                                )
+                            };
+                            offset_idx += 1;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Fallback: original fold_pingpong path (used when fold_plan is None)
+            fn fold_pingpong(
+                input_mats: Vec<DeviceMatrix<EF>>,
+                buf_a: &mut DeviceBuffer<EF>,
+                buf_b: &mut DeviceBuffer<EF>,
+                r_round: EF,
+            ) -> Result<Vec<DeviceMatrix<EF>>, LogupZerocheckError> {
+                let num_foldable = input_mats.partition_point(|mat| mat.height() > 1);
+                if num_foldable == 0 {
+                    return Ok(input_mats);
+                }
 
-            Ok(output_mats)
-        }
-
-        // Fold mat_evals_per_trace using ping-pong buffers
-        if let (Some(mut mat_a), Some(mut mat_b)) =
-            (self.fold_mat_buf_a.take(), self.fold_mat_buf_b.take())
-        {
-            let lengths = self
-                .mat_evals_per_trace
-                .iter()
-                .map(|v| v.len())
-                .collect_vec();
-            let input_mats = std::mem::take(&mut self.mat_evals_per_trace)
-                .into_iter()
-                .flatten()
-                .collect_vec();
-            let mut output_mats =
-                fold_pingpong(input_mats, &mut mat_a, &mut mat_b, r_round)?.into_iter();
-            self.mat_evals_per_trace = lengths
-                .into_iter()
-                .map(|len| output_mats.by_ref().take(len).collect())
-                .collect();
-            self.fold_mat_buf_a = Some(mat_a);
-            self.fold_mat_buf_b = Some(mat_b);
-        }
-        if self.save_memory {
-            self.memory_limit_bytes = self.gkr_mem_contribution.saturating_sub(
-                self.mat_evals_per_trace
+                let input_ptrs: Vec<_> = input_mats
                     .iter()
-                    .flatten()
-                    .map(|m| m.buffer().len() * size_of::<EF>())
-                    .sum(),
-            );
-        }
+                    .take(num_foldable)
+                    .map(|mat| mat.buffer().as_ptr())
+                    .collect();
+                let log_heights: Vec<u8> = input_mats
+                    .iter()
+                    .take(num_foldable)
+                    .map(|mat| (mat.height() >> 1).ilog2() as u8)
+                    .collect();
+                let widths: Vec<u32> = input_mats
+                    .iter()
+                    .take(num_foldable)
+                    .map(|mat| mat.width() as u32)
+                    .collect();
 
-        // Fold sels_per_trace using ping-pong buffers
-        if let (Some(mut sel_a), Some(mut sel_b)) =
-            (self.fold_sel_buf_a.take(), self.fold_sel_buf_b.take())
-        {
-            self.sels_per_trace = fold_pingpong(
-                std::mem::take(&mut self.sels_per_trace),
-                &mut sel_a,
-                &mut sel_b,
-                r_round,
-            )?;
-            self.fold_sel_buf_a = Some(sel_a);
-            self.fold_sel_buf_b = Some(sel_b);
+                let mut max_output_cells = 0usize;
+                let mut out_off = 0usize;
+                let output_ptrs: Vec<_> = input_mats
+                    .iter()
+                    .take(num_foldable)
+                    .map(|mat| {
+                        let ptr = unsafe { buf_b.as_mut_ptr().add(out_off) };
+                        let out_cells = (mat.height() >> 1) * mat.width();
+                        max_output_cells = max(max_output_cells, out_cells);
+                        out_off += out_cells;
+                        ptr
+                    })
+                    .collect();
+
+                let d_input_ptrs = input_ptrs.to_device()?;
+                let d_output_ptrs = output_ptrs.to_device()?;
+                let d_log_heights = log_heights.to_device()?;
+                let d_widths = widths.to_device()?;
+
+                unsafe {
+                    batch_fold_mle(
+                        &d_input_ptrs,
+                        &d_output_ptrs,
+                        &d_widths,
+                        num_foldable.try_into().unwrap(),
+                        &d_log_heights,
+                        max_output_cells.try_into().unwrap(),
+                        r_round,
+                    )
+                    .map_err(LogupZerocheckError::BatchFoldMle)?;
+                }
+
+                std::mem::swap(buf_a, buf_b);
+
+                let new_ptr = buf_a.as_mut_ptr();
+                let mut view_off = 0usize;
+                let mut output_mats: Vec<DeviceMatrix<EF>> = input_mats
+                    .iter()
+                    .take(num_foldable)
+                    .map(|mat| {
+                        let new_height = mat.height() >> 1;
+                        let cells = new_height * mat.width();
+                        let view = unsafe {
+                            DeviceMatrix::non_owning_view(
+                                new_ptr.add(view_off),
+                                new_height,
+                                mat.width(),
+                            )
+                        };
+                        view_off += cells;
+                        view
+                    })
+                    .collect();
+                output_mats.extend_from_slice(&input_mats[num_foldable..]);
+
+                Ok(output_mats)
+            }
+
+            // Fold mat_evals_per_trace using ping-pong buffers
+            if let (Some(mut mat_a), Some(mut mat_b)) =
+                (self.fold_mat_buf_a.take(), self.fold_mat_buf_b.take())
+            {
+                let lengths = self
+                    .mat_evals_per_trace
+                    .iter()
+                    .map(|v| v.len())
+                    .collect_vec();
+                let input_mats = std::mem::take(&mut self.mat_evals_per_trace)
+                    .into_iter()
+                    .flatten()
+                    .collect_vec();
+                let mut output_mats =
+                    fold_pingpong(input_mats, &mut mat_a, &mut mat_b, r_round)?.into_iter();
+                self.mat_evals_per_trace = lengths
+                    .into_iter()
+                    .map(|len| output_mats.by_ref().take(len).collect())
+                    .collect();
+                self.fold_mat_buf_a = Some(mat_a);
+                self.fold_mat_buf_b = Some(mat_b);
+            }
+            if self.save_memory {
+                self.memory_limit_bytes = self.gkr_mem_contribution.saturating_sub(
+                    self.mat_evals_per_trace
+                        .iter()
+                        .flatten()
+                        .map(|m| m.buffer().len() * size_of::<EF>())
+                        .sum(),
+                );
+            }
+
+            // Fold sels_per_trace using ping-pong buffers
+            if let (Some(mut sel_a), Some(mut sel_b)) =
+                (self.fold_sel_buf_a.take(), self.fold_sel_buf_b.take())
+            {
+                self.sels_per_trace = fold_pingpong(
+                    std::mem::take(&mut self.sels_per_trace),
+                    &mut sel_a,
+                    &mut sel_b,
+                    r_round,
+                )?;
+                self.fold_sel_buf_a = Some(sel_a);
+                self.fold_sel_buf_b = Some(sel_b);
+            }
         }
 
         for tree in self.eq_xis.values_mut() {
