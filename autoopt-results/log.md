@@ -173,3 +173,91 @@
 **Result**: success — STARK excl trace at APC 300: 1370ms → 1306ms, 1.88x lower vs baseline (vs previous: -64ms, 1.05x lower). Round 0: 203ms → 182ms (-21ms, 1.12x lower).
 
 **Summary**: Spawned d_eq_3b upload + logup_combinations precompute on a background thread inside the existing thread::scope block, concurrent with Round 0 worker threads. The precompute output is only consumed during MLE rounds, making it fully independent of Round 0. Per-segment Round 0 improved by ~10ms (93ms → 82ms). LogUp GKR also improved by 44ms, likely due to improved CUDA memory pool state from overlapped allocations. No regression at APC 0 (single-threaded path unchanged).
+
+## 2026-04-14-0830-batch-scatter-gkr-input-eval
+
+**Idea**: Batch SCATTER-mode GKR input evaluation AIRs into a single descriptor-array CUDA kernel launch per segment on a dedicated background thread.
+
+**Result**: failure — LogUp GKR at APC 300: 518ms → 510ms (-8ms median, 1.02x lower vs before, below 10ms rollback threshold). STARK excl trace at APC 300: 1302ms → 1297ms (-5ms, within noise). (vs baseline: 1.89x lower, unchanged from previous)
+
+**Summary**: Implemented a batched SCATTER kernel using the descriptor-array pattern (BlockCtx + GkrInputScatterCtx), running on a dedicated background thread concurrent with 8 GLOBAL worker threads. Fixed a correctness bug where multiple lifted SCATTER AIRs shared the same tmp buffer during concurrent kernel writes (needed per-AIR offsets). The optimization produces correct proofs but the improvement (~8ms median) is below the 10ms threshold because SCATTER AIRs' aggregate GPU time (~63ms) is already hidden behind the longer GLOBAL processing (~464ms). The batching reduces CPU-side overhead per SCATTER AIR but doesn't change the GLOBAL-dominated critical path.
+
+## 2026-04-14-1200-bulk-alloc-mle-fold-buffers
+
+**Idea**: Replace per-matrix GPU buffer allocation in MLE fold rounds with bulk arena allocation (one cudaMallocAsync per fold group instead of ~1869).
+
+**Result**: failure — MLE Rounds at APC 300: 175ms → 162ms (-13ms, 1.08x lower, below 20ms rollback threshold). STARK excl trace at APC 300: 1331ms → 1306ms (vs baseline: 1.88x lower, vs previous: -25ms, 1.02x lower).
+
+**Summary**: Introduced ArenaMatrix/MatrixRef/FoldArena types to replace ~37K per-round cudaMallocAsync/cudaFreeAsync calls with ~40 bulk allocations. The implementation is correct (valid proofs at all APC configs, no APC 0 regression), but the improvement was only ~13ms on MLE Rounds — well below the expected 40-55ms. The CUDA pool allocator's per-call overhead is ~0.3-0.5μs (not ~0.8μs as estimated from nsight), making the true allocation overhead ~15-20ms, of which we recovered ~13ms. The dominant MLE Rounds cost is kernel execution time, not allocation overhead.
+
+## 2026-04-14-1430-warp-tiled-gkr-intermediates
+
+**Idea**: Reorganize GKR input evaluation GLOBAL-mode intermediates buffer from thread-interleaved layout (stride=65536) to warp-tiled layout (stride=32) for better GPU cache locality.
+
+**Result**: failure — LogUp GKR at APC 300: 529ms → 534ms (no change, within noise). STARK excl trace at APC 300: 1314ms → 1317ms (vs baseline: 1.86x lower, vs previous: +3ms, within noise).
+
+**Summary**: Changed the intermediates pointer computation from `base + thread_id` with stride `65536` to `base + warp_id * buffer_size * 32 + lane_id` with stride `32`, reducing per-thread inter-node stride from 1MB to 512B. nsight confirmed kernel total GPU time unchanged (458ms vs ~464ms). The bottleneck is memory bandwidth from main/preprocessed trace reads, not intermediates access locality — intermediates are only ~10-20% of total memory traffic, and the 72MB L2 cache already absorbs the old layout's coalesced warp-level accesses adequately.
+
+## 2026-04-14-1630-pingpong-mle-fold-buffers
+
+**Idea**: Replace per-round DeviceMatrix allocations in MLE fold with pre-allocated ping-pong buffers using non-owning DeviceBuffer views.
+
+**Result**: success — MLE Rounds at APC 300: 171ms → 161ms (1.12x lower vs baseline 180ms). STARK excl trace at APC 300: 1288ms, 1.91x lower vs baseline (vs previous: 1308ms → 1288ms, -20ms, 1.02x lower).
+
+**Summary**: Added `owns_memory` flag to DeviceBuffer enabling non-owning views, then pre-allocated two ping-pong buffers per fold set (mat_evals and sels). Each fold round writes foldable output into the alternate buffer and creates new non-owning views, eliminating ~37K cudaMallocAsync + ~37K cudaFreeAsync calls. Non-foldable matrices retain their existing views without D2D copies (an initial attempt with per-round D2D copies for non-foldable matrices actually regressed performance). No regression at APC 0. Cumulative STARK excl trace improvement vs baseline is now 1.91x.
+
+## 2026-04-14-1800-gpu-gkr-transcript-processing
+
+**Idea**: Move per-round GKR fractional sumcheck post-processing (D2H + reconstruct_s_evals + Poseidon2 transcript observe/sample) to a GPU kernel to eliminate CPU-GPU roundtrips in the FoldEval inner loop.
+
+**Result**: failure — LogUp GKR at APC 300: 527ms → 534ms (+7ms, no improvement). STARK excl trace at APC 300: 1294ms → 1305ms (vs baseline: 1.88x lower, vs previous: +11ms, within noise).
+
+**Summary**: Implemented a <<<1,1>>> GPU postprocess kernel (reconstruct s_evals + sponge observe/sample + accumulator update), device-pointer compute kernel variants (so challenges stay on GPU between rounds), and batch D2H + CPU transcript replay after all inner rounds. The optimization produced correct results (debug_assert on GPU-vs-CPU sponge challenges passed) but had no measurable impact because the per-round CPU work (~15-25μs for reconstruct + sponge) was already fast, the D2H of 32 bytes is near-instant, and the kernel launch overhead of the postprocess kernel (~5-10μs each × 40 rounds) offset savings. The inter-kernel gaps seen in nsight profiling are dominated by CUDA driver/launch overhead, not CPU arithmetic.
+
+## 2026-04-14-2000-matrix-base-ptr-interpolation
+
+**Idea**: Replace the flat per-column pointer array (~106K entries) with per-matrix base pointers (~2K entries) in the batched interpolation kernel to reduce CPU collection and H2D transfer overhead in MLE rounds.
+
+**Result**: success (marginal) — STARK excl trace at APC 300: 1293ms avg, 1.90x lower vs baseline (vs previous: 1299ms → 1293ms, -6ms, 1.00x lower). MLE Rounds: 163ms → 159ms (-4ms).
+
+**Summary**: Replaced O(106K) per-column pointer collection with O(2K) per-matrix base pointer collection, and 850KB H2D with ~40KB H2D per MLE round. The CUDA kernel computes column addresses from matrix base + offset via a short linear scan (2-5 matrices per trace). The improvement was marginal (4ms on MLE Rounds, 6ms avg on STARK excl trace) because CPU iteration overhead was lower than estimated (~3-4ns/column not 6-10ns) and H2D transfer of 850KB is already fast at PCIe 4.0. No regression at APC 0.
+
+## 2026-04-14-2130-warp-per-trace-mle-eval
+
+**Idea**: Warp-per-trace monomial MLE evaluation kernel that flips the parallelism axis from monomials to y-values for traces with few monomials (≤32) and small num_y (≤32).
+
+**Result**: failure — MLE Rounds at APC 300: 158ms → 163ms (no change, within noise). STARK excl trace at APC 300: 1301ms → 1304ms (vs baseline: 1.88x lower, unchanged from previous).
+
+**Summary**: Implemented warp-per-trace CUDA kernels for both zerocheck and logup monomial evaluation, with a two-path partition (warp + block) and scatter output. All 94 tests pass, no regression at APC 0. The optimization had no measurable impact because the monomial kernel accounts for only ~17ms of 158ms MLE Rounds total — even eliminating it entirely would barely be detectable. The savings from removing tmp_sums allocation and secondary reduction kernels (~2-5ms) are within noise. For late_eval traces (num_y=1, the dominant case), the warp approach has similar utilization (1/32 vs 5-15/256) to the block approach.
+
+## 2026-04-15-0030-drain-gpu-pipeline-before-stark
+
+**Idea**: Add explicit `current_stream_sync()` before the `stark_prove_excluding_trace` timing span to drain async trace gen GPU kernels and eliminate pipeline stall from the STARK metric.
+
+**Result**: failure — STARK excl trace at APC 300: 1300ms → 1312ms (no change, within noise). Drain pipeline time: 0ms for all segments. (vs baseline: 1.87x lower, unchanged from previous)
+
+**Summary**: Added `drain_pending_device_ops()` to the `ProverDevice` trait and restructured `Coordinator::prove` to sync the CUDA stream before starting the STARK timing span. The drain completes in 0ms for all segments at all APC configurations, conclusively disproving the pipeline stall hypothesis. By the time `prove()` is called, all trace gen GPU kernels have already completed — the caller's code path includes implicit synchronization points that drain the pipeline before the prover starts. The ~160ms Trace Commit time in APC 300 seg0 is genuine commit work, not pipeline stall.
+
+## 2026-04-15-0100-batch-global-gkr-input-eval
+
+**Idea**: Replace per-AIR GLOBAL-mode GKR input evaluation kernel launches with a single batched descriptor-array kernel for small AIRs (height ≤ TASK_SIZE).
+
+**Result**: failure — LogUp GKR at APC 300: 528ms → 525ms (no change, within noise). STARK excl trace at APC 300: 1292ms → 1291ms (vs baseline: 1.90x lower, unchanged from previous)
+
+**Summary**: Implemented a batched CUDA kernel with per-AIR descriptors and BlockCtx mapping, plus Rust orchestration to partition work items, upload flat device buffers, and handle height normalization. Without a memory budget cap, the batched kernel caused severe regression (528ms → 694-944ms at APC 300) because the aggregate intermediates buffer (576 MB for ~211 AIRs) vastly exceeds the 72 MB L2 cache, destroying the cache reuse that makes the existing per-stream sequential approach fast. Adding a 64 MB L2 budget cap causes batching to be disabled for all significant workloads. Key learning: kernel launch overhead (~1.5ms per segment) is negligible; the per-AIR sequential approach's intermediates buffer reuse is the fundamental performance advantage that batching cannot replicate.
+
+## 2026-04-15-0430-multistream-mle-round-eval
+
+**Idea**: Overlap logup and zerocheck evaluation paths within each MLE sumcheck round using OS threads with per-thread CUDA streams.
+
+**Result**: failure — MLE Rounds at APC 300: 162ms → 165ms (no change, within noise). STARK excl trace at APC 300: 1305ms → 1298ms (vs baseline: 1.89x lower, unchanged from previous)
+
+**Summary**: Spawned logup and zerocheck evaluation onto separate threads with per-thread CUDA streams when ≥50 early traces (APC 300 has ~350). Also replaced all to_host() with to_host_on_current_stream() to avoid global COPY_EVENT mutex. The optimization had no measurable impact because the remaining MLE Rounds time (~162ms over 14 rounds) is dominated by actual GPU kernel compute, not idle SMs or launch overhead. Previous optimizations (batched kernels, batched interpolation, pingpong buffers) already eliminated the per-round scheduling overhead that multi-streaming could have helped with. Work imbalance between logup and zerocheck threads and MEMORY_MANAGER mutex contention further limit any potential overlap benefit.
+
+## 2026-04-15-0800-cache-codeword-buffer-across-segments
+
+**Idea**: Pre-warm the GPU memory pool (VPMM) by allocating and freeing a 256MB buffer in GpuDevice::new() to eliminate cold-start cuMemCreate+cuMemMap overhead in the first segment's rs_code_matrix.
+
+**Result**: failure — APC 300: STARK excl trace 1292ms → 1250ms (-42ms, 1.96x lower vs baseline). APC 0: STARK excl trace 2134ms → 2271ms (+137ms regression, exceeds 20ms rollback threshold).
+
+**Summary**: The warmup successfully eliminated the codeword allocation cold-start at APC 300 (rs_code_matrix seg 0: 58ms → 14ms), but caused a consistent +177ms LogUp GKR regression at APC 0 (verified across 4 runs). This is the same VPMM pool state sensitivity pattern seen in multistream-stacked-reduction-round0 and batch-global-gkr-input-eval — changing the pool's free region layout disrupts memory access patterns for bandwidth-bound GKR kernels. An alternative using VPMM initial_pages (pre-allocation at pool construction time) barely helped (58ms → 51ms) because pages get consumed by intermediate allocations before proving starts.
