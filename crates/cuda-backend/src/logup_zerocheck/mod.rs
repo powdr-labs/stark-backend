@@ -646,6 +646,27 @@ where
         }
     }
 
+    // Pre-allocate device buffers for per-trace main_ptrs uploads in MLE rounds.
+    // Eliminates per-round cudaMallocAsync/cudaFreeAsync cycles (~8400 at APC 300).
+    {
+        let num_traces = prover.mat_evals_per_trace.len();
+        prover.d_main_ptrs_pool = (0..num_traces)
+            .map(|trace_idx| {
+                let air_idx = prover.air_indices_per_trace[trace_idx];
+                let has_preprocessed =
+                    prover.pk.per_air[air_idx].preprocessed_data.is_some();
+                let first_main_idx = usize::from(has_preprocessed);
+                let num_main_mats =
+                    prover.mat_evals_per_trace[trace_idx].len() - first_main_idx;
+                if num_main_mats > 0 {
+                    DeviceBuffer::with_capacity(num_main_mats)
+                } else {
+                    DeviceBuffer::new()
+                }
+            })
+            .collect();
+    }
+
     // Sumcheck rounds:
     // - each round the prover needs to compute univariate polynomial `s_round`. This poly is linear
     //   since we are taking MLE of `evals`.
@@ -785,6 +806,10 @@ pub struct LogupZerocheckGpu<'a, HS: GpuHashScheme> {
     fold_mat_buf_b: Option<DeviceBuffer<EF>>,
     fold_sel_buf_a: Option<DeviceBuffer<EF>>,
     fold_sel_buf_b: Option<DeviceBuffer<EF>>,
+
+    /// Pre-allocated device buffers for per-trace main_ptrs uploads in MLE rounds.
+    /// Indexed by trace_idx. Eliminates per-round cudaMallocAsync/cudaFreeAsync cycles.
+    d_main_ptrs_pool: Vec<DeviceBuffer<MainMatrixPtrs<EF>>>,
 }
 
 impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
@@ -913,6 +938,7 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             fold_mat_buf_b: None,
             fold_sel_buf_a: None,
             fold_sel_buf_b: None,
+            d_main_ptrs_pool: Vec::new(),
         })
     }
 
@@ -1658,7 +1684,11 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                             air_width: air_width_for_mat(need_rot, m.width()),
                         })
                         .collect_vec();
-                    let main_ptrs_dev = main_ptrs.to_device()?;
+                    let pool_buf = &mut self.d_main_ptrs_pool[trace_idx];
+                    main_ptrs.copy_to(pool_buf)?;
+                    let main_ptrs_dev = unsafe {
+                        DeviceBuffer::non_owning(pool_buf.as_mut_ptr(), main_ptrs.len())
+                    };
 
                     late_eval.push(TraceCtx {
                         trace_idx,
@@ -1821,7 +1851,11 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
                 })
                 .collect_vec();
             debug_assert_eq!(widths_so_far, meta.num_columns);
-            let main_ptrs_dev = main_ptrs.to_device()?;
+            let pool_buf = &mut self.d_main_ptrs_pool[meta.trace_idx];
+            main_ptrs.copy_to(pool_buf)?;
+            let main_ptrs_dev = unsafe {
+                DeviceBuffer::non_owning(pool_buf.as_mut_ptr(), main_ptrs.len())
+            };
 
             early_eval.push(TraceCtx {
                 trace_idx: meta.trace_idx,
