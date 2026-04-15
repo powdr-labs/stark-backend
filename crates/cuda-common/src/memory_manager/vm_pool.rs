@@ -166,7 +166,15 @@ impl VirtualMemoryPool {
                             );
                             size
                         }
-                        None => granularity,
+                        None => {
+                            // Use 8x the minimum granularity (typically 16 MiB) to reduce
+                            // the number of cuMemCreate calls for large allocations.
+                            // Each cuMemCreate has ~0.4ms driver overhead; with 2 MiB pages
+                            // a 256 MiB allocation requires 128 calls (~51ms). With 16 MiB
+                            // pages it requires only 16 calls (~6ms).
+                            // Allocations smaller than the page size use cudaMallocAsync.
+                            8 * granularity
+                        }
                     };
 
                     // Validate va_size
