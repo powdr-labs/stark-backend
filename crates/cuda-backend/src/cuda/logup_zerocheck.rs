@@ -94,6 +94,33 @@ pub struct LogupMonomialCtx {
     pub d_combinations: *const EF,
     pub num_monomials: u32,
 }
+/// Descriptor for batched GLOBAL-mode GKR input evaluation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct BatchGkrInputDesc {
+    pub d_fracs: *mut Frac<EF>,
+    pub d_preprocessed: *const F,
+    pub d_main: *const u64,
+    pub d_public_values: *const F,
+    pub d_rules: *const std::ffi::c_void,
+    pub d_used_nodes: *const usize,
+    pub d_pair_idxs: *const u32,
+    pub used_nodes_len: usize,
+    pub permutation_height: u32,
+    pub buffer_size: u32,
+    pub intermediates_offset: u32,
+}
+
+unsafe impl Send for BatchGkrInputDesc {}
+unsafe impl Sync for BatchGkrInputDesc {}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct BatchGkrInputBlockCtx {
+    pub local_block_idx: u32,
+    pub air_idx: u32,
+}
+
 /// Descriptor for batched interpolation of columns across multiple traces.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -322,6 +349,14 @@ extern "C" {
         used_nodes_len: usize,
         height: u32,
         num_rows_per_tile: u32,
+    ) -> i32;
+
+    fn _batched_gkr_input_eval(
+        descs: *const BatchGkrInputDesc,
+        block_ctxs: *const BatchGkrInputBlockCtx,
+        total_blocks: u32,
+        intermediates: *mut EF,
+        d_challenges: *const EF,
     ) -> i32;
 
     // logup_round0.cu
@@ -1012,6 +1047,21 @@ pub unsafe fn logup_gkr_input_eval(
         used_nodes.len(),
         height,
         num_rows_per_tile,
+    ))
+}
+
+pub unsafe fn batched_gkr_input_eval(
+    d_descs: &DeviceBuffer<BatchGkrInputDesc>,
+    d_block_ctxs: &DeviceBuffer<BatchGkrInputBlockCtx>,
+    intermediates: &mut DeviceBuffer<EF>,
+    d_challenges: &DeviceBuffer<EF>,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_batched_gkr_input_eval(
+        d_descs.as_ptr(),
+        d_block_ctxs.as_ptr(),
+        d_block_ctxs.len() as u32,
+        intermediates.as_mut_ptr(),
+        d_challenges.as_ptr(),
     ))
 }
 
