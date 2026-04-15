@@ -17,7 +17,7 @@ use std::{
 
 use itertools::{izip, Itertools};
 use openvm_cuda_common::{
-    copy::{MemCopyD2H, MemCopyD2HStreamSync, MemCopyH2D},
+    copy::{MemCopyD2H, MemCopyH2D},
     d_buffer::DeviceBuffer,
     error::{CudaError, MemCopyError},
     memory_manager::MemTracker,
@@ -1840,301 +1840,133 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             });
         }
 
-        // Sync the interpolation kernel before evaluation threads read from it
-        // on their per-thread CUDA streams.
-        current_stream_sync().map_err(MemCopyError::from)?;
+        let d_challenges_ptr = self.d_challenges.as_ptr();
 
-        // ── Phase 4: Evaluate logup + zerocheck (multi-stream when enough traces) ──
-
-        // Minimum early traces to use multi-stream dispatch. Below this,
-        // individual kernels are large enough that a second stream adds no
-        // concurrency benefit and the thread-spawn overhead dominates.
-        const MIN_MLE_MULTISTREAM_TRACES: usize = 50;
-
-        // Extract all borrows from self before the thread scope to satisfy
-        // the borrow checker — each thread gets disjoint mutable references.
-        let pk = self.pk;
-        let logup_combinations = &self.logup_combinations;
-        let lambda_combinations = &self.lambda_combinations;
-        let lambda_pows = self.lambda_pows.as_ref();
-        // Store as usize to cross thread::scope boundary (raw pointers are !Send).
-        let d_challenges_addr = self.d_challenges.as_ptr() as usize;
-        let monomial_num_y_threshold = self.monomial_num_y_threshold;
-        let memory_limit_bytes = self.memory_limit_bytes;
-        let sm_count = self.sm_count;
-        let logup_tilde_evals = &mut self.logup_tilde_evals;
-        let zerocheck_tilde_evals = &mut self.zerocheck_tilde_evals;
-
-        if early_eval.len() >= MIN_MLE_MULTISTREAM_TRACES {
-            // Multi-stream path: logup and zerocheck on separate threads
-            let late_logup_traces: Vec<_> =
-                late_eval.iter().filter(|t| t.has_interactions).collect();
-            let late_mono_traces: Vec<_> = late_eval
+        // Late traces (num_y=1): always use monomial
+        let late_logup_traces: Vec<_> = late_eval.iter().filter(|t| t.has_interactions).collect();
+        if !late_logup_traces.is_empty() {
+            let logup_combs: Vec<_> = late_logup_traces
                 .iter()
-                .filter(|t| trace_has_monomials(t, pk))
+                .map(|t| {
+                    self.logup_combinations[t.trace_idx]
+                        .as_ref()
+                        .expect("missing logup monomial combinations for late trace")
+                })
                 .collect();
-
-            // Pre-partition early traces for the zerocheck thread
-            let (low_early, high_early): (Vec<&TraceCtx>, Vec<&TraceCtx>) = early_eval
-                .iter()
-                .filter(|t| t.has_constraints)
-                .partition(|t| t.num_y <= monomial_num_y_threshold);
-            let (high_dag_traces, high_mono_traces): (Vec<&TraceCtx>, Vec<&TraceCtx>) =
-                high_early.iter().partition(|t| {
-                    let num_monomials = get_num_monomials(t, pk);
-                    let rules_len = get_zerocheck_rules_len(t, pk);
-                    num_monomials as usize >= DAG_FALLBACK_MONOMIAL_RATIO * rules_len
-                });
-
-            std::thread::scope(|s| -> Result<(), LogupZerocheckError> {
-                // Logup thread: late logup + early logup batched
-                let logup_handle = s.spawn(|| -> Result<(), LogupZerocheckError> {
-                    if !late_logup_traces.is_empty() {
-                        let logup_combs: Vec<_> = late_logup_traces
-                            .iter()
-                            .map(|t| {
-                                logup_combinations[t.trace_idx]
-                                    .as_ref()
-                                    .expect("missing logup monomial combinations for late trace")
-                            })
-                            .collect();
-                        let batch = LogupMonomialBatch::new(
-                            late_logup_traces.iter().copied(),
-                            pk,
-                            &logup_combs,
-                        )?;
-                        let out = batch
-                            .evaluate(1)
-                            .map_err(LogupZerocheckError::MleInteractionEval)?;
-                        let host = out.to_host_on_current_stream()?;
-                        for (i, trace_idx) in batch.trace_indices().enumerate() {
-                            logup_tilde_evals[trace_idx][0] =
-                                host[i].p * late_logup_traces[i].norm_factor;
-                            logup_tilde_evals[trace_idx][1] = host[i].q;
-                        }
-                    }
-
-                    if !early_eval.is_empty() {
-                        evaluate_logup_batched(
-                            &early_eval,
-                            pk,
-                            d_challenges_addr as *const EF,
-                            sp_deg as u32,
-                            monomial_num_y_threshold,
-                            logup_combinations,
-                            &mut logup_out,
-                            logup_tilde_evals,
-                            memory_limit_bytes,
-                        )
-                        .map_err(LogupZerocheckError::MleInteractionEval)?;
-                    }
-                    Ok(())
-                });
-
-                // Zerocheck thread: late mono + early zerocheck (DAG + par-Y + low mono)
-                let zerocheck_handle = s.spawn(|| -> Result<(), LogupZerocheckError> {
-                    if !late_mono_traces.is_empty() {
-                        let lambda_combs: Vec<_> = late_mono_traces
-                            .iter()
-                            .map(|t| lambda_combinations[t.air_idx].as_ref().unwrap())
-                            .collect();
-                        let batch =
-                            ZerocheckMonomialBatch::new(late_mono_traces.clone(), pk, &lambda_combs)?;
-                        let out = batch
-                            .evaluate(1)
-                            .map_err(LogupZerocheckError::MleConstraintEval)?;
-                        let host = out.to_host_on_current_stream()?;
-                        for (i, trace_idx) in batch.trace_indices().enumerate() {
-                            zerocheck_tilde_evals[trace_idx] = host[i];
-                        }
-                    }
-
-                    if !high_dag_traces.is_empty() {
-                        let lp = lambda_pows.unwrap();
-                        evaluate_zerocheck_batched(
-                            high_dag_traces.clone(),
-                            pk,
-                            lp,
-                            sp_deg as u32,
-                            &mut zc_out,
-                            memory_limit_bytes,
-                        )
-                        .map_err(LogupZerocheckError::MleConstraintEval)?;
-                    }
-
-                    if !high_mono_traces.is_empty() {
-                        let lambda_combs: Vec<_> = high_mono_traces
-                            .iter()
-                            .map(|t| lambda_combinations[t.air_idx].as_ref().unwrap())
-                            .collect();
-                        let batch = ZerocheckMonomialParYBatch::new(
-                            high_mono_traces.clone(),
-                            pk,
-                            &lambda_combs,
-                            sm_count,
-                            sp_deg as u32,
-                            None,
-                        )?;
-                        let out = batch
-                            .evaluate(sp_deg as u32)
-                            .map_err(LogupZerocheckError::MleConstraintEval)?;
-                        let host = out.to_host_on_current_stream()?;
-                        for (i, trace_idx) in batch.trace_indices().enumerate() {
-                            zc_out[trace_idx]
-                                .copy_from_slice(&host[(i * sp_deg)..((i + 1) * sp_deg)]);
-                        }
-                    }
-
-                    if !low_early.is_empty() {
-                        let lambda_combs: Vec<_> = low_early
-                            .iter()
-                            .map(|t| lambda_combinations[t.air_idx].as_ref().unwrap())
-                            .collect();
-                        let batch =
-                            ZerocheckMonomialBatch::new(low_early.clone(), pk, &lambda_combs)?;
-                        let out = batch
-                            .evaluate(sp_deg as u32)
-                            .map_err(LogupZerocheckError::MleConstraintEval)?;
-                        let host = out.to_host_on_current_stream()?;
-                        for (i, trace_idx) in batch.trace_indices().enumerate() {
-                            zc_out[trace_idx]
-                                .copy_from_slice(&host[(i * sp_deg)..((i + 1) * sp_deg)]);
-                        }
-                    }
-                    Ok(())
-                });
-
-                logup_handle.join().unwrap()?;
-                zerocheck_handle.join().unwrap()?;
-                Ok(())
-            })?;
-        } else {
-            // Single-stream path: existing sequential code (few early traces)
-            let late_logup_traces: Vec<_> =
-                late_eval.iter().filter(|t| t.has_interactions).collect();
-            if !late_logup_traces.is_empty() {
-                let logup_combs: Vec<_> = late_logup_traces
-                    .iter()
-                    .map(|t| {
-                        logup_combinations[t.trace_idx]
-                            .as_ref()
-                            .expect("missing logup monomial combinations for late trace")
-                    })
-                    .collect();
-                let batch = LogupMonomialBatch::new(
-                    late_logup_traces.iter().copied(),
-                    pk,
-                    &logup_combs,
-                )?;
-                let out = batch
-                    .evaluate(1)
-                    .map_err(LogupZerocheckError::MleInteractionEval)?;
-                let host = out.to_host_on_current_stream()?;
-                for (i, trace_idx) in batch.trace_indices().enumerate() {
-                    logup_tilde_evals[trace_idx][0] =
-                        host[i].p * late_logup_traces[i].norm_factor;
-                    logup_tilde_evals[trace_idx][1] = host[i].q;
-                }
-            }
-            let late_mono_traces: Vec<_> = late_eval
-                .iter()
-                .filter(|t| trace_has_monomials(t, pk))
-                .collect();
-            if !late_mono_traces.is_empty() {
-                let lambda_combs: Vec<_> = late_mono_traces
-                    .iter()
-                    .map(|t| lambda_combinations[t.air_idx].as_ref().unwrap())
-                    .collect();
-                let batch =
-                    ZerocheckMonomialBatch::new(late_mono_traces, pk, &lambda_combs)?;
-                let out = batch
-                    .evaluate(1)
-                    .map_err(LogupZerocheckError::MleConstraintEval)?;
-                let host = out.to_host_on_current_stream()?;
-                for (i, trace_idx) in batch.trace_indices().enumerate() {
-                    zerocheck_tilde_evals[trace_idx] = host[i];
-                }
-            }
-
-            if !early_eval.is_empty() {
-                evaluate_logup_batched(
-                    &early_eval,
-                    pk,
-                    d_challenges_addr as *const EF,
-                    sp_deg as u32,
-                    monomial_num_y_threshold,
-                    logup_combinations,
-                    &mut logup_out,
-                    logup_tilde_evals,
-                    memory_limit_bytes,
-                )
+            let batch =
+                LogupMonomialBatch::new(late_logup_traces.iter().copied(), self.pk, &logup_combs)?;
+            let out = batch
+                .evaluate(1)
                 .map_err(LogupZerocheckError::MleInteractionEval)?;
+            let host = out.to_host()?;
+            for (i, trace_idx) in batch.trace_indices().enumerate() {
+                self.logup_tilde_evals[trace_idx][0] = host[i].p * late_logup_traces[i].norm_factor;
+                self.logup_tilde_evals[trace_idx][1] = host[i].q;
             }
-
-            let (low_early, high_early): (Vec<&TraceCtx>, Vec<&TraceCtx>) = early_eval
+        }
+        let late_mono_traces: Vec<_> = late_eval
+            .iter()
+            .filter(|t| trace_has_monomials(t, self.pk))
+            .collect();
+        if !late_mono_traces.is_empty() {
+            let lambda_combs: Vec<_> = late_mono_traces
                 .iter()
-                .filter(|t| t.has_constraints)
-                .partition(|t| t.num_y <= monomial_num_y_threshold);
-
-            let (high_dag_traces, high_mono_traces): (Vec<&TraceCtx>, Vec<&TraceCtx>) =
-                high_early.iter().partition(|t| {
-                    let num_monomials = get_num_monomials(t, pk);
-                    let rules_len = get_zerocheck_rules_len(t, pk);
-                    num_monomials as usize >= DAG_FALLBACK_MONOMIAL_RATIO * rules_len
-                });
-
-            if !high_dag_traces.is_empty() {
-                let lp = lambda_pows.unwrap();
-                evaluate_zerocheck_batched(
-                    high_dag_traces,
-                    pk,
-                    lp,
-                    sp_deg as u32,
-                    &mut zc_out,
-                    memory_limit_bytes,
-                )
+                .map(|t| self.lambda_combinations[t.air_idx].as_ref().unwrap())
+                .collect();
+            let batch = ZerocheckMonomialBatch::new(late_mono_traces, self.pk, &lambda_combs)?;
+            let out = batch
+                .evaluate(1)
                 .map_err(LogupZerocheckError::MleConstraintEval)?;
+            let host = out.to_host()?;
+            for (i, trace_idx) in batch.trace_indices().enumerate() {
+                self.zerocheck_tilde_evals[trace_idx] = host[i];
+                // zc_out not set for num_x=1, handled from tilde_eval in compute_batch_s
             }
+        }
 
-            if !high_mono_traces.is_empty() {
-                let lambda_combs: Vec<_> = high_mono_traces
-                    .iter()
-                    .map(|t| lambda_combinations[t.air_idx].as_ref().unwrap())
-                    .collect();
-                let batch = ZerocheckMonomialParYBatch::new(
-                    high_mono_traces,
-                    pk,
-                    &lambda_combs,
-                    sm_count,
-                    sp_deg as u32,
-                    None,
-                )?;
-                let out = batch
-                    .evaluate(sp_deg as u32)
-                    .map_err(LogupZerocheckError::MleConstraintEval)?;
-                let host = out.to_host_on_current_stream()?;
-                for (i, trace_idx) in batch.trace_indices().enumerate() {
-                    zc_out[trace_idx]
-                        .copy_from_slice(&host[(i * sp_deg)..((i + 1) * sp_deg)]);
-                }
+        // Logup for early traces: partition by num_y threshold
+        if !early_eval.is_empty() {
+            evaluate_logup_batched(
+                &early_eval,
+                self.pk,
+                d_challenges_ptr,
+                sp_deg as u32,
+                self.monomial_num_y_threshold,
+                &self.logup_combinations,
+                &mut logup_out,
+                &mut self.logup_tilde_evals,
+                self.memory_limit_bytes,
+            )
+            .map_err(LogupZerocheckError::MleInteractionEval)?;
+        }
+
+        // Early traces (num_y>1): partition by threshold for zerocheck path
+        let (low_early, high_early): (Vec<&TraceCtx>, Vec<&TraceCtx>) = early_eval
+            .iter()
+            .filter(|t| t.has_constraints)
+            .partition(|t| t.num_y <= self.monomial_num_y_threshold);
+
+        // Partition high num_y traces by monomial-to-rules ratio
+        // (traces without monomials are skipped - they contribute zero)
+        let (high_dag_traces, high_mono_traces): (Vec<&TraceCtx>, Vec<&TraceCtx>) =
+            high_early.iter().partition(|t| {
+                let num_monomials = get_num_monomials(t, self.pk);
+                let rules_len = get_zerocheck_rules_len(t, self.pk);
+                // Use DAG when monomial expansion significantly increased the term count
+                num_monomials as usize >= DAG_FALLBACK_MONOMIAL_RATIO * rules_len
+            });
+
+        // DAG evaluation for high num_y traces with high monomial-to-rules ratio
+        if !high_dag_traces.is_empty() {
+            let lambda_pows = self.lambda_pows.as_ref().unwrap();
+            evaluate_zerocheck_batched(
+                high_dag_traces,
+                self.pk,
+                lambda_pows,
+                sp_deg as u32,
+                &mut zc_out,
+                self.memory_limit_bytes,
+            )
+            .map_err(LogupZerocheckError::MleConstraintEval)?;
+        }
+
+        // Par-Y monomial kernel for high num_y traces
+        if !high_mono_traces.is_empty() {
+            let lambda_combs: Vec<_> = high_mono_traces
+                .iter()
+                .map(|t| self.lambda_combinations[t.air_idx].as_ref().unwrap())
+                .collect();
+            let batch = ZerocheckMonomialParYBatch::new(
+                high_mono_traces,
+                self.pk,
+                &lambda_combs,
+                self.sm_count,
+                sp_deg as u32,
+                None,
+            )?;
+            let out = batch
+                .evaluate(sp_deg as u32)
+                .map_err(LogupZerocheckError::MleConstraintEval)?;
+            let host = out.to_host()?;
+            for (i, trace_idx) in batch.trace_indices().enumerate() {
+                zc_out[trace_idx].copy_from_slice(&host[(i * sp_deg)..((i + 1) * sp_deg)]);
             }
+        }
 
-            let low_mono_traces = low_early;
-            if !low_mono_traces.is_empty() {
-                let lambda_combs: Vec<_> = low_mono_traces
-                    .iter()
-                    .map(|t| lambda_combinations[t.air_idx].as_ref().unwrap())
-                    .collect();
-                let batch =
-                    ZerocheckMonomialBatch::new(low_mono_traces, pk, &lambda_combs)?;
-                let out = batch
-                    .evaluate(sp_deg as u32)
-                    .map_err(LogupZerocheckError::MleConstraintEval)?;
-                let host = out.to_host_on_current_stream()?;
-                for (i, trace_idx) in batch.trace_indices().enumerate() {
-                    zc_out[trace_idx]
-                        .copy_from_slice(&host[(i * sp_deg)..((i + 1) * sp_deg)]);
-                }
+        // Monomial zerocheck for low num_y traces
+        let low_mono_traces = low_early;
+        if !low_mono_traces.is_empty() {
+            let lambda_combs: Vec<_> = low_mono_traces
+                .iter()
+                .map(|t| self.lambda_combinations[t.air_idx].as_ref().unwrap())
+                .collect();
+            let batch = ZerocheckMonomialBatch::new(low_mono_traces, self.pk, &lambda_combs)?;
+            let out = batch
+                .evaluate(sp_deg as u32)
+                .map_err(LogupZerocheckError::MleConstraintEval)?;
+            let host = out.to_host()?;
+            for (i, trace_idx) in batch.trace_indices().enumerate() {
+                zc_out[trace_idx].copy_from_slice(&host[(i * sp_deg)..((i + 1) * sp_deg)]);
             }
         }
 

@@ -4,7 +4,7 @@
 //! enabling efficient GPU kernel launches that process multiple traces in parallel.
 
 use openvm_cuda_common::{
-    copy::{MemCopyD2HStreamSync, MemCopyH2D},
+    copy::{MemCopyD2H, MemCopyH2D},
     d_buffer::DeviceBuffer,
     error::MemCopyError,
 };
@@ -103,11 +103,6 @@ pub(crate) struct TraceCtx {
     pub public_ptr: *const F,
     pub eq_3bs_ptr: *const EF,
 }
-
-// SAFETY: TraceCtx contains raw CUDA device pointers that reference GPU global
-// memory accessible from any CUDA stream on the same device.
-unsafe impl Send for TraceCtx {}
-unsafe impl Sync for TraceCtx {}
 
 // NOTE[jpw]: we do not expect to use this since most of the time zerocheck will use monomial_par_y.
 // We use DAG evaluation primarily for Poseidon2Air. Consider deleting either the non-batch or batch
@@ -482,7 +477,7 @@ pub(crate) fn evaluate_zerocheck_batched<'a, HS: GpuHashScheme>(
                 t.num_y,
                 num_x,
             )?;
-            let out_host = out.to_host_on_current_stream()?;
+            let out_host = out.to_host()?;
             zc_out[t.trace_idx].copy_from_slice(&out_host);
         } else {
             // Normal batch using ZerocheckMleBatchBuilder
@@ -494,7 +489,7 @@ pub(crate) fn evaluate_zerocheck_batched<'a, HS: GpuHashScheme>(
             );
             let builder = ZerocheckMleBatchBuilder::new(batch.iter().copied(), pk, num_x)?;
             let out = builder.evaluate(lambda_pows, num_x)?;
-            let host = out.to_host_on_current_stream()?;
+            let host = out.to_host()?;
 
             for (i, trace_idx) in builder.trace_indices().enumerate() {
                 let evals = &host[(i * num_x_usize)..((i + 1) * num_x_usize)];
@@ -530,7 +525,7 @@ pub(crate) fn evaluate_logup_batched<HS: GpuHashScheme>(
             .collect();
         let batch = LogupMonomialBatch::new(low_traces.iter().copied(), pk, &logup_combs)?;
         let out = batch.evaluate(num_x)?;
-        let host = out.to_host_on_current_stream()?;
+        let host = out.to_host()?;
         let num_x_usize = num_x as usize;
         for (i, trace_idx) in batch.trace_indices().enumerate() {
             let fracs = &host[(i * num_x_usize)..((i + 1) * num_x_usize)];
@@ -611,7 +606,7 @@ pub(crate) fn evaluate_logup_batched<HS: GpuHashScheme>(
             let builder =
                 LogupMleBatchBuilder::new(batch.iter().copied(), pk, d_challenges_ptr, num_x)?;
             let out = builder.evaluate(num_x)?;
-            let host = out.to_host_on_current_stream()?;
+            let host = out.to_host()?;
 
             for (i, (trace_idx, norm_factor)) in builder.trace_info().enumerate() {
                 let fracs = &host[(i * num_x_usize)..((i + 1) * num_x_usize)];
@@ -652,7 +647,7 @@ fn evaluate_single_logup<HS: GpuHashScheme>(
         t.num_y,
         num_x,
     )?;
-    let fracs = out.to_host_on_current_stream()?;
+    let fracs = out.to_host()?;
 
     if num_x == 1 {
         logup_tilde_eval[0] = fracs[0].p * t.norm_factor;
