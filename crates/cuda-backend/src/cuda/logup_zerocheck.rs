@@ -21,6 +21,63 @@ pub struct BlockCtx {
     pub air_idx: u32,
 }
 
+// Types for batched Round 0:
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct Round0BlockCtx {
+    pub local_block_idx: u32,
+    pub air_idx: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct Round0ZcCtx {
+    pub selectors_cube: *const F,
+    pub preprocessed: *const F,
+    pub main_parts: *const *const F,
+    pub eq_cube: *const EF,
+    pub lambda_pows: *const EF,
+    pub public_values: *const F,
+    pub d_rules: *const std::ffi::c_void,
+    pub d_used_nodes: *const usize,
+    pub rules_len: usize,
+    pub used_nodes_len: usize,
+    pub lambda_len: usize,
+    pub buffer_size: u32,
+    pub d_intermediates: *mut F,
+    pub buffer_stride: u32,
+    pub num_x: u32,
+    pub height: u32,
+    pub g_shift: F,
+}
+
+unsafe impl Send for Round0ZcCtx {}
+unsafe impl Sync for Round0ZcCtx {}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct Round0LogupCtx {
+    pub selectors_cube: *const F,
+    pub preprocessed: *const F,
+    pub main_parts: *const *const F,
+    pub eq_cube: *const EF,
+    pub public_values: *const F,
+    pub d_rules: *const std::ffi::c_void,
+    pub rules_len: usize,
+    pub buffer_size: u32,
+    pub d_intermediates: *mut F,
+    pub buffer_stride: u32,
+    pub numer_weights: *const EF,
+    pub denom_weights: *const EF,
+    pub denom_sum_init: EF,
+    pub num_x: u32,
+    pub height: u32,
+    pub g_shift: F,
+}
+
+unsafe impl Send for Round0LogupCtx {}
+unsafe impl Sync for Round0LogupCtx {}
+
 /// Per-AIR context for batched monomial evaluation.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -422,6 +479,34 @@ extern "C" {
         input_size: u32,
         output_size: u32,
         norm_factor: EF,
+    ) -> i32;
+
+    // Batched Round 0 zerocheck (zerocheck_round0.cu)
+    fn _batched_zerocheck_r0_eval_constraints(
+        tmp_sums_buffer: *mut EF,
+        output: *mut EF,
+        d_block_ctxs: *const std::ffi::c_void,
+        d_zc_ctxs: *const std::ffi::c_void,
+        d_air_offsets: *const u32,
+        total_blocks: u32,
+        num_airs: u32,
+        num_cosets: u32,
+        skip_domain: u32,
+        block_x: u32,
+    ) -> i32;
+
+    // Batched Round 0 logup (logup_round0.cu)
+    fn _batched_logup_r0_eval_interactions(
+        tmp_sums_buffer: *mut Frac<EF>,
+        output: *mut Frac<EF>,
+        d_block_ctxs: *const std::ffi::c_void,
+        d_logup_ctxs: *const std::ffi::c_void,
+        d_air_offsets: *const u32,
+        total_blocks: u32,
+        num_airs: u32,
+        num_cosets: u32,
+        skip_domain: u32,
+        block_x: u32,
     ) -> i32;
 
     fn _fold_selectors_round0(
@@ -1463,5 +1548,61 @@ pub unsafe fn fold_selectors_round0(
         is_first,
         is_last,
         num_x as u32,
+    ))
+}
+
+/// Launch batched Round 0 zerocheck constraint evaluation.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn batched_zerocheck_r0_eval_constraints(
+    tmp_sums_buffer: &mut DeviceBuffer<EF>,
+    output: &mut DeviceBuffer<EF>,
+    block_ctxs: &DeviceBuffer<Round0BlockCtx>,
+    zc_ctxs: &DeviceBuffer<Round0ZcCtx>,
+    air_offsets: &DeviceBuffer<u32>,
+    total_blocks: u32,
+    num_airs: u32,
+    num_cosets: u32,
+    skip_domain: u32,
+    block_x: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_batched_zerocheck_r0_eval_constraints(
+        tmp_sums_buffer.as_mut_ptr(),
+        output.as_mut_ptr(),
+        block_ctxs.as_ptr() as *const std::ffi::c_void,
+        zc_ctxs.as_ptr() as *const std::ffi::c_void,
+        air_offsets.as_ptr(),
+        total_blocks,
+        num_airs,
+        num_cosets,
+        skip_domain,
+        block_x,
+    ))
+}
+
+/// Launch batched Round 0 logup interaction evaluation.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn batched_logup_r0_eval_interactions(
+    tmp_sums_buffer: &mut DeviceBuffer<Frac<EF>>,
+    output: &mut DeviceBuffer<Frac<EF>>,
+    block_ctxs: &DeviceBuffer<Round0BlockCtx>,
+    logup_ctxs: &DeviceBuffer<Round0LogupCtx>,
+    air_offsets: &DeviceBuffer<u32>,
+    total_blocks: u32,
+    num_airs: u32,
+    num_cosets: u32,
+    skip_domain: u32,
+    block_x: u32,
+) -> Result<(), CudaError> {
+    CudaError::from_result(_batched_logup_r0_eval_interactions(
+        tmp_sums_buffer.as_mut_ptr(),
+        output.as_mut_ptr(),
+        block_ctxs.as_ptr() as *const std::ffi::c_void,
+        logup_ctxs.as_ptr() as *const std::ffi::c_void,
+        air_offsets.as_ptr(),
+        total_blocks,
+        num_airs,
+        num_cosets,
+        skip_domain,
+        block_x,
     ))
 }

@@ -83,6 +83,7 @@ mod fractional;
 mod gkr_input;
 mod mle_round;
 mod round0;
+mod round0_batched;
 pub(crate) mod rules;
 
 use batch_mle::{evaluate_logup_batched, TraceCtx};
@@ -120,16 +121,12 @@ pub(crate) fn air_width_for_mat(need_rot: bool, mat_width: usize) -> u32 {
 /// Pre-computed transformation matrices for GPU-side polynomial extraction in Round 0.
 /// Captures the entire pipeline: transpose + iDFT + unshift + Lagrange interpolation
 /// + coefficient adjustment (for zerocheck only).
-struct Round0ExtractTables {
-    /// Zerocheck: maps eval values to final poly coefficients (with adjustment).
-    /// Row-major [output_size × input_size].
-    zc_transform: DeviceBuffer<EF>,
-    zc_input_size: u32,
-    zc_output_size: u32,
-    /// Logup: maps eval values to poly coefficients (no adjustment).
-    /// Row-major [size × size].
-    logup_transform: DeviceBuffer<EF>,
-    logup_size: u32,
+pub(super) struct Round0ExtractTables {
+    pub zc_transform: DeviceBuffer<EF>,
+    pub zc_input_size: u32,
+    pub zc_output_size: u32,
+    pub logup_transform: DeviceBuffer<EF>,
+    pub logup_size: u32,
 }
 
 /// Compute transform matrices for a given constraint degree `d` and `l_skip`.
@@ -209,36 +206,29 @@ fn compute_round0_extract_tables(d: usize, l_skip: usize) -> Result<Round0Extrac
 }
 
 /// All read-only references needed to process one AIR in Round 0.
-struct Round0AirWorkItem<'a, HS: GpuHashScheme> {
-    trace_idx: usize,
-    single_pk: &'a DeviceStarkProvingKey<GenericGpuBackend<HS>>,
-    n: isize,
-    selectors_cube: &'a DeviceMatrix<F>,
-    public_values: &'a DeviceBuffer<F>,
-    eq_3bs: &'a [EF],
-    cached_mains: &'a [CommittedTraceData<GenericGpuBackend<HS>>],
-    common_main: &'a DeviceMatrix<F>,
-    eq_xis: &'a FxHashMap<usize, EqEvalLayers<EF>>,
-    d_lambda_pows: &'a DeviceBuffer<EF>,
-    beta_pows: &'a [EF],
-    l_skip: usize,
-    constraint_degree: usize,
-    xi: &'a [EF],
-    max_temp_bytes: usize,
-    /// Pre-computed zerocheck intermediates buffer capacity needed
-    zc_intermed_cap: usize,
-    /// Pre-computed zerocheck temp sums buffer capacity needed
-    zc_temp_sums_cap: usize,
-    /// Pre-computed logup intermediates buffer capacity needed
-    logup_intermed_cap: usize,
-    /// Pre-computed logup temp sums buffer capacity needed
-    logup_temp_sums_cap: usize,
-    /// Offset into the device batch array for this AIR's zerocheck poly
-    zc_batch_offset: usize,
-    /// Offset for logup numerator poly
-    numer_batch_offset: usize,
-    /// Offset for logup denominator poly
-    denom_batch_offset: usize,
+pub(super) struct Round0AirWorkItem<'a, HS: GpuHashScheme> {
+    pub trace_idx: usize,
+    pub single_pk: &'a DeviceStarkProvingKey<GenericGpuBackend<HS>>,
+    pub n: isize,
+    pub selectors_cube: &'a DeviceMatrix<F>,
+    pub public_values: &'a DeviceBuffer<F>,
+    pub eq_3bs: &'a [EF],
+    pub cached_mains: &'a [CommittedTraceData<GenericGpuBackend<HS>>],
+    pub common_main: &'a DeviceMatrix<F>,
+    pub eq_xis: &'a FxHashMap<usize, EqEvalLayers<EF>>,
+    pub d_lambda_pows: &'a DeviceBuffer<EF>,
+    pub beta_pows: &'a [EF],
+    pub l_skip: usize,
+    pub constraint_degree: usize,
+    pub xi: &'a [EF],
+    pub max_temp_bytes: usize,
+    pub zc_intermed_cap: usize,
+    pub zc_temp_sums_cap: usize,
+    pub logup_intermed_cap: usize,
+    pub logup_temp_sums_cap: usize,
+    pub zc_batch_offset: usize,
+    pub numer_batch_offset: usize,
+    pub denom_batch_offset: usize,
 }
 
 fn process_air_round0<HS: GpuHashScheme>(
@@ -1201,12 +1191,31 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         // is visible to worker thread streams.
         current_stream_sync().map_err(MemCopyError::from)?;
 
-        // Phase 2: Process AIRs in parallel across N OS threads.
+        // Phase 1b: Batched path for small AIRs.
+        // Identify batchable AIRs and process them with descriptor-array kernels.
+        // This eliminates per-AIR kernel launch overhead for the majority of AIRs.
+        let batchable = round0_batched::identify_batchable_airs(&work_items, l_skip);
+        let batched_count = batchable.iter().filter(|&&b| b).count();
+        if batched_count > 0 {
+            round0_batched::batch_round0_small_airs(
+                &work_items,
+                &batchable,
+                l_skip,
+                d_batch_array.as_mut_ptr(),
+                &extract_tables,
+                &self.eq_xis,
+                &self.eq_3b_per_trace,
+                &self.beta_pows,
+            )?;
+        }
+
+        // Phase 2: Process remaining (non-batched) AIRs in parallel across N OS threads.
         // Only use multi-threading when there are enough AIRs to benefit from concurrent
         // kernel execution. With few large AIRs (e.g., APC 0 has ~20 per segment), each
         // kernel already saturates the GPU and multi-threading adds memory pool overhead.
-        let mut num_threads = if work_items.len() >= 100 {
-            NUM_ROUND0_STREAMS.min(work_items.len())
+        let remaining_items = work_items.len() - batched_count;
+        let mut num_threads = if remaining_items >= 100 {
+            NUM_ROUND0_STREAMS.min(remaining_items)
         } else {
             1
         };
@@ -1312,7 +1321,10 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             }
 
             let mut bufs = thread_buffers.into_iter().next().unwrap();
-            for w in &work_items {
+            for (idx, w) in work_items.iter().enumerate() {
+                if batchable[idx] {
+                    continue;
+                }
                 process_air_round0(w, &mut bufs, batch_ptr_val as *mut EF, &extract_tables)?;
             }
             current_stream_sync().map_err(MemCopyError::from)?;
@@ -1326,8 +1338,13 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
             // without needing a calibrated cost model.
             let mut thread_items: Vec<Vec<usize>> =
                 (0..num_threads).map(|_| Vec::new()).collect();
+            let mut remaining_idx = 0;
             for (item_idx, _) in work_items.iter().enumerate() {
-                thread_items[item_idx % num_threads].push(item_idx);
+                if batchable[item_idx] {
+                    continue;
+                }
+                thread_items[remaining_idx % num_threads].push(item_idx);
+                remaining_idx += 1;
             }
 
             // Capture shared references for the background precompute thread.
