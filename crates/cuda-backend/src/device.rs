@@ -1,10 +1,13 @@
 use getset::{CopyGetters, Getters, MutGetters};
-use openvm_cuda_common::common::get_device;
+use openvm_cuda_common::{common::get_device, d_buffer::DeviceBuffer};
 use openvm_stark_backend::SystemParams;
 
 use crate::cuda::{
     batch_ntt_small::ensure_device_ntt_twiddles_initialized, device_info::get_sm_count,
 };
+
+/// Fixed pool warmup size in bytes. Covers the RS codeword buffer for typical workloads.
+const POOL_WARMUP_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Clone, Getters, CopyGetters, MutGetters)]
 pub struct GpuDevice {
@@ -27,6 +30,15 @@ pub struct GpuProverConfig {
 impl GpuDevice {
     pub fn new(config: SystemParams) -> Self {
         ensure_device_ntt_twiddles_initialized();
+
+        // Pre-warm the GPU memory pool by allocating and freeing a 256MB buffer.
+        // This maps physical pages in VPMM (or grows the cudaMallocAsync pool),
+        // avoiding cold-start overhead in the first segment's rs_code_matrix.
+        {
+            let warmup_elems = POOL_WARMUP_BYTES / std::mem::size_of::<u32>();
+            let _warmup = DeviceBuffer::<u32>::with_capacity(warmup_elems);
+            // _warmup dropped here → pages return to pool, ready for reuse
+        }
 
         let prover_config = GpuProverConfig {
             zerocheck_save_memory: config.log_blowup == 1,
