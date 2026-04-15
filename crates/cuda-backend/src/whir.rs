@@ -194,6 +194,13 @@ where
     let mut d_s_evals = DeviceBuffer::<EF>::with_capacity(2);
     let mut d_sumcheck_tmp = DeviceBuffer::<EF>::new();
 
+    // Pre-allocate scratch buffers for pingpong fold reuse in inner rounds.
+    // Capacity = initial height (2^m). Only inner rounds 0..k_whir-2 use these;
+    // the last inner round allocates correctly-sized buffers for w_moments_accumulate.
+    let initial_height = 1 << m;
+    let mut scratch_f = DeviceBuffer::<EF>::with_capacity(initial_height);
+    let mut scratch_w = DeviceBuffer::<EF>::with_capacity(initial_height);
+
     mem.tracing_info("before_whir_rounds");
     // We will drop `stacked_per_commit` and hence `common_main_pcs_data` after whir round 0.
     for (whir_round, round_params) in whir_params.rounds.iter().enumerate() {
@@ -215,8 +222,6 @@ where
             if d_sumcheck_tmp.len() < tmp_buffer_capacity as usize {
                 d_sumcheck_tmp = DeviceBuffer::<EF>::with_capacity(tmp_buffer_capacity as usize);
             }
-            let mut new_f_coeffs = DeviceBuffer::<EF>::with_capacity(output_height);
-            let mut new_w_moments = DeviceBuffer::<EF>::with_capacity(output_height);
             // SAFETY:
             // - `d_s_evals` has length 2
             // - `d_sumcheck_tmp` has at least required scratch length
@@ -247,27 +252,58 @@ where
             );
             let alpha = transcript.sample_ext();
 
-            // Fold `f` and `w` in coefficient/moment form with respect to `alpha`.
-            // SAFETY:
-            // - input buffers have length `f_height`.
-            // - output buffers have length `f_height / 2`.
-            unsafe {
-                whir_fold_coeffs_and_moments(
-                    &f_coeffs,
-                    &w_moments,
-                    &mut new_f_coeffs,
-                    &mut new_w_moments,
-                    alpha,
-                    f_height as u32,
-                )
-                .map_err(|error| WhirProverError::FoldMle {
-                    error,
-                    whir_round,
-                    round,
-                })?;
+            if round < k_whir - 1 {
+                // Non-final inner round: fold into pre-allocated scratch buffers.
+                // scratch_f/scratch_w have capacity >= output_height (initial_height >= any output_height).
+                // The fold kernel uses explicit `f_height` param, not buffer .len().
+                // SAFETY:
+                // - input buffers have length >= `f_height`.
+                // - scratch buffers have capacity >= `f_height / 2`.
+                unsafe {
+                    whir_fold_coeffs_and_moments(
+                        &f_coeffs,
+                        &w_moments,
+                        &mut scratch_f,
+                        &mut scratch_w,
+                        alpha,
+                        f_height as u32,
+                    )
+                    .map_err(|error| WhirProverError::FoldMle {
+                        error,
+                        whir_round,
+                        round,
+                    })?;
+                }
+                // Swap: scratch becomes current, old current becomes scratch for next round.
+                std::mem::swap(&mut f_coeffs, &mut scratch_f);
+                std::mem::swap(&mut w_moments, &mut scratch_w);
+            } else {
+                // Final inner round: allocate correctly-sized output buffers.
+                // This preserves .len() == output_height, which w_moments_accumulate
+                // reads at cuda/whir.rs:148 to determine the processing height.
+                let mut new_f_coeffs = DeviceBuffer::<EF>::with_capacity(output_height);
+                let mut new_w_moments = DeviceBuffer::<EF>::with_capacity(output_height);
+                // SAFETY:
+                // - input buffers have length >= `f_height`.
+                // - output buffers have length `f_height / 2`.
+                unsafe {
+                    whir_fold_coeffs_and_moments(
+                        &f_coeffs,
+                        &w_moments,
+                        &mut new_f_coeffs,
+                        &mut new_w_moments,
+                        alpha,
+                        f_height as u32,
+                    )
+                    .map_err(|error| WhirProverError::FoldMle {
+                        error,
+                        whir_round,
+                        round,
+                    })?;
+                }
+                f_coeffs = new_f_coeffs;
+                w_moments = new_w_moments;
             }
-            f_coeffs = new_f_coeffs;
-            w_moments = new_w_moments;
         }
         // Define g^ = f^(alpha, \cdot) and send matrix commit of RS(g^)
         // `f_coeffs` is the coefficient form of f^(alpha, \cdot).
