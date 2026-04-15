@@ -20,10 +20,7 @@ fn main() {
         .clone()
         .library_name("cuda-backend")
         .watch("cuda")
-        .include("cuda/include")
-        // Prune NEEDS_SHMEM=true template variants from Round 0 kernels.
-        // Safe when skip_domain <= WARP_SIZE (l_skip <= 5, i.e., skip_domain <= 32).
-        .flag("-DPRUNE_SHMEM_KERNELS");
+        .include("cuda/include");
 
     // Collect .cu files, excluding bn254_poseidon2.cu unless the feature is enabled.
     let bn254_enabled = std::env::var("CARGO_FEATURE_BABY_BEAR_BN254_POSEIDON2").is_ok();
