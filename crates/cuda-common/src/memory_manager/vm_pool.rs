@@ -40,6 +40,9 @@ pub(super) struct VpmmConfig {
     pub va_size: usize,
     /// Number of pages to preallocate at startup (default: 0).
     pub initial_pages: usize,
+    /// Minimum allocation size routed to the VPMM. Allocations smaller than this
+    /// use `cudaMallocAsync` instead. If `None`, defaults to 4× page_size.
+    pub pool_threshold: Option<usize>,
 }
 
 impl Default for VpmmConfig {
@@ -48,6 +51,7 @@ impl Default for VpmmConfig {
             page_size: None,
             va_size: DEFAULT_VA_SIZE,
             initial_pages: 0,
+            pool_threshold: None,
         }
     }
 }
@@ -78,10 +82,17 @@ impl VpmmConfig {
             Err(_) => 0,
         };
 
+        let pool_threshold = std::env::var("VPMM_POOL_THRESHOLD").ok().map(|val| {
+            let size: usize = val.parse().expect("VPMM_POOL_THRESHOLD must be a valid number");
+            assert!(size > 0, "VPMM_POOL_THRESHOLD must be > 0");
+            size
+        });
+
         Self {
             page_size,
             va_size,
             initial_pages,
+            pool_threshold,
         }
     }
 }
@@ -132,6 +143,9 @@ pub(super) struct VirtualMemoryPool {
 
     // Granularity size: (page % 2MB must be 0)
     pub(super) page_size: usize,
+
+    // Minimum allocation size routed through VPMM. Smaller allocations use cudaMallocAsync.
+    pub(super) pool_threshold: usize,
 
     // Reserved virtual address span in bytes
     va_size: usize,
@@ -201,6 +215,26 @@ impl VirtualMemoryPool {
             }
         };
 
+        // Resolve pool_threshold: minimum allocation size routed to VPMM.
+        // Allocations smaller than this use cudaMallocAsync.
+        let pool_threshold = match config.pool_threshold {
+            Some(t) => {
+                assert!(
+                    t >= page_size,
+                    "VPMM_POOL_THRESHOLD ({}) must be >= page_size ({})",
+                    t, page_size
+                );
+                t
+            }
+            // Default: 4x page_size (typically 64 MiB).
+            // Allocations below this go through cudaMallocAsync.
+            None => page_size.saturating_mul(4),
+        };
+        tracing::debug!(
+            "VPMM: pool_threshold={}",
+            ByteSize::b(pool_threshold as u64)
+        );
+
         let mut pool = Self {
             roots: vec![root],
             active_pages: HashMap::new(),
@@ -214,6 +248,7 @@ impl VirtualMemoryPool {
             zombie_regions: Vec::new(),
             free_num: 0,
             page_size,
+            pool_threshold,
             va_size,
             device_id,
         };

@@ -56,6 +56,7 @@ fn test_va_exhaustion_reserves_more() {
         page_size: None,
         va_size: 4 << 20, // 4 MB VA per chunk
         initial_pages: 0,
+        pool_threshold: None,
     };
     let mut pool = VirtualMemoryPool::new(config);
 
@@ -118,6 +119,7 @@ fn run_doc_scenario(
         page_size: None,  // Use device granularity
         va_size: 1 << 30, // 1 GB VA space
         initial_pages,
+        pool_threshold: None,
     };
     let mut pool = VirtualMemoryPool::new(config);
 
@@ -391,6 +393,7 @@ fn create_test_pool(initial_pages: usize) -> VirtualMemoryPool {
         page_size: None,  // Use device granularity
         va_size: 1 << 30, // 1 GB VA space
         initial_pages,
+        pool_threshold: None,
     };
     let pool = VirtualMemoryPool::new(config);
     if pool.page_size == usize::MAX {
@@ -615,6 +618,7 @@ fn test_defrag_new_pages_merge_with_existing() {
         page_size: None,
         va_size: 1 << 30,
         initial_pages: 0,
+        pool_threshold: None,
     };
     let mut pool = VirtualMemoryPool::new(config);
 
