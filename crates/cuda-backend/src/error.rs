@@ -128,10 +128,10 @@ pub enum MerkleTreeError {
 
 #[derive(Error, Debug)]
 pub enum StackTracesError {
-    #[error(transparent)]
-    MemCopy(#[from] MemCopyError),
-    #[error("batch_expand_pad_wide error: {0}")]
-    BatchExpandPadWide(CudaError),
+    #[error("descriptor upload error: {0}")]
+    DescriptorUpload(MemCopyError),
+    #[error("stack_columns kernel error: {0}")]
+    StackColumns(CudaError),
     #[error("fill_zero error: {0}")]
     FillZero(CudaError),
 }
