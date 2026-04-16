@@ -556,41 +556,6 @@ __global__ void batched_nondegen_mle_round_kernel(
 }
 
 // ============================================================================
-// GPU-SIDE POLYNOMIAL EXTRACTION KERNELS
-// ============================================================================
-
-// Pointwise multiply 3 pairs of EF vectors and sum: s[j] = Σᵢ E_i[j] × G_i[j]
-// Input E and G are AoS FpExt format (already DFT'd to evaluation domain)
-// Output s is AoS FpExt format
-__global__ void ef_pointwise_mul3_sum_kernel(
-    const FpExt *__restrict__ e_evals,   // [NUM_G × domain_size]
-    const FpExt *__restrict__ g_evals,   // [NUM_G × domain_size]
-    FpExt *__restrict__ s_out,           // [domain_size]
-    uint32_t domain_size
-) {
-    uint32_t j = blockIdx.x * blockDim.x + threadIdx.x;
-    if (j >= domain_size) return;
-    FpExt acc(0);
-    #pragma unroll
-    for (int i = 0; i < NUM_G; i++) {
-        acc += e_evals[i * domain_size + j] * g_evals[i * domain_size + j];
-    }
-    s_out[j] = acc;
-}
-
-// Element-wise accumulate: accum[i] += addend[i]
-// No atomics needed — caller ensures sequential execution on the same stream.
-__global__ void ef_accumulate_kernel(
-    FpExt *__restrict__ accum,
-    const FpExt *__restrict__ addend,
-    uint32_t len
-) {
-    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= len) return;
-    accum[i] += addend[i];
-}
-
-// ============================================================================
 // LAUNCHERS
 // ============================================================================
 
@@ -840,28 +805,5 @@ extern "C" int _batched_stacked_reduction_sumcheck_mle_round(
         output, q_height
     );
 
-    return CHECK_KERNEL();
-}
-
-extern "C" int _ef_pointwise_mul3_sum(
-    const FpExt *e_evals,
-    const FpExt *g_evals,
-    FpExt *s_out,
-    uint32_t domain_size
-) {
-    if (domain_size == 0) return 0;
-    auto [grid, block] = kernel_launch_params(domain_size, 256);
-    ef_pointwise_mul3_sum_kernel<<<grid, block>>>(e_evals, g_evals, s_out, domain_size);
-    return CHECK_KERNEL();
-}
-
-extern "C" int _ef_accumulate(
-    FpExt *accum,
-    const FpExt *addend,
-    uint32_t len
-) {
-    if (len == 0) return 0;
-    auto [grid, block] = kernel_launch_params(len, 256);
-    ef_accumulate_kernel<<<grid, block>>>(accum, addend, len);
     return CHECK_KERNEL();
 }

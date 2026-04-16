@@ -123,15 +123,6 @@ extern "C" {
         output: *mut u64,
         q_height: u32,
     ) -> i32;
-
-    fn _ef_pointwise_mul3_sum(
-        e_evals: *const EF,
-        g_evals: *const EF,
-        s_out: *mut EF,
-        domain_size: u32,
-    ) -> i32;
-
-    fn _ef_accumulate(accum: *mut EF, addend: *const EF, len: u32) -> i32;
 }
 
 /// SP_DEG=1 round 0 kernel: computes G0, G1, G2 partial sums on identity coset only.
@@ -392,32 +383,6 @@ pub unsafe fn batched_stacked_reduction_sumcheck_mle_round(
         output.as_mut_ptr(),
         q_height as u32,
     ))
-}
-
-/// Pointwise multiply 3 pairs of EF vectors and sum: s[j] = Σᵢ E_i[j] × G_i[j].
-///
-/// # Safety
-/// - `e_evals` and `g_evals` must point to `3 * domain_size` valid EF elements on device.
-/// - `s_out` must point to `domain_size` valid EF elements on device.
-pub unsafe fn ef_pointwise_mul3_sum(
-    e_evals: *const EF,
-    g_evals: *const EF,
-    s_out: *mut EF,
-    domain_size: u32,
-) -> Result<(), CudaError> {
-    check(_ef_pointwise_mul3_sum(e_evals, g_evals, s_out, domain_size))
-}
-
-/// Element-wise accumulate: accum[i] += addend[i].
-///
-/// # Safety
-/// - `accum` and `addend` must point to `len` valid EF elements on device.
-pub unsafe fn ef_accumulate(
-    accum: *mut EF,
-    addend: *const EF,
-    len: u32,
-) -> Result<(), CudaError> {
-    check(_ef_accumulate(accum, addend, len))
 }
 
 const MAX_GRID_DIM: u32 = 65535;

@@ -54,8 +54,6 @@ pub enum StackedReductionError {
     FoldMle(CudaError),
     #[error("triangular_fold_mle: {0}")]
     TriangularFoldMle(CudaError),
-    #[error("reconstruct_s0_gpu: {0}")]
-    ReconstructGpu(CudaError),
 }
 
 #[derive(Error, Debug)]
