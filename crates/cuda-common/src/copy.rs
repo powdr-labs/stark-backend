@@ -5,7 +5,7 @@ use lazy_static::lazy_static;
 use crate::{
     d_buffer::DeviceBuffer,
     error::{check, MemCopyError},
-    stream::{cudaStreamPerThread, cudaStream_t, CudaEvent},
+    stream::{current_stream_sync, cudaStreamPerThread, cudaStream_t, CudaEvent},
 };
 
 lazy_static! {
@@ -121,6 +121,33 @@ impl<T> MemCopyD2H<T> for DeviceBuffer<T> {
             host_vec.set_len(self.len());
         }
 
+        Ok(host_vec)
+    }
+}
+
+/// Like [`MemCopyD2H`], but syncs on the calling thread's per-thread stream instead of the global
+/// `COPY_EVENT` mutex. Safe to call from multiple threads without mutex contention.
+pub trait MemCopyD2HStreamSync<T> {
+    fn to_host_on_current_stream(&self) -> Result<Vec<T>, MemCopyError>;
+}
+
+impl<T> MemCopyD2HStreamSync<T> for DeviceBuffer<T> {
+    fn to_host_on_current_stream(&self) -> Result<Vec<T>, MemCopyError> {
+        let mut host_vec = Vec::with_capacity(self.len());
+        let size_bytes = std::mem::size_of::<T>() * self.len();
+        check(unsafe {
+            cudaMemcpyAsync(
+                host_vec.as_mut_ptr() as *mut c_void,
+                self.as_raw_ptr(),
+                size_bytes,
+                cudaMemcpyKind::cudaMemcpyDeviceToHost,
+                cudaStreamPerThread,
+            )
+        })?;
+        current_stream_sync().map_err(MemCopyError::from)?;
+        unsafe {
+            host_vec.set_len(self.len());
+        }
         Ok(host_vec)
     }
 }
