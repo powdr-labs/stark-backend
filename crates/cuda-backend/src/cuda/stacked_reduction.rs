@@ -244,7 +244,7 @@ pub unsafe fn stacked_reduction_sumcheck_mle_round(
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn stacked_reduction_sumcheck_mle_round_degenerate(
     q_evals: &DeviceBuffer<*const EF>,
-    eq_ub_ptr: &DeviceBuffer<EF>,
+    eq_ub_ptr: *const EF,
     eq_r: EF,
     k_rot_r: EF,
     unstacked_cols: *const UnstackedSlice,
@@ -259,7 +259,7 @@ pub unsafe fn stacked_reduction_sumcheck_mle_round_degenerate(
 
     check(_stacked_reduction_sumcheck_mle_round_degenerate(
         q_evals.as_ptr(),
-        eq_ub_ptr.as_ptr(),
+        eq_ub_ptr,
         eq_r,
         k_rot_r,
         unstacked_cols,
