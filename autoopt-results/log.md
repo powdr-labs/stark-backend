@@ -262,6 +262,30 @@
 
 **Summary**: The warmup successfully eliminated the codeword allocation cold-start at APC 300 (rs_code_matrix seg 0: 58ms → 14ms), but caused a consistent +177ms LogUp GKR regression at APC 0 (verified across 4 runs). This is the same VPMM pool state sensitivity pattern seen in multistream-stacked-reduction-round0 and batch-global-gkr-input-eval — changing the pool's free region layout disrupts memory access patterns for bandwidth-bound GKR kernels. An alternative using VPMM initial_pages (pre-allocation at pool construction time) barely helped (58ms → 51ms) because pages get consumed by intermediate allocations before proving starts.
 
+## 2026-04-15-1000-vpmm-bulk-page-creation
+
+**Idea**: Reduce VPMM allocation overhead by increasing the default page size from 2 MiB to 16 MiB (8x granularity).
+
+**Result**: success — STARK excl trace at APC 300: 1296ms → 1110ms (2.21x lower vs baseline 2455ms). (vs previous: -186ms, 1.17x lower).
+
+**Summary**: The original bulk-`cuMemCreate` plan was abandoned after discovering this RTX 4090 / driver combination does not support offset-based `cuMemMap` for partial mappings. Instead, the default VPMM page size was raised from 2 MiB to 16 MiB, which cut `cuMemCreate` calls by 8x and routed 2-16 MiB buffers through `cudaMallocAsync`. Trace Commit improved by 50ms as expected, and Constraints / LogUp GKR improved much more than expected, likely from lower VPMM management overhead and better memory layout.
+
+## 2026-04-15-1020-decouple-vpmm-pool-threshold
+
+**Idea**: Decouple the VPMM routing threshold from page size so 16-64 MiB allocations can bypass VPMM.
+
+**Result**: failure — STARK excl trace at APC 300: 1110ms → 1130ms (2.17x lower vs baseline, but +20ms vs previous). APC 0 regressed by +51ms.
+
+**Summary**: Added a separate pool-threshold parameter so more medium-sized allocations would go through `cudaMallocAsync` instead of VPMM. The change regressed APC 0, 100, and 300, with the APC 0 regression scaling monotonically with the threshold multiplier. This confirms that the 16 MiB default page size is a local optimum: extending the bypass further disrupts the memory layout that bandwidth-bound phases depend on.
+
+## 2026-04-15-1130-batch-small-air-round0-descriptors
+
+**Idea**: Batch small Round 0 AIRs into descriptor-array CUDA kernels and write directly to `d_batch_array`, while pruning shmem kernel variants to reduce cubin size.
+
+**Result**: failure — APC 100 and APC 300 benchmarks were blocked by a pre-existing GPU OOM in GKR input after CUDA rebuild, so the change could not be validated and was not kept. APC 0 regression check only: STARK excl trace 1777ms → 1798ms with the batched path inactive.
+
+**Summary**: This was the third attempt at small-AIR Round 0 batching, now using direct GPU extraction into `d_batch_array` and the `PRUNE_SHMEM_KERNELS` build flag to shrink the cubin. The implementation compiles and the inactive APC 0 path shows no meaningful regression, but APC 100/300 could not be measured because any freshly rebuilt binary hit a pre-existing GPU OOM in GKR input evaluation. The task therefore did not produce a trustworthy APC 300 performance result and was not kept.
+
 ## 2026-04-15-1600-fix-batch-round0-revert-and-reapply
 
 **Idea**: Pre-compute logup Round 0 interaction DAG rules at keygen time to eliminate per-AIR CPU-side DAG reconstruction in Phase 2 and enable a future batched kernel path.
