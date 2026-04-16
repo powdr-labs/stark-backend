@@ -349,6 +349,25 @@ extern "C" {
         max_temp_bytes: usize,
     ) -> i32;
 
+    // round0_extract.cu
+    pub fn _round0_extract_zerocheck_poly(
+        d_out: *mut EF,
+        d_evals: *const EF,
+        d_transform: *const EF,
+        input_size: u32,
+        output_size: u32,
+    ) -> i32;
+
+    pub fn _round0_extract_logup_polys(
+        d_out_numer: *mut EF,
+        d_out_denom: *mut EF,
+        d_evals: *const Frac<EF>,
+        d_transform: *const EF,
+        input_size: u32,
+        output_size: u32,
+        norm_factor: EF,
+    ) -> i32;
+
     fn _fold_selectors_round0(
         out: *mut EF,
         input: *const F,
