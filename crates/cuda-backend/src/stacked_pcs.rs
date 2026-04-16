@@ -1,8 +1,8 @@
-use std::{ffi::c_void, sync::Arc};
+use std::sync::Arc;
 
 use getset::Getters;
 use itertools::Itertools;
-use openvm_cuda_common::{copy::cuda_memcpy, d_buffer::DeviceBuffer, memory_manager::MemTracker};
+use openvm_cuda_common::{copy::MemCopyH2D, d_buffer::DeviceBuffer, memory_manager::MemTracker};
 use openvm_stark_backend::{
     p3_util::log2_strict_usize,
     prover::{stacked_pcs::StackedLayout, MatrixDimensions},
@@ -13,7 +13,7 @@ use crate::{
     base::{DeviceMatrix, DeviceMatrixView},
     cuda::{
         batch_ntt_small::batch_ntt_small,
-        matrix::{batch_expand_pad, batch_expand_pad_wide},
+        matrix::{batch_expand_pad, stack_columns, StackColDesc},
         ntt::bit_rev,
     },
     hash_scheme::GpuMerkleHash,
@@ -142,40 +142,32 @@ pub(crate) fn stack_traces_into_expanded(
     debug_assert_eq!(buffer.len() % padded_height, 0);
     debug_assert_eq!(buffer.len() / padded_height, layout.width());
     buffer.fill_zero().map_err(StackTracesError::FillZero)?;
+
+    // Phase 1: Build descriptor array on host (CPU-only, no CUDA API calls)
+    let mut descs: Vec<StackColDesc> = Vec::with_capacity(layout.sorted_cols.len());
     for (mat_idx, j, s) in &layout.sorted_cols {
         let start = s.col_idx * padded_height + s.row_idx;
         let trace = traces[*mat_idx];
         let s_len = s.len(l_skip);
         debug_assert_eq!(trace.height(), 1 << s.log_height());
-        if s.log_height() >= l_skip {
+        let (src, height, stride) = if s.log_height() >= l_skip {
             debug_assert_eq!(trace.height(), s_len);
-            // SAFETY: matrix buffers are allocated correctly with respect to dimensions
-            // - `trace.height() = s_len` since `log_height >= l_skip`
-            // - `q_buf` has enough capacity by definition of stacked `layout`
-            unsafe {
-                let src = trace.buffer().as_ptr().add(*j * s_len);
-                let dst = buffer.as_mut_ptr().add(start);
-                // D2D memcpy
-                cuda_memcpy::<true, true>(
-                    dst as *mut c_void,
-                    src as *const c_void,
-                    s_len * size_of::<F>(),
-                )?;
-            }
+            let src = unsafe { trace.buffer().as_ptr().add(*j * s_len) };
+            (src, s_len as u32, 1u32)
         } else {
             let stride = s.stride(l_skip);
             debug_assert_eq!(stride * trace.height(), s_len);
-            // SAFETY: matrix buffers are allocated correctly
-            // - `q_buf` has enough capacity by definition of stacked `layout`
-            // - we abuse `batch_expand_pad` with `poly_count = trace.height()` to create a strided
-            //   column of length `s_len = stride * trace.height()`
-            unsafe {
-                let src = trace.buffer().as_ptr().add(*j * trace.height());
-                let dst = buffer.as_mut_ptr().add(start);
-                batch_expand_pad_wide(dst, src, trace.height() as u32, stride as u32, 1)
-                    .map_err(StackTracesError::BatchExpandPadWide)?;
-            }
-        }
+            let src = unsafe { trace.buffer().as_ptr().add(*j * trace.height()) };
+            (src, trace.height() as u32, stride as u32)
+        };
+        let dst = unsafe { buffer.as_mut_ptr().add(start) };
+        descs.push(StackColDesc { src, dst, height, stride });
+    }
+
+    // Phase 2: Upload descriptors to GPU and launch single scatter kernel
+    if !descs.is_empty() {
+        let d_descs = descs.to_device().map_err(StackTracesError::DescriptorUpload)?;
+        unsafe { stack_columns(&d_descs).map_err(StackTracesError::StackColumns)? };
     }
     Ok(())
 }
