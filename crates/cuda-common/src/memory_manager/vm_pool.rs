@@ -167,13 +167,13 @@ impl VirtualMemoryPool {
                             size
                         }
                         None => {
-                            // Use 8x the minimum granularity (typically 16 MiB) to reduce
-                            // the number of cuMemCreate calls for large allocations.
-                            // Each cuMemCreate has ~0.4ms driver overhead; with 2 MiB pages
-                            // a 256 MiB allocation requires 128 calls (~51ms). With 16 MiB
-                            // pages it requires only 16 calls (~6ms).
-                            // Allocations smaller than the page size use cudaMallocAsync.
-                            8 * granularity
+                            // Use 4x the minimum granularity (typically 8 MiB) to balance
+                            // cuMemCreate overhead reduction against WHIR buffer routing.
+                            // Larger page sizes (e.g. 16 MiB) route WHIR's 2-4 MiB buffers
+                            // through cudaMallocAsync instead of VPMM, adding ~25ms overhead.
+                            // 8 MiB pages keep WHIR buffers in VPMM while still reducing
+                            // cuMemCreate calls (32 calls for 256 MiB vs 128 at 2 MiB).
+                            4 * granularity
                         }
                     };
 
