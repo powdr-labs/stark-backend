@@ -1,0 +1,431 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='3900' height='1300' viewBox='0 0 3900 1300' role='img' aria-label='STARK excluding trace time by iteration for APC 300 and APC 0'>
+<rect width='100%' height='100%' fill='white'/>
+<style>text{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;fill:#111827}.title{font-size:28px;font-weight:700}.small{font-size:13px;fill:#4b5563}.tick{font-size:12px;fill:#374151}.label{font-size:10.5px;paint-order:stroke;stroke:white;stroke-width:4;stroke-linejoin:round}.diff{font-size:9.5px;fill:#4b5563}.axis{stroke:#111827;stroke-width:1.5}.grid{stroke:#e5e7eb;stroke-width:1}.series{fill:none;stroke:#2563eb;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round}.gap-series{fill:none;stroke:#2563eb;stroke-width:2.5;stroke-dasharray:7 7;opacity:.8;stroke-linecap:round}.apc0-series{fill:none;stroke:#9ca3af;stroke-width:2.4;stroke-dasharray:4 7;stroke-linecap:round;stroke-linejoin:round;opacity:.95}.leader{stroke:#9ca3af;stroke-width:1.1}.oom-note{font-size:10.5px;fill:#b91c1c;paint-order:stroke;stroke:white;stroke-width:4;stroke-linejoin:round}</style>
+<text x='120' y='36' class='title'>STARK (excl trace) by iteration</text>
+<text x='120' y='62' class='small'>Blue series: APC = 300, with green landed points and red reverted points. Gray dotted series: APC = 0 across the same branch states.</text>
+<line x1='120' y1='967.4' x2='3780' y2='967.4' class='grid'/>
+<text x='106' y='971.4' class='tick' text-anchor='end'>1100</text>
+<line x1='120' y1='841.7' x2='3780' y2='841.7' class='grid'/>
+<text x='106' y='845.7' class='tick' text-anchor='end'>1300</text>
+<line x1='120' y1='716.0' x2='3780' y2='716.0' class='grid'/>
+<text x='106' y='720.0' class='tick' text-anchor='end'>1500</text>
+<line x1='120' y1='590.3' x2='3780' y2='590.3' class='grid'/>
+<text x='106' y='594.3' class='tick' text-anchor='end'>1700</text>
+<line x1='120' y1='464.6' x2='3780' y2='464.6' class='grid'/>
+<text x='106' y='468.6' class='tick' text-anchor='end'>1900</text>
+<line x1='120' y1='338.9' x2='3780' y2='338.9' class='grid'/>
+<text x='106' y='342.9' class='tick' text-anchor='end'>2100</text>
+<line x1='120' y1='213.1' x2='3780' y2='213.1' class='grid'/>
+<text x='106' y='217.1' class='tick' text-anchor='end'>2300</text>
+<line x1='120' y1='87.4' x2='3780' y2='87.4' class='grid'/>
+<text x='106' y='91.4' class='tick' text-anchor='end'>2500</text>
+<line x1='120.0' y1='980' x2='120.0' y2='986' class='axis'/>
+<text x='120.0' y='1004' class='tick' text-anchor='middle'>0</text>
+<line x1='201.3' y1='980' x2='201.3' y2='986' class='axis'/>
+<text x='201.3' y='1004' class='tick' text-anchor='middle'>1</text>
+<line x1='282.7' y1='980' x2='282.7' y2='986' class='axis'/>
+<text x='282.7' y='1004' class='tick' text-anchor='middle'>2</text>
+<line x1='364.0' y1='980' x2='364.0' y2='986' class='axis'/>
+<text x='364.0' y='1004' class='tick' text-anchor='middle'>3</text>
+<line x1='445.3' y1='980' x2='445.3' y2='986' class='axis'/>
+<text x='445.3' y='1004' class='tick' text-anchor='middle'>4</text>
+<line x1='526.7' y1='980' x2='526.7' y2='986' class='axis'/>
+<text x='526.7' y='1004' class='tick' text-anchor='middle'>5</text>
+<line x1='608.0' y1='980' x2='608.0' y2='986' class='axis'/>
+<text x='608.0' y='1004' class='tick' text-anchor='middle'>6</text>
+<line x1='689.3' y1='980' x2='689.3' y2='986' class='axis'/>
+<text x='689.3' y='1004' class='tick' text-anchor='middle'>7</text>
+<line x1='770.7' y1='980' x2='770.7' y2='986' class='axis'/>
+<text x='770.7' y='1004' class='tick' text-anchor='middle'>8</text>
+<line x1='852.0' y1='980' x2='852.0' y2='986' class='axis'/>
+<text x='852.0' y='1004' class='tick' text-anchor='middle'>9</text>
+<line x1='933.3' y1='980' x2='933.3' y2='986' class='axis'/>
+<text x='933.3' y='1004' class='tick' text-anchor='middle'>10</text>
+<line x1='1014.7' y1='980' x2='1014.7' y2='986' class='axis'/>
+<text x='1014.7' y='1004' class='tick' text-anchor='middle'>11</text>
+<line x1='1096.0' y1='980' x2='1096.0' y2='986' class='axis'/>
+<text x='1096.0' y='1004' class='tick' text-anchor='middle'>12</text>
+<line x1='1177.3' y1='980' x2='1177.3' y2='986' class='axis'/>
+<text x='1177.3' y='1004' class='tick' text-anchor='middle'>13</text>
+<line x1='1258.7' y1='980' x2='1258.7' y2='986' class='axis'/>
+<text x='1258.7' y='1004' class='tick' text-anchor='middle'>14</text>
+<line x1='1340.0' y1='980' x2='1340.0' y2='986' class='axis'/>
+<text x='1340.0' y='1004' class='tick' text-anchor='middle'>15</text>
+<line x1='1421.3' y1='980' x2='1421.3' y2='986' class='axis'/>
+<text x='1421.3' y='1004' class='tick' text-anchor='middle'>16</text>
+<line x1='1502.7' y1='980' x2='1502.7' y2='986' class='axis'/>
+<text x='1502.7' y='1004' class='tick' text-anchor='middle'>17</text>
+<line x1='1584.0' y1='980' x2='1584.0' y2='986' class='axis'/>
+<text x='1584.0' y='1004' class='tick' text-anchor='middle'>18</text>
+<line x1='1665.3' y1='980' x2='1665.3' y2='986' class='axis'/>
+<text x='1665.3' y='1004' class='tick' text-anchor='middle'>19</text>
+<line x1='1746.7' y1='980' x2='1746.7' y2='986' class='axis'/>
+<text x='1746.7' y='1004' class='tick' text-anchor='middle'>20</text>
+<line x1='1828.0' y1='980' x2='1828.0' y2='986' class='axis'/>
+<text x='1828.0' y='1004' class='tick' text-anchor='middle'>21</text>
+<line x1='1909.3' y1='980' x2='1909.3' y2='986' class='axis'/>
+<text x='1909.3' y='1004' class='tick' text-anchor='middle'>22</text>
+<line x1='1990.7' y1='980' x2='1990.7' y2='986' class='axis'/>
+<text x='1990.7' y='1004' class='tick' text-anchor='middle'>23</text>
+<line x1='2072.0' y1='980' x2='2072.0' y2='986' class='axis'/>
+<text x='2072.0' y='1004' class='tick' text-anchor='middle'>24</text>
+<line x1='2153.3' y1='980' x2='2153.3' y2='986' class='axis'/>
+<text x='2153.3' y='1004' class='tick' text-anchor='middle'>25</text>
+<line x1='2234.7' y1='980' x2='2234.7' y2='986' class='axis'/>
+<text x='2234.7' y='1004' class='tick' text-anchor='middle'>26</text>
+<line x1='2316.0' y1='980' x2='2316.0' y2='986' class='axis'/>
+<text x='2316.0' y='1004' class='tick' text-anchor='middle'>27</text>
+<line x1='2397.3' y1='980' x2='2397.3' y2='986' class='axis'/>
+<text x='2397.3' y='1004' class='tick' text-anchor='middle'>28</text>
+<line x1='2478.7' y1='980' x2='2478.7' y2='986' class='axis'/>
+<text x='2478.7' y='1004' class='tick' text-anchor='middle'>29</text>
+<line x1='2560.0' y1='980' x2='2560.0' y2='986' class='axis'/>
+<text x='2560.0' y='1004' class='tick' text-anchor='middle'>30</text>
+<line x1='2641.3' y1='980' x2='2641.3' y2='986' class='axis'/>
+<text x='2641.3' y='1004' class='tick' text-anchor='middle'>31</text>
+<line x1='2722.7' y1='980' x2='2722.7' y2='986' class='axis'/>
+<text x='2722.7' y='1004' class='tick' text-anchor='middle'>32</text>
+<line x1='2804.0' y1='980' x2='2804.0' y2='986' class='axis'/>
+<text x='2804.0' y='1004' class='tick' text-anchor='middle'>33</text>
+<line x1='2885.3' y1='980' x2='2885.3' y2='986' class='axis'/>
+<text x='2885.3' y='1004' class='tick' text-anchor='middle'>34</text>
+<line x1='2966.7' y1='980' x2='2966.7' y2='986' class='axis'/>
+<text x='2966.7' y='1004' class='tick' text-anchor='middle'>35</text>
+<line x1='3048.0' y1='980' x2='3048.0' y2='986' class='axis'/>
+<text x='3048.0' y='1004' class='tick' text-anchor='middle'>36</text>
+<line x1='3129.3' y1='980' x2='3129.3' y2='986' class='axis'/>
+<text x='3129.3' y='1004' class='tick' text-anchor='middle'>37</text>
+<line x1='3210.7' y1='980' x2='3210.7' y2='986' class='axis'/>
+<text x='3210.7' y='1004' class='tick' text-anchor='middle'>38</text>
+<line x1='3292.0' y1='980' x2='3292.0' y2='986' class='axis'/>
+<text x='3292.0' y='1004' class='tick' text-anchor='middle'>39</text>
+<line x1='3373.3' y1='980' x2='3373.3' y2='986' class='axis'/>
+<text x='3373.3' y='1004' class='tick' text-anchor='middle'>40</text>
+<line x1='3454.7' y1='980' x2='3454.7' y2='986' class='axis'/>
+<text x='3454.7' y='1004' class='tick' text-anchor='middle'>41</text>
+<line x1='3536.0' y1='980' x2='3536.0' y2='986' class='axis'/>
+<text x='3536.0' y='1004' class='tick' text-anchor='middle'>42</text>
+<line x1='3617.3' y1='980' x2='3617.3' y2='986' class='axis'/>
+<text x='3617.3' y='1004' class='tick' text-anchor='middle'>43</text>
+<line x1='3698.7' y1='980' x2='3698.7' y2='986' class='axis'/>
+<text x='3698.7' y='1004' class='tick' text-anchor='middle'>44</text>
+<line x1='3780.0' y1='980' x2='3780.0' y2='986' class='axis'/>
+<text x='3780.0' y='1004' class='tick' text-anchor='middle'>45</text>
+<line x1='120' y1='100' x2='120' y2='980' class='axis'/>
+<line x1='120' y1='980' x2='3780' y2='980' class='axis'/>
+<text x='1950.0' y='1125' class='tick' text-anchor='middle'>Iteration number</text>
+<text x='28' y='540.0' class='tick' text-anchor='middle' transform='rotate(-90 28 540.0)'>STARK excl trace time (ms)</text>
+<polyline points='120.0,305.5 201.3,140.9 282.7,289.8 364.0,306.2 445.3,314.3 526.7,319.4 608.0,303.0 689.3,311.8 770.7,306.2 852.0,303.7 933.3,298.0 1014.7,301.1 1096.0,307.4 1177.3,305.5 1258.7,313.7 1340.0,312.5 1421.3,312.5 1502.7,301.8 1584.0,313.7 1665.3,293.6 1746.7,324.4 1828.0,309.3 1909.3,307.4 1990.7,309.9 2072.0,301.1 2153.3,302.4 2234.7,320.0 2316.0,298.0 2397.3,313.1 2478.7,301.1 2560.0,295.5 2641.3,301.1 2722.7,309.9 2804.0,231.4 2885.3,520.5 2966.7,534.3 3048.0,531.2 3129.3,535.6 3210.7,521.1 3292.0,529.9 3373.3,521.1 3454.7,460.2 3536.0,526.2 3617.3,522.4 3698.7,538.7 3780.0,529.9' class='apc0-series'/>
+<polyline points='120.0,115.7 201.3,117.6 282.7,115.7 364.0,233.3 445.3,421.2 526.7,571.4 608.0,655.0 689.3,705.3 770.7,715.4 852.0,732.3 933.3,540.6 1014.7,767.5 1096.0,765.7 1177.3,765.0' class='series'/>
+<polyline points='1340.0,771.9 1421.3,775.1 1502.7,796.5 1584.0,805.3 1665.3,679.5 1746.7,795.8 1828.0,819.1 1909.3,837.9 1990.7,843.6 2072.0,837.9 2153.3,831.0 2234.7,849.3 2316.0,838.6 2397.3,846.1 2478.7,839.2 2560.0,834.2 2641.3,847.4 2722.7,843.0 2804.0,873.1 2885.3,961.1 2966.7,933.5 3048.0,961.1 3129.3,955.5 3210.7,958.0 3292.0,956.1 3373.3,959.9 3454.7,954.9 3536.0,952.3 3617.3,959.3 3698.7,958.0 3780.0,953.6' class='series'/>
+<polyline points='1177.3,765.0 1340.0,771.9' class='gap-series'/>
+<circle cx='120.0' cy='305.5' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='120.0' cy='115.7' r='6' fill='#6b7280' stroke='white' stroke-width='1.6'/>
+<circle cx='201.3' cy='140.9' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='201.3' cy='117.6' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='282.7' cy='289.8' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='282.7' cy='115.7' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='364.0' cy='306.2' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='364.0' cy='233.3' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='445.3' cy='314.3' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='445.3' cy='421.2' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='526.7' cy='319.4' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='526.7' cy='571.4' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='608.0' cy='303.0' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='608.0' cy='655.0' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='689.3' cy='311.8' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='689.3' cy='705.3' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='770.7' cy='306.2' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='770.7' cy='715.4' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='852.0' cy='303.7' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='852.0' cy='732.3' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='933.3' cy='298.0' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='933.3' cy='540.6' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='1014.7' cy='301.1' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1014.7' cy='767.5' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='1096.0' cy='307.4' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1096.0' cy='765.7' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='1177.3' cy='305.5' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1177.3' cy='765.0' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='1258.7' cy='313.7' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1340.0' cy='312.5' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1340.0' cy='771.9' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='1421.3' cy='312.5' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1421.3' cy='775.1' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='1502.7' cy='301.8' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1502.7' cy='796.5' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='1584.0' cy='313.7' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1584.0' cy='805.3' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='1665.3' cy='293.6' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1665.3' cy='679.5' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='1746.7' cy='324.4' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1746.7' cy='795.8' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='1828.0' cy='309.3' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1828.0' cy='819.1' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='1909.3' cy='307.4' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1909.3' cy='837.9' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='1990.7' cy='309.9' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='1990.7' cy='843.6' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='2072.0' cy='301.1' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='2072.0' cy='837.9' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='2153.3' cy='302.4' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='2153.3' cy='831.0' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='2234.7' cy='320.0' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='2234.7' cy='849.3' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='2316.0' cy='298.0' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='2316.0' cy='838.6' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='2397.3' cy='313.1' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='2397.3' cy='846.1' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='2478.7' cy='301.1' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='2478.7' cy='839.2' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='2560.0' cy='295.5' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='2560.0' cy='834.2' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='2641.3' cy='301.1' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='2641.3' cy='847.4' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='2722.7' cy='309.9' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='2722.7' cy='843.0' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='2804.0' cy='231.4' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='2804.0' cy='873.1' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='2885.3' cy='520.5' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='2885.3' cy='961.1' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='2966.7' cy='534.3' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='2966.7' cy='933.5' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='3048.0' cy='531.2' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='3048.0' cy='961.1' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='3129.3' cy='535.6' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='3129.3' cy='955.5' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='3210.7' cy='521.1' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='3210.7' cy='958.0' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='3292.0' cy='529.9' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='3292.0' cy='956.1' r='5.5' fill='#16a34a' stroke='white' stroke-width='1.6'/>
+<circle cx='3373.3' cy='521.1' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='3373.3' cy='959.9' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='3454.7' cy='460.2' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='3454.7' cy='954.9' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='3536.0' cy='526.2' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='3536.0' cy='952.3' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='3617.3' cy='522.4' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='3617.3' cy='959.3' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='3698.7' cy='538.7' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='3698.7' cy='958.0' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<circle cx='3780.0' cy='529.9' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/>
+<circle cx='3780.0' cy='953.6' r='5.5' fill='#dc2626' stroke='white' stroke-width='1.6'/>
+<text x='1258.7' y='1025' class='oom-note' text-anchor='middle'><tspan x='1258.7' dy='0'>Round 0 caller routing</tspan><tspan x='1258.7' dy='13'>OOM / no APC 300</tspan><tspan x='1258.7' dy='13' class='diff'>+1356/-6</tspan></text>
+<line x1='120.0' y1='115.7' x2='132.0' y2='129.7' class='leader'/>
+<text x='132.0' y='129.7' class='label' text-anchor='start'>
+<tspan x='132.0' dy='0'>Baseline APC 300</tspan>
+<tspan x='132.0' dy='12' class='diff'>n/a</tspan></text>
+<line x1='201.3' y1='117.6' x2='165.3' y2='179.6' class='leader'/>
+<text x='165.3' y='179.6' class='label' text-anchor='start'>
+<tspan x='165.3' dy='0'>Pipeline Round 0</tspan>
+<tspan x='165.3' dy='12' class='diff'>+485/-57</tspan></text>
+<line x1='282.7' y1='115.7' x2='272.7' y2='129.7' class='leader'/>
+<text x='272.7' y='129.7' class='label' text-anchor='start'>
+<tspan x='272.7' dy='0'>Round 0 CPU</tspan>
+<tspan x='272.7' dy='12'>post-process</tspan>
+<tspan x='272.7' dy='12' class='diff'>+124/-74</tspan></text>
+<line x1='364.0' y1='233.3' x2='372.0' y2='213.3' class='leader'/>
+<text x='372.0' y='213.3' class='label' text-anchor='start'>
+<tspan x='372.0' dy='0'>Batched stacked</tspan>
+<tspan x='372.0' dy='12'>reduction sync</tspan>
+<tspan x='372.0' dy='12' class='diff'>+22/-40</tspan></text>
+<line x1='445.3' y1='421.2' x2='455.3' y2='413.2' class='leader'/>
+<text x='455.3' y='413.2' class='label' text-anchor='start'>
+<tspan x='455.3' dy='0'>Multi-stream Round 0</tspan>
+<tspan x='455.3' dy='12' class='diff'>+264/-140</tspan></text>
+<line x1='526.7' y1='571.4' x2='536.7' y2='563.4' class='leader'/>
+<text x='536.7' y='563.4' class='label' text-anchor='start'>
+<tspan x='536.7' dy='0'>Multi-stream GKR input</tspan>
+<tspan x='536.7' dy='12' class='diff'>+184/-108</tspan></text>
+<line x1='608.0' y1='655.0' x2='616.0' y2='637.0' class='leader'/>
+<text x='616.0' y='637.0' class='label' text-anchor='start'>
+<tspan x='616.0' dy='0'>Batched trace scatter</tspan>
+<tspan x='616.0' dy='12' class='diff'>+83/-32</tspan></text>
+<line x1='689.3' y1='705.3' x2='671.3' y2='751.3' class='leader'/>
+<text x='671.3' y='751.3' class='label' text-anchor='start'>
+<tspan x='671.3' dy='0'>Increase to 8 streams</tspan>
+<tspan x='671.3' dy='12' class='diff'>+3/-3</tspan></text>
+<line x1='770.7' y1='715.4' x2='778.7' y2='693.4' class='leader'/>
+<text x='778.7' y='693.4' class='label' text-anchor='start'>
+<tspan x='778.7' dy='0'>Preallocate GKR buffers</tspan>
+<tspan x='778.7' dy='12' class='diff'>+93/-36</tspan></text>
+<line x1='852.0' y1='732.3' x2='860.0' y2='744.3' class='leader'/>
+<text x='860.0' y='744.3' class='label' text-anchor='start'>
+<tspan x='860.0' dy='0'>Batch MLE round kernels</tspan>
+<tspan x='860.0' dy='12' class='diff'>+456/-49</tspan></text>
+<line x1='933.3' y1='540.6' x2='943.3' y2='522.6' class='leader'/>
+<text x='943.3' y='522.6' class='label' text-anchor='start'>
+<tspan x='943.3' dy='0'>Preallocate Round 0</tspan>
+<tspan x='943.3' dy='12'>buffers</tspan>
+<tspan x='943.3' dy='12' class='diff'>+224/-105</tspan></text>
+<line x1='1014.7' y1='767.5' x2='1004.7' y2='791.5' class='leader'/>
+<text x='1004.7' y='791.5' class='label' text-anchor='end'>
+<tspan x='1004.7' dy='0'>Batch MLE</tspan>
+<tspan x='1004.7' dy='12'>interpolation</tspan>
+<tspan x='1004.7' dy='12' class='diff'>+238/-72</tspan></text>
+<line x1='1096.0' y1='765.7' x2='1106.0' y2='731.7' class='leader'/>
+<text x='1106.0' y='731.7' class='label' text-anchor='start'>
+<tspan x='1106.0' dy='0'>Batch MLE main_ptrs</tspan>
+<tspan x='1106.0' dy='12'>upload</tspan>
+<tspan x='1106.0' dy='12' class='diff'>+54/-35</tspan></text>
+<line x1='1177.3' y1='765.0' x2='1167.3' y2='807.0' class='leader'/>
+<text x='1167.3' y='807.0' class='label' text-anchor='end'>
+<tspan x='1167.3' dy='0'>Round 0 descriptor</tspan>
+<tspan x='1167.3' dy='12'>batching</tspan>
+<tspan x='1167.3' dy='12' class='diff'>+959/-2</tspan></text>
+<line x1='1340.0' y1='771.9' x2='1348.0' y2='895.9' class='leader'/>
+<text x='1348.0' y='895.9' class='label' text-anchor='start'>
+<tspan x='1348.0' dy='0'>Round 0 interleaved</tspan>
+<tspan x='1348.0' dy='12'>balance</tspan>
+<tspan x='1348.0' dy='12' class='diff'>+25/-5</tspan></text>
+<line x1='1421.3' y1='775.1' x2='1409.3' y2='823.1' class='leader'/>
+<text x='1409.3' y='823.1' class='label' text-anchor='end'>
+<tspan x='1409.3' dy='0'>GKR input</tspan>
+<tspan x='1409.3' dy='12'>round-robin</tspan>
+<tspan x='1409.3' dy='12' class='diff'>+23/-5</tspan></text>
+<line x1='1502.7' y1='796.5' x2='1492.7' y2='736.5' class='leader'/>
+<text x='1492.7' y='736.5' class='label' text-anchor='end'>
+<tspan x='1492.7' dy='0'>Round 0 threshold</tspan>
+<tspan x='1492.7' dy='12'>buffers</tspan>
+<tspan x='1492.7' dy='12' class='diff'>+321/-40</tspan></text>
+<line x1='1584.0' y1='805.3' x2='1594.0' y2='823.3' class='leader'/>
+<text x='1594.0' y='823.3' class='label' text-anchor='start'>
+<tspan x='1594.0' dy='0'>Right-size GKR grid</tspan>
+<tspan x='1594.0' dy='12' class='diff'>+1/-1</tspan></text>
+<line x1='1665.3' y1='679.5' x2='1673.3' y2='659.5' class='leader'/>
+<text x='1673.3' y='659.5' class='label' text-anchor='start'>
+<tspan x='1673.3' dy='0'>Multi-stream stacked</tspan>
+<tspan x='1673.3' dy='12'>reduction</tspan>
+<tspan x='1673.3' dy='12' class='diff'>+301/-67</tspan></text>
+<line x1='1746.7' y1='795.8' x2='1736.7' y2='769.8' class='leader'/>
+<text x='1736.7' y='769.8' class='label' text-anchor='end'>
+<tspan x='1736.7' dy='0'>Precompute Round 0</tspan>
+<tspan x='1736.7' dy='12'>rules</tspan>
+<tspan x='1736.7' dy='12' class='diff'>+101/-84</tspan></text>
+<line x1='1828.0' y1='819.1' x2='1838.0' y2='785.1' class='leader'/>
+<text x='1838.0' y='785.1' class='label' text-anchor='start'>
+<tspan x='1838.0' dy='0'>GPU Round 0 poly</tspan>
+<tspan x='1838.0' dy='12'>extraction</tspan>
+<tspan x='1838.0' dy='12' class='diff'>+373/-101</tspan></text>
+<line x1='1909.3' y1='837.9' x2='1899.3' y2='843.9' class='leader'/>
+<text x='1899.3' y='843.9' class='label' text-anchor='end'>
+<tspan x='1899.3' dy='0'>Overlap logup</tspan>
+<tspan x='1899.3' dy='12'>precompute</tspan>
+<tspan x='1899.3' dy='12' class='diff'>+94/-34</tspan></text>
+<line x1='1990.7' y1='843.6' x2='1998.7' y2='809.6' class='leader'/>
+<text x='1998.7' y='809.6' class='label' text-anchor='start'>
+<tspan x='1998.7' dy='0'>Batched SCATTER GKR</tspan>
+<tspan x='1998.7' dy='12' class='diff'>+454/-38</tspan></text>
+<line x1='2072.0' y1='837.9' x2='2064.0' y2='873.9' class='leader'/>
+<text x='2064.0' y='873.9' class='label' text-anchor='end'>
+<tspan x='2064.0' dy='0'>Bulk MLE fold arena</tspan>
+<tspan x='2064.0' dy='12' class='diff'>+243/-66</tspan></text>
+<line x1='2153.3' y1='831.0' x2='2161.3' y2='879.0' class='leader'/>
+<text x='2161.3' y='879.0' class='label' text-anchor='start'>
+<tspan x='2161.3' dy='0'>Warp-tiled GKR</tspan>
+<tspan x='2161.3' dy='12'>intermediates</tspan>
+<tspan x='2161.3' dy='12' class='diff'>+16/-6</tspan></text>
+<line x1='2234.7' y1='849.3' x2='2226.7' y2='813.3' class='leader'/>
+<text x='2226.7' y='813.3' class='label' text-anchor='end'>
+<tspan x='2226.7' dy='0'>Ping-pong MLE</tspan>
+<tspan x='2226.7' dy='12'>buffers</tspan>
+<tspan x='2226.7' dy='12' class='diff'>+177/-38</tspan></text>
+<line x1='2316.0' y1='838.6' x2='2324.0' y2='866.6' class='leader'/>
+<text x='2324.0' y='866.6' class='label' text-anchor='start'>
+<tspan x='2324.0' dy='0'>GPU GKR</tspan>
+<tspan x='2324.0' dy='12'>transcript</tspan>
+<tspan x='2324.0' dy='12' class='diff'>+589/-150</tspan></text>
+<line x1='2397.3' y1='846.1' x2='2389.3' y2='802.1' class='leader'/>
+<text x='2389.3' y='802.1' class='label' text-anchor='end'>
+<tspan x='2389.3' dy='0'>Matrix-base</tspan>
+<tspan x='2389.3' dy='12'>interpolation</tspan>
+<tspan x='2389.3' dy='12' class='diff'>+159/-22</tspan></text>
+<line x1='2478.7' y1='839.2' x2='2486.7' y2='867.2' class='leader'/>
+<text x='2486.7' y='867.2' class='label' text-anchor='start'>
+<tspan x='2486.7' dy='0'>Warp-per-trace</tspan>
+<tspan x='2486.7' dy='12'>MLE eval</tspan>
+<tspan x='2486.7' dy='12' class='diff'>+613/-220</tspan></text>
+<line x1='2560.0' y1='834.2' x2='2552.0' y2='804.2' class='leader'/>
+<text x='2552.0' y='804.2' class='label' text-anchor='end'>
+<tspan x='2552.0' dy='0'>Drain GPU pipeline</tspan>
+<tspan x='2552.0' dy='12' class='diff'>+40/-8</tspan></text>
+<line x1='2641.3' y1='847.4' x2='2649.3' y2='875.4' class='leader'/>
+<text x='2649.3' y='875.4' class='label' text-anchor='start'>
+<tspan x='2649.3' dy='0'>Batched GLOBAL GKR</tspan>
+<tspan x='2649.3' dy='12' class='diff'>+491/-41</tspan></text>
+<line x1='2722.7' y1='843.0' x2='2714.7' y2='805.0' class='leader'/>
+<text x='2714.7' y='805.0' class='label' text-anchor='end'>
+<tspan x='2714.7' dy='0'>Multi-stream MLE</tspan>
+<tspan x='2714.7' dy='12'>rounds</tspan>
+<tspan x='2714.7' dy='12' class='diff'>+293/-120</tspan></text>
+<line x1='2804.0' y1='873.1' x2='2814.0' y2='827.1' class='leader'/>
+<text x='2814.0' y='827.1' class='label' text-anchor='start'>
+<tspan x='2814.0' dy='0'>Prewarm codeword</tspan>
+<tspan x='2814.0' dy='12'>buffer</tspan>
+<tspan x='2814.0' dy='12' class='diff'>+13/-1</tspan></text>
+<line x1='2885.3' y1='961.1' x2='2875.3' y2='915.1' class='leader'/>
+<text x='2875.3' y='915.1' class='label' text-anchor='end'>
+<tspan x='2875.3' dy='0'>VPMM page size</tspan>
+<tspan x='2875.3' dy='12'>2 MiB -&gt; 16 MiB</tspan>
+<tspan x='2875.3' dy='12' class='diff'>+9/-1</tspan></text>
+<line x1='2966.7' y1='933.5' x2='2958.7' y2='961.5' class='leader'/>
+<text x='2958.7' y='961.5' class='label' text-anchor='end'>
+<tspan x='2958.7' dy='0'>Reapply Round 0</tspan>
+<tspan x='2958.7' dy='12'>precompute</tspan>
+<tspan x='2958.7' dy='12' class='diff'>+90/-86</tspan></text>
+<line x1='3048.0' y1='961.1' x2='3058.0' y2='917.1' class='leader'/>
+<text x='3058.0' y='917.1' class='label' text-anchor='start'>
+<tspan x='3058.0' dy='0'>Re-enable small-air</tspan>
+<tspan x='3058.0' dy='12'>Round 0</tspan>
+<tspan x='3058.0' dy='12' class='diff'>+1258/-2</tspan></text>
+<line x1='3129.3' y1='955.5' x2='3121.3' y2='983.5' class='leader'/>
+<text x='3121.3' y='983.5' class='label' text-anchor='end'>
+<tspan x='3121.3' dy='0'>Precompute MLE</tspan>
+<tspan x='3121.3' dy='12'>fold layout</tspan>
+<tspan x='3121.3' dy='12' class='diff'>+440/-126</tspan></text>
+<line x1='3210.7' y1='958.0' x2='3220.7' y2='920.0' class='leader'/>
+<text x='3220.7' y='920.0' class='label' text-anchor='start'>
+<tspan x='3220.7' dy='0'>Prealloc WHIR</tspan>
+<tspan x='3220.7' dy='12'>fold buffers</tspan>
+<tspan x='3220.7' dy='12' class='diff'>+58/-22</tspan></text>
+<line x1='3292.0' y1='956.1' x2='3284.0' y2='984.1' class='leader'/>
+<text x='3284.0' y='984.1' class='label' text-anchor='end'>
+<tspan x='3284.0' dy='0'>Hoist MLE</tspan>
+<tspan x='3284.0' dy='12'>TraceCtx</tspan>
+<tspan x='3284.0' dy='12' class='diff'>+36/-2</tspan></text>
+<line x1='3373.3' y1='959.9' x2='3383.3' y2='923.9' class='leader'/>
+<text x='3383.3' y='923.9' class='label' text-anchor='start'>
+<tspan x='3383.3' dy='0'>Batch fold PLE</tspan>
+<tspan x='3383.3' dy='12'>descriptors</tspan>
+<tspan x='3383.3' dy='12' class='diff'>+330/-48</tspan></text>
+<line x1='3454.7' y1='954.9' x2='3446.7' y2='982.9' class='leader'/>
+<text x='3446.7' y='982.9' class='label' text-anchor='end'>
+<tspan x='3446.7' dy='0'>Tune VPMM</tspan>
+<tspan x='3446.7' dy='12'>page size</tspan>
+<tspan x='3446.7' dy='12' class='diff'>+7/-7</tspan></text>
+<line x1='3536.0' y1='952.3' x2='3546.0' y2='912.3' class='leader'/>
+<text x='3546.0' y='912.3' class='label' text-anchor='start'>
+<tspan x='3546.0' dy='0'>GPU stacked reduction</tspan>
+<tspan x='3546.0' dy='12'>extraction</tspan>
+<tspan x='3546.0' dy='12' class='diff'>+303/-5</tspan></text>
+<line x1='3617.3' y1='959.3' x2='3609.3' y2='987.3' class='leader'/>
+<text x='3609.3' y='987.3' class='label' text-anchor='end'>
+<tspan x='3609.3' dy='0'>Tune GKR</tspan>
+<tspan x='3609.3' dy='12'>PrecomputeM</tspan>
+<tspan x='3609.3' dy='12' class='diff'>+5/-5</tspan></text>
+<line x1='3698.7' y1='958.0' x2='3708.7' y2='922.0' class='leader'/>
+<text x='3708.7' y='922.0' class='label' text-anchor='start'>
+<tspan x='3708.7' dy='0'>Column-batched</tspan>
+<tspan x='3708.7' dy='12'>RS NTT</tspan>
+<tspan x='3708.7' dy='12' class='diff'>+91/-17</tspan></text>
+<line x1='3780.0' y1='953.6' x2='3772.0' y2='981.6' class='leader'/>
+<text x='3772.0' y='981.6' class='label' text-anchor='end'>
+<tspan x='3772.0' dy='0'>Batch stacked reduction</tspan>
+<tspan x='3772.0' dy='12'>Round 0</tspan>
+<tspan x='3772.0' dy='12' class='diff'>+617/-67</tspan></text>
+<rect x='3060' y='92' width='620' height='120' rx='10' fill='white' stroke='#d1d5db'/>
+<circle cx='3080' cy='118' r='5' fill='#16a34a'/><text x='3096' y='122' class='tick'>APC = 300 landed improvement</text>
+<circle cx='3080' cy='144' r='5' fill='#dc2626'/><text x='3096' y='148' class='tick'>APC = 300 measured then reverted</text>
+<line x1='3072' y1='170' x2='3088' y2='170' class='apc0-series'/><circle cx='3080' cy='170' r='3.4' fill='white' stroke='#6b7280' stroke-width='1.6'/><text x='3096' y='174' class='tick'>APC = 0 dotted series</text>
+<text x='3080' y='198' class='small'>Iteration 14 keeps the APC = 300 OOM gap but still has an APC = 0 point.</text>
+</svg>
