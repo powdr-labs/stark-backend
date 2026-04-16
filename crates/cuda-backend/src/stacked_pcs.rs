@@ -14,10 +14,11 @@ use crate::{
     cuda::{
         batch_ntt_small::batch_ntt_small,
         matrix::{batch_expand_pad, stack_columns, StackColDesc},
+        ntt::bit_rev,
     },
     hash_scheme::GpuMerkleHash,
     merkle_tree::{MerkleTreeConstructor, MerkleTreeGpu},
-    ntt::batch_ntt_column_batched,
+    ntt::batch_ntt,
     poly::{mle_interpolate_stages, PleMatrix},
     prelude::F,
     GpuProverConfig, ProverError, RsCodeMatrixError, StackTracesError,
@@ -250,14 +251,25 @@ pub fn rs_code_matrix(
         }
     }
 
-    // Bit-reverse + forward NTT in L2-cache-sized column batches for better
-    // memory locality. The batched function handles bit_rev internally.
-    batch_ntt_column_batched(
+    // Bit-reverse the entire buffer in-place (required for NTT)
+    unsafe {
+        bit_rev(
+            &codewords,
+            &codewords,
+            log_codeword_height as u32,
+            codeword_height as u32,
+            width as u32,
+        )
+        .map_err(RsCodeMatrixError::BitRev)?;
+    }
+
+    // Compute RS codeword via DFT on the smoothly-embedded domain.
+    batch_ntt(
         &codewords,
         log_codeword_height as u32,
         0u32,
         width as u32,
-        true, // let the batched function handle bit_rev
+        false, // bit-reversal already done
         false,
     );
     let code_matrix = DeviceMatrix::new(Arc::new(codewords), codeword_height, width);
