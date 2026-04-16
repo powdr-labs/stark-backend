@@ -1,12 +1,12 @@
 use std::{cmp::max, sync::Arc};
 
-use openvm_cuda_common::{copy::MemCopyH2D, d_buffer::DeviceBuffer};
+use openvm_cuda_common::d_buffer::DeviceBuffer;
 use openvm_stark_backend::prover::MatrixDimensions;
 
 use super::errors::FoldPleError;
 use crate::{
     base::DeviceMatrix,
-    cuda::logup_zerocheck::{batched_fold_ple_from_evals, fold_ple_from_evals, FoldPleDesc},
+    cuda::logup_zerocheck::fold_ple_from_evals,
     prelude::{EF, F},
 };
 
@@ -99,138 +99,4 @@ pub unsafe fn fold_ple_evals_gpu(
         )?;
     }
     Ok(())
-}
-
-/// Item describing one fold_ple operation for the batched path.
-pub struct FoldPleItem<'a> {
-    pub trace_evals: &'a DeviceMatrix<F>,
-    pub need_rot: bool,
-}
-
-/// Result of a single batched fold_ple operation.
-pub struct FoldPleResult {
-    pub folded: DeviceMatrix<EF>,
-}
-
-/// Batch-launches fold_ple_from_evals for multiple matrices in 1-2 kernel launches
-/// (one for rotate=false, one for rotate=true if any need_rot).
-///
-/// Returns one `FoldPleResult` per input item, in the same order.
-pub fn batched_fold_ple_evals_rotate(
-    l_skip: usize,
-    d_omega_skip_pows: &DeviceBuffer<F>,
-    d_inv_lagrange_denoms_r0: &DeviceBuffer<EF>,
-    items: &[FoldPleItem<'_>],
-) -> Result<Vec<FoldPleResult>, FoldPleError> {
-    if items.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let skip_domain = d_omega_skip_pows.len();
-    let block_size = max(256, skip_domain) as u32;
-    let chunks_per_block = block_size / skip_domain as u32;
-
-    // Pre-allocate output buffers for each item and compute dimensions
-    struct ItemInfo {
-        width: usize,
-        height: usize,
-        num_x: usize,
-        out_width: usize,
-    }
-
-    let mut infos: Vec<ItemInfo> = Vec::with_capacity(items.len());
-    let mut output_bufs: Vec<DeviceBuffer<EF>> = Vec::with_capacity(items.len());
-
-    for item in items {
-        let width = item.trace_evals.width();
-        let height = item.trace_evals.height();
-        let num_x = max(height >> l_skip, 1);
-        let out_width = width * if item.need_rot { 2 } else { 1 };
-        output_bufs.push(DeviceBuffer::<EF>::with_capacity(num_x * out_width));
-        infos.push(ItemInfo {
-            width,
-            height,
-            num_x,
-            out_width,
-        });
-    }
-
-    // Build descriptor arrays for rotate=false (all items) and rotate=true (items with need_rot)
-    let mut no_rot_descs: Vec<FoldPleDesc> = Vec::new();
-    let mut no_rot_total_blocks: u32 = 0;
-    let mut rot_descs: Vec<FoldPleDesc> = Vec::new();
-    let mut rot_total_blocks: u32 = 0;
-
-    for (i, item) in items.iter().enumerate() {
-        let info = &infos[i];
-        if info.height == 0 || info.width == 0 {
-            continue;
-        }
-        let blocks_per_col =
-            (info.num_x as u32 + chunks_per_block - 1) / chunks_per_block;
-        let item_blocks = blocks_per_col * info.width as u32;
-
-        // rotate=false descriptor
-        no_rot_descs.push(FoldPleDesc {
-            src: item.trace_evals.buffer().as_ptr(),
-            dst: output_bufs[i].as_mut_ptr(),
-            height: info.height as u32,
-            width: info.width as u32,
-            num_x: info.num_x as u32,
-            block_start: no_rot_total_blocks,
-        });
-        no_rot_total_blocks += item_blocks;
-
-        // rotate=true descriptor (offset dst by num_x * width)
-        if item.need_rot {
-            rot_descs.push(FoldPleDesc {
-                src: item.trace_evals.buffer().as_ptr(),
-                dst: unsafe { output_bufs[i].as_mut_ptr().add(info.num_x * info.width) },
-                height: info.height as u32,
-                width: info.width as u32,
-                num_x: info.num_x as u32,
-                block_start: rot_total_blocks,
-            });
-            rot_total_blocks += item_blocks;
-        }
-    }
-
-    // Launch batched kernels
-    unsafe {
-        if !no_rot_descs.is_empty() {
-            let d_descs = no_rot_descs.to_device()?;
-            batched_fold_ple_from_evals(
-                &d_descs,
-                no_rot_total_blocks,
-                d_omega_skip_pows,
-                d_inv_lagrange_denoms_r0,
-                l_skip as u32,
-                false,
-            )?;
-        }
-
-        if !rot_descs.is_empty() {
-            let d_descs = rot_descs.to_device()?;
-            batched_fold_ple_from_evals(
-                &d_descs,
-                rot_total_blocks,
-                d_omega_skip_pows,
-                d_inv_lagrange_denoms_r0,
-                l_skip as u32,
-                true,
-            )?;
-        }
-    }
-
-    // Build results
-    let results = infos
-        .into_iter()
-        .zip(output_bufs)
-        .map(|(info, buf)| {
-            let folded = DeviceMatrix::new(Arc::new(buf), info.num_x, info.out_width);
-            FoldPleResult { folded }
-        })
-        .collect();
-
-    Ok(results)
 }

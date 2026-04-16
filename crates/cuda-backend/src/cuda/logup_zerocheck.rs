@@ -94,21 +94,6 @@ pub struct LogupMonomialCtx {
     pub d_combinations: *const EF,
     pub num_monomials: u32,
 }
-/// Descriptor for batched fold_ple_from_evals across multiple matrices.
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct FoldPleDesc {
-    pub src: *const F,
-    pub dst: *mut EF,
-    pub height: u32,
-    pub width: u32,
-    pub num_x: u32,
-    pub block_start: u32,
-}
-
-unsafe impl Send for FoldPleDesc {}
-unsafe impl Sync for FoldPleDesc {}
-
 /// Descriptor for batched interpolation of columns across multiple traces.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -268,16 +253,6 @@ extern "C" {
     fn _frac_vector_scalar_multiply_ext_fp(frac_vec: *mut Frac<EF>, scalar: F, length: u32) -> i32;
 
     // utils.cu
-    fn _batched_fold_ple_from_evals(
-        descs: *const FoldPleDesc,
-        num_descs: u32,
-        total_blocks: u32,
-        omega_skip_pows: *const F,
-        inv_lagrange_denoms: *const EF,
-        l_skip: u32,
-        rotate: bool,
-    ) -> i32;
-
     fn _fold_ple_from_evals(
         input_matrix: *const F,
         output_matrix: *mut EF,
@@ -1000,25 +975,6 @@ pub unsafe fn fold_ple_from_evals(
         width,
         l_skip,
         new_height,
-        rotate,
-    ))
-}
-
-pub unsafe fn batched_fold_ple_from_evals(
-    descs: &DeviceBuffer<FoldPleDesc>,
-    total_blocks: u32,
-    omega_skip_pows: &DeviceBuffer<F>,
-    inv_lagrange_denoms: &DeviceBuffer<EF>,
-    l_skip: u32,
-    rotate: bool,
-) -> Result<(), CudaError> {
-    CudaError::from_result(_batched_fold_ple_from_evals(
-        descs.as_ptr(),
-        descs.len() as u32,
-        total_blocks,
-        omega_skip_pows.as_ptr(),
-        inv_lagrange_denoms.as_ptr(),
-        l_skip,
         rotate,
     ))
 }

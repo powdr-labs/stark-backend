@@ -64,8 +64,7 @@ use crate::{
         _zerocheck_r0_intermediates_buffer_size, _zerocheck_r0_temp_sums_buffer_size,
     },
     logup_zerocheck::{
-        batch_mle::evaluate_zerocheck_batched,
-        fold_ple::{batched_fold_ple_evals_rotate, FoldPleItem},
+        batch_mle::evaluate_zerocheck_batched, fold_ple::fold_ple_evals_rotate,
         gkr_input::TraceInteractionMeta, round0::evaluate_round0_interactions_gpu,
     },
     poly::EqEvalLayers,
@@ -1487,66 +1486,56 @@ impl<'a, HS: GpuHashScheme> LogupZerocheckGpu<'a, HS> {
         let d_inv_lagrange_denoms_r0 = inv_lagrange_denoms_r0.to_device()?;
 
         let mut mem_limit = self.gkr_mem_contribution;
-
-        // Phase 1: Collect all matrices into a flat list of FoldPleItems,
-        // recording how many items belong to each trace and which is the
-        // common_main (last per trace) for mem_limit accounting.
-        let mut all_items: Vec<FoldPleItem<'_>> = Vec::new();
-        // items_count per trace
-        let mut trace_layout: Vec<usize> = Vec::new();
-
-        for (air_idx, air_ctx) in ctx.per_trace.iter() {
-            let air_pk = &self.pk.per_air[*air_idx];
-            let need_rot = air_pk.vk.params.need_rot;
-            let start = all_items.len();
-
-            if let Some(committed) = &air_pk.preprocessed_data {
-                all_items.push(FoldPleItem {
-                    trace_evals: &committed.trace,
-                    need_rot,
-                });
-            }
-
-            for committed in &air_ctx.cached_mains {
-                all_items.push(FoldPleItem {
-                    trace_evals: &committed.trace,
-                    need_rot,
-                });
-            }
-
-            // Common main (always last)
-            all_items.push(FoldPleItem {
-                trace_evals: &air_ctx.common_main,
-                need_rot,
-            });
-
-            trace_layout.push(all_items.len() - start);
-        }
-
-        // Phase 2: Batch-launch all fold_ple operations
-        let all_results = batched_fold_ple_evals_rotate(
-            l_skip,
-            &self.d_omega_skip_pows,
-            &d_inv_lagrange_denoms_r0,
-            &all_items,
-        )?;
-
-        // Phase 3: Distribute results back per-trace
-        let mut result_iter = all_results.into_iter();
-        self.mat_evals_per_trace = trace_layout
+        // GPU folding for mat_evals_per_trace
+        self.mat_evals_per_trace = ctx
+            .per_trace
             .iter()
-            .map(|&count| {
-                let mut trace_results: Vec<DeviceMatrix<EF>> = Vec::with_capacity(count);
-                for _ in 0..count {
-                    let r = result_iter.next().unwrap();
-                    trace_results.push(r.folded);
+            .map(|(air_idx, air_ctx)| {
+                let air_pk = &self.pk.per_air[*air_idx];
+                let need_rot = air_pk.vk.params.need_rot;
+                let mut results: Vec<DeviceMatrix<EF>> = Vec::new();
+
+                // Preprocessed (if exists)
+                if let Some(committed) = &air_pk.preprocessed_data {
+                    let trace = &committed.trace;
+                    let folded = fold_ple_evals_rotate(
+                        l_skip,
+                        &self.d_omega_skip_pows,
+                        trace,
+                        &d_inv_lagrange_denoms_r0,
+                        need_rot,
+                    )?;
+                    results.push(folded);
                 }
-                // The common_main is always the last entry; account for mem_limit
-                let last = trace_results.last().unwrap();
-                mem_limit = mem_limit.saturating_sub(last.buffer().len() * size_of::<EF>());
-                trace_results
+
+                // Cached mains
+                for committed in &air_ctx.cached_mains {
+                    let trace = &committed.trace;
+                    let folded = fold_ple_evals_rotate(
+                        l_skip,
+                        &self.d_omega_skip_pows,
+                        trace,
+                        &d_inv_lagrange_denoms_r0,
+                        need_rot,
+                    )?;
+                    results.push(folded);
+                }
+
+                // Common main
+                let trace = &air_ctx.common_main;
+                let folded = fold_ple_evals_rotate(
+                    l_skip,
+                    &self.d_omega_skip_pows,
+                    trace,
+                    &d_inv_lagrange_denoms_r0,
+                    need_rot,
+                )?;
+                mem_limit = mem_limit.saturating_sub(folded.buffer().len() * size_of::<EF>());
+                results.push(folded);
+
+                Ok(results)
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, FoldPleError>>()?;
         if self.save_memory {
             self.memory_limit_bytes = mem_limit;
         }

@@ -68,73 +68,6 @@ __global__ void fold_ple_from_evals_kernel(
     }
 }
 
-struct FoldPleDesc {
-    const Fp *src;       // source matrix data pointer (column-major)
-    FpExt *dst;          // output buffer pointer (non-overlapping per descriptor)
-    uint32_t height;     // source matrix height
-    uint32_t width;      // source matrix width (number of columns)
-    uint32_t num_x;      // = max(height, skip_domain) / skip_domain
-    uint32_t block_start; // first 1D block index for this descriptor
-};
-
-// Batched version of fold_ple_from_evals_kernel: processes multiple (src, dst) pairs
-// in a single kernel launch using descriptor array + binary search on block_start.
-// 1D grid: blockIdx.x indexes into a flattened block space across all descriptors.
-template <bool ROTATE>
-__global__ void batched_fold_ple_from_evals_kernel(
-    const FoldPleDesc *__restrict__ descs,
-    uint32_t num_descs,
-    const Fp *__restrict__ omega_skip_pows,
-    const FpExt *inv_lagrange_denoms,
-    uint32_t skip_domain,
-    uint32_t l_skip
-) {
-    extern __shared__ char smem_raw[];
-    FpExt *smem = reinterpret_cast<FpExt *>(smem_raw);
-
-    // Binary search: find the descriptor that owns this block
-    uint32_t block_idx = blockIdx.x;
-    uint32_t lo = 0, hi = num_descs;
-    while (lo + 1 < hi) {
-        uint32_t mid = (lo + hi) / 2;
-        if (descs[mid].block_start <= block_idx) lo = mid;
-        else hi = mid;
-    }
-
-    const FoldPleDesc &desc = descs[lo];
-    uint32_t local_block = block_idx - desc.block_start;
-
-    // Decompose local_block into (row_block, col_idx) using desc dimensions
-    uint32_t chunks_per_block = blockDim.x / skip_domain;
-    uint32_t blocks_per_col = (desc.num_x + chunks_per_block - 1) / chunks_per_block;
-    uint32_t col_idx = local_block / blocks_per_col;
-    uint32_t row_block = local_block % blocks_per_col;
-
-    uint32_t chunk_in_block = threadIdx.x / skip_domain;
-    uint32_t tid_in_chunk = threadIdx.x % skip_domain;
-    uint32_t x = row_block * chunks_per_block + chunk_in_block;
-
-    bool const active_chunk = (x < desc.num_x) && (col_idx < desc.width);
-
-    FpExt local_val(Fp::zero());
-    if (active_chunk) {
-        uint32_t z = tid_in_chunk;
-        uint32_t offset = ROTATE ? 1 : 0;
-        uint32_t row_idx = ((x << l_skip) + z + offset) % desc.height;
-        uint32_t input_idx = col_idx * desc.height + row_idx;
-        Fp eval = desc.src[input_idx];
-
-        local_val = inv_lagrange_denoms[z] * omega_skip_pows[z] * eval;
-    }
-
-    FpExt result =
-        sumcheck::chunk_reduce_sum(local_val, smem, tid_in_chunk, skip_domain, chunk_in_block);
-
-    if (active_chunk && tid_in_chunk == 0) {
-        desc.dst[col_idx * desc.num_x + x] = result;
-    }
-}
-
 struct InterpColDesc {
     FpExt* output;              // Base pointer for this trace's interpolated output
     uint32_t columns_offset;    // Offset into the flattened columns array
@@ -352,32 +285,6 @@ extern "C" int _fold_ple_from_evals(
             l_skip,
             new_height
         );
-    }
-    return CHECK_KERNEL();
-}
-
-extern "C" int _batched_fold_ple_from_evals(
-    const FoldPleDesc *descs,
-    uint32_t num_descs,
-    uint32_t total_blocks,
-    const Fp *omega_skip_pows,
-    const FpExt *inv_lagrange_denoms,
-    uint32_t l_skip,
-    bool rotate
-) {
-    if (total_blocks == 0) return 0;
-    uint32_t skip_domain = 1u << l_skip;
-    uint32_t block_size = std::max(256u, skip_domain);
-    uint32_t total_warps_in_block = block_size / WARP_SIZE;
-    size_t smem_bytes = (skip_domain > WARP_SIZE) ?
-        total_warps_in_block * sizeof(FpExt) : 0;
-
-    if (rotate) {
-        batched_fold_ple_from_evals_kernel<true><<<total_blocks, block_size, smem_bytes>>>(
-            descs, num_descs, omega_skip_pows, inv_lagrange_denoms, skip_domain, l_skip);
-    } else {
-        batched_fold_ple_from_evals_kernel<false><<<total_blocks, block_size, smem_bytes>>>(
-            descs, num_descs, omega_skip_pows, inv_lagrange_denoms, skip_domain, l_skip);
     }
     return CHECK_KERNEL();
 }
