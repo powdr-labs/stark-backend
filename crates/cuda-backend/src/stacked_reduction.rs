@@ -99,7 +99,7 @@ pub struct StackedReductionGpu<D = Digest> {
     k_rot_ns: EqEvalSegments<EF>,
     /// Stores eq(u[1+n_T..round-1], b_{T,j}[..round-n_T-1])
     eq_ub_per_trace: Vec<EF>,
-    d_eq_ub: DeviceBuffer<EF>,
+    d_eq_ub_all: DeviceBuffer<EF>,
 
     d_block_sums: DeviceBuffer<EF>,
     d_accum: DeviceBuffer<u64>,
@@ -391,11 +391,6 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
         let d_lambda_pows = lambda_pows.to_device()?;
 
         let d_unstacked_cols = unstacked_cols.to_device()?;
-        let max_window_len = ht_diff_idxs
-            .windows(2)
-            .map(|window| window[1] - window[0])
-            .max()
-            .unwrap_or(0);
 
         // layout per commit is sorted, first height is largest
         let n_max = r.len() - 1;
@@ -429,10 +424,10 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
             DeviceBuffer::with_capacity(stacked_per_commit.len())
         };
         let d_accum = DeviceBuffer::<u64>::with_capacity(STACKED_REDUCTION_S_DEG * D_EF);
-        let d_eq_ub = if max_window_len > 0 {
-            DeviceBuffer::with_capacity(max_window_len)
-        } else {
+        let d_eq_ub_all = if unstacked_cols.is_empty() {
             DeviceBuffer::new()
+        } else {
+            DeviceBuffer::with_capacity(unstacked_cols.len())
         };
 
         Ok(Self {
@@ -461,7 +456,7 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
             // SAFETY: This is unused in round 0 and will be initialized properly after round 0.
             k_rot_ns: unsafe { EqEvalSegments::from_raw_parts(DeviceBuffer::new(), 0) },
             eq_ub_per_trace,
-            d_eq_ub,
+            d_eq_ub_all,
             d_block_sums: DeviceBuffer::new(),
             d_accum,
             d_input_ptrs,
@@ -829,7 +824,14 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
                 self.k_rot_stable.push(tmp[0]);
             }
         }
-        let mut s_evals_batch = Vec::with_capacity(self.ht_diff_idxs.len() - 1);
+        // Upload full eq_ub_per_trace to device once per round
+        self.eq_ub_per_trace.copy_to(&mut self.d_eq_ub_all)?;
+
+        // Single fill_zero for the entire round — all windows accumulate atomically
+        self.d_accum
+            .fill_zero()
+            .map_err(StackedReductionError::FillZero)?;
+
         for window in self.ht_diff_idxs.windows(2) {
             let window_len = window[1] - window[0];
             // SAFETY: in bounds by construction of ht_diff_idxs
@@ -840,30 +842,16 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
 
             let log_height = self.unstacked_cols[window[0]].log_height as usize;
 
-            // Zero-initialize accumulator for atomic adds
-            self.d_accum
-                .fill_zero()
-                .map_err(StackedReductionError::FillZero)?;
-
             if log_height < l_skip + round {
-                // We are in the eq, k_rot stable regime
-                // This includes all n < 0 cases
-                // In this case, the `s` poly contribution is a constant and we don't need to
-                // interpolate
                 let eq_r = self.eq_stable[log_height];
                 let k_rot_r = self.k_rot_stable[log_height];
-                // PERF[jpw]: most of eq_ub can be incorporated into eq_stable, k_rot_stable, so
-                // this transfer can be minimized.
-                let eq_ub_slice = &self.eq_ub_per_trace[window[0]..window[1]];
-                if eq_ub_slice.len() > self.d_eq_ub.len() {
-                    self.d_eq_ub = DeviceBuffer::with_capacity(eq_ub_slice.len());
-                }
-                eq_ub_slice.copy_to(&mut self.d_eq_ub)?;
                 let stacked_height = self.stacked_height(round);
                 unsafe {
+                    // Pointer offset into pre-uploaded buffer
+                    let eq_ub_ptr = self.d_eq_ub_all.as_ptr().add(window[0]);
                     stacked_reduction_sumcheck_mle_round_degenerate(
                         &self.d_q_eval_ptrs,
-                        &self.d_eq_ub,
+                        eq_ub_ptr,
                         eq_r,
                         k_rot_r,
                         unstacked_cols_ptr,
@@ -879,8 +867,6 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
             } else {
                 let hypercube_dim = log_height - l_skip - round;
                 let num_y = 1 << hypercube_dim;
-                // Allow the CUDA launcher to auto-tune grid.y (thread_window_stride) based on
-                // (num_y, window_len) and device SM count.
 
                 let stacked_height = self.stacked_height(round);
                 unsafe {
@@ -899,16 +885,12 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
                     .map_err(StackedReductionError::SumcheckMleRound)?;
                 };
             }
-
-            // D2H copy and reduce modulo P
-            let h_accum = self.d_accum.to_host()?;
-            let evals = reduce_raw_u64_to_ef(&h_accum);
-            s_evals_batch.push(evals);
         }
 
-        Ok(from_fn(|i| {
-            s_evals_batch.iter().map(|evals| evals[i]).sum::<EF>()
-        }))
+        // Single D2H copy for the entire round
+        let h_accum = self.d_accum.to_host()?;
+        let evals = reduce_raw_u64_to_ef(&h_accum);
+        Ok(from_fn(|i| evals[i]))
     }
 
     #[instrument("stacked_reduction_fold_mle", level = "debug", skip_all, fields(round = round))]
