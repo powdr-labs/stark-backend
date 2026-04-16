@@ -30,28 +30,6 @@ pub(crate) struct NonDegenMleDesc {
     pub blocks_x: u32,
 }
 
-/// Descriptor for batched Round 0 block_sum kernel. Layout must match CUDA `StackedR0Desc`.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct StackedR0Desc {
-    pub trace_ptr: *const F,
-    pub lambda_pows: *const EF,
-    pub trace_width: u32,
-}
-
-unsafe impl Send for StackedR0Desc {}
-
-/// Descriptor for batched PLE fold kernel. Layout must match CUDA `FoldPleDesc`.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct FoldPleDesc {
-    pub src: *const F,
-    pub dst: *mut EF,
-    pub trace_width: u32,
-}
-
-unsafe impl Send for FoldPleDesc {}
-
 /// Number of G outputs per z in round 0: G0, G1, G2
 pub const NUM_G: usize = 3;
 
@@ -144,30 +122,6 @@ extern "C" {
         lambda_pows_base: *const EF,
         output: *mut u64,
         q_height: u32,
-    ) -> i32;
-
-    fn _batched_stacked_reduction_sumcheck_round0(
-        descs: *const StackedR0Desc,
-        col_prefix_sums: *const u32,
-        h_col_prefix_sums: *const u32,
-        num_descs: u32,
-        eq_r_ns: *const EF,
-        block_sums: *mut EF,
-        output: *mut EF,
-        trace_height: u32,
-        l_skip: u32,
-        num_x: u32,
-    ) -> i32;
-
-    fn _batched_stacked_reduction_fold_ple(
-        descs: *const FoldPleDesc,
-        col_prefix_sums: *const u32,
-        num_descs: u32,
-        total_columns: u32,
-        omega_skip_pows: *const F,
-        inv_lagrange_denoms: *const EF,
-        trace_height: u32,
-        l_skip: u32,
     ) -> i32;
 }
 
@@ -455,71 +409,4 @@ pub(crate) fn compute_mle_launch_params(num_y: u32, window_len: u32, sm_count: u
     };
 
     (blocks_x, stride)
-}
-
-/// Batched Round 0 sumcheck: launches one batched block_sum kernel + per-descriptor final_reduce.
-///
-/// # Safety
-/// - All descriptors must have the same `trace_height`.
-/// - `d_descs` must contain valid device pointers.
-/// - `block_sums` must have capacity >= total_columns * blocks_per_row * NUM_G * skip_domain.
-/// - `output` must have length >= NUM_G * 2^l_skip and be zero-initialized.
-#[allow(clippy::too_many_arguments)]
-pub unsafe fn batched_stacked_reduction_sumcheck_round0(
-    d_descs: &DeviceBuffer<StackedR0Desc>,
-    d_col_prefix_sums: &DeviceBuffer<u32>,
-    h_col_prefix_sums: &[u32],
-    eq_r_ns: &EqEvalSegments<EF>,
-    block_sums: &mut DeviceBuffer<EF>,
-    output: &mut DeviceBuffer<EF>,
-    trace_height: usize,
-    l_skip: usize,
-) -> Result<(), CudaError> {
-    let num_descs = d_descs.len() as u32;
-    let num_x = (trace_height >> l_skip).max(1) as u32;
-    debug_assert_eq!(h_col_prefix_sums.len(), num_descs as usize + 1);
-    debug_assert!(output.len() >= NUM_G << l_skip);
-
-    check(_batched_stacked_reduction_sumcheck_round0(
-        d_descs.as_ptr(),
-        d_col_prefix_sums.as_ptr(),
-        h_col_prefix_sums.as_ptr(),
-        num_descs,
-        eq_r_ns.buffer().as_ptr(),
-        block_sums.as_mut_ptr(),
-        output.as_mut_ptr(),
-        trace_height as u32,
-        l_skip as u32,
-        num_x,
-    ))
-}
-
-/// Batched PLE fold: launches one kernel for all same-height traces.
-///
-/// # Safety
-/// - All descriptors must have the same `trace_height`.
-/// - `d_descs` must contain valid device pointers.
-/// - `d_col_prefix_sums` must have num_descs + 1 elements.
-#[allow(clippy::too_many_arguments)]
-pub unsafe fn batched_stacked_reduction_fold_ple(
-    d_descs: &DeviceBuffer<FoldPleDesc>,
-    d_col_prefix_sums: &DeviceBuffer<u32>,
-    total_columns: u32,
-    omega_skip_pows: &DeviceBuffer<F>,
-    inv_lagrange_denoms: &DeviceBuffer<EF>,
-    trace_height: usize,
-    l_skip: usize,
-) -> Result<(), CudaError> {
-    let num_descs = d_descs.len() as u32;
-
-    check(_batched_stacked_reduction_fold_ple(
-        d_descs.as_ptr(),
-        d_col_prefix_sums.as_ptr(),
-        num_descs,
-        total_columns,
-        omega_skip_pows.as_ptr(),
-        inv_lagrange_denoms.as_ptr(),
-        trace_height as u32,
-        l_skip as u32,
-    ))
 }

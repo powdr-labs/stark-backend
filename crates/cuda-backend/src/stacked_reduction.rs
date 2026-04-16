@@ -30,12 +30,11 @@ use crate::{
         poly::vector_scalar_multiply_ext,
         stacked_reduction::{
             _stacked_reduction_r0_required_temp_buffer_size,
-            batched_stacked_reduction_fold_ple, batched_stacked_reduction_sumcheck_mle_round,
+            batched_stacked_reduction_sumcheck_mle_round,
             batched_stacked_reduction_sumcheck_mle_round_degenerate,
-            batched_stacked_reduction_sumcheck_round0, compute_mle_launch_params,
-            initialize_k_rot_from_eq_segments, stacked_reduction_fold_ple,
-            stacked_reduction_sumcheck_round0, DegenMleDesc, FoldPleDesc, NonDegenMleDesc,
-            StackedR0Desc, NUM_G,
+            compute_mle_launch_params, initialize_k_rot_from_eq_segments,
+            stacked_reduction_fold_ple, stacked_reduction_sumcheck_round0, DegenMleDesc,
+            NonDegenMleDesc, NUM_G,
         },
         sumcheck::{fold_mle, triangular_fold_mle},
     },
@@ -51,9 +50,6 @@ use crate::{
 
 /// Degree of the sumcheck polynomial for stacked reduction.
 pub const STACKED_REDUCTION_S_DEG: usize = 2;
-
-/// Minimum number of same-height traces to batch into a single kernel launch.
-const BATCH_THRESHOLD: usize = 10;
 
 pub struct StackedReductionGpu<D = Digest> {
     sm_count: u32,
@@ -505,155 +501,51 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
             })
             .collect::<Result<Vec<_>, StackedReductionError>>()?;
 
-        // Group traces by height for batched processing.
-        // Each trace_ptr entry is (ptr, height, width), and ht_diff_idxs[i] gives the column
-        // start index for the i-th trace.
-        let trace_ptrs = mem::take(&mut self.trace_ptrs);
+        // Process each trace - call kernel for each, accumulating into appropriate bucket
+        for ((trace_ptr, trace_height, trace_width), window) in zip(
+            mem::take(&mut self.trace_ptrs),
+            self.ht_diff_idxs.windows(2),
+        ) {
+            debug_assert_eq!(window[1] - window[0], trace_width);
+            let log_height = trace_height.ilog2();
+            let n = log_height as isize - l_skip as isize;
 
-        // Group consecutive traces by (height, n_bucket).
-        // Since traces are already grouped by commit and then by height within the data
-        // structure, we group by height which determines the G bucket.
-        struct HeightGroup {
-            trace_height: usize,
-            n: isize,
-            indices: Vec<usize>, // indices into trace_ptrs
-        }
-
-        let mut groups: Vec<HeightGroup> = Vec::new();
-        for (i, &(_, trace_height, _)) in trace_ptrs.iter().enumerate() {
-            let n = trace_height.ilog2() as isize - l_skip as isize;
-            if let Some(last) = groups.last_mut() {
-                if last.trace_height == trace_height {
-                    last.indices.push(i);
-                    continue;
-                }
-            }
-            groups.push(HeightGroup {
-                trace_height,
-                n,
-                indices: vec![i],
-            });
-        }
-
-        // Merge groups with same height (they may not be contiguous in the original list)
-        groups.sort_by_key(|g| g.trace_height);
-        let mut merged: Vec<HeightGroup> = Vec::new();
-        for g in groups {
-            if let Some(last) = merged.last_mut() {
-                if last.trace_height == g.trace_height {
-                    last.indices.extend(g.indices);
-                    continue;
-                }
-            }
-            merged.push(g);
-        }
-
-        // Pre-compute max block_sums size across all traces for upfront allocation
-        let max_block_sums_len = trace_ptrs
-            .iter()
-            .map(|&(_, h, w)| unsafe {
-                _stacked_reduction_r0_required_temp_buffer_size(h as u32, w as u32, l_skip as u32)
-                    as usize
-            })
-            .max()
-            .unwrap_or(0);
-        if max_block_sums_len > self.d_block_sums.len() {
-            self.d_block_sums = DeviceBuffer::<EF>::with_capacity(max_block_sums_len);
-        }
-
-        for group in &merged {
-            let d_g_output = if group.n >= 0 {
+            // Select output bucket based on n
+            let d_g_output = if n >= 0 {
                 &mut d_g_pos
             } else {
-                &mut d_g_neg[(-group.n - 1) as usize]
+                &mut d_g_neg[(-n - 1) as usize]
             };
 
-            if group.indices.len() >= BATCH_THRESHOLD {
-                // Build descriptors for batched kernel
-                let mut descs: Vec<StackedR0Desc> = Vec::with_capacity(group.indices.len());
-                let mut col_prefix_sums: Vec<u32> = Vec::with_capacity(group.indices.len() + 1);
-                col_prefix_sums.push(0);
-                let mut total_columns: u32 = 0;
+            // Allocate block_sums buffer for intermediate reduction
+            let block_sums_len = unsafe {
+                _stacked_reduction_r0_required_temp_buffer_size(
+                    trace_height as u32,
+                    trace_width as u32,
+                    l_skip as u32,
+                )
+            } as usize;
 
-                for &idx in &group.indices {
-                    let (trace_ptr, _, trace_width) = trace_ptrs[idx];
-                    let window_start = self.ht_diff_idxs[idx];
-                    unsafe {
-                        descs.push(StackedR0Desc {
-                            trace_ptr,
-                            lambda_pows: self.d_lambda_pows.as_ptr().add(2 * window_start),
-                            trace_width: trace_width as u32,
-                        });
-                    }
-                    total_columns += trace_width as u32;
-                    col_prefix_sums.push(total_columns);
-                }
-
-                // Compute required block_sums size for batched kernel:
-                // total_columns * blocks_per_row * NUM_G * skip_domain
-                let lifted_height = max(group.trace_height, skip_domain);
-                let max_threads = max(skip_domain, 256);
-                let blocks_per_row = lifted_height.div_ceil(max_threads);
-                let batched_block_sums_len =
-                    total_columns as usize * blocks_per_row * NUM_G * skip_domain;
-                if batched_block_sums_len > self.d_block_sums.len() {
-                    self.d_block_sums = DeviceBuffer::<EF>::with_capacity(batched_block_sums_len);
-                }
-
-                let d_descs = descs.to_device().map_err(StackedReductionError::MemCopy)?;
-                let d_col_prefix_sums = col_prefix_sums
-                    .to_device()
-                    .map_err(StackedReductionError::MemCopy)?;
-
-                unsafe {
-                    batched_stacked_reduction_sumcheck_round0(
-                        &d_descs,
-                        &d_col_prefix_sums,
-                        &col_prefix_sums,
-                        &self.eq_r_ns,
-                        &mut self.d_block_sums,
-                        d_g_output,
-                        group.trace_height,
-                        l_skip,
-                    )
-                    .map_err(StackedReductionError::SumcheckRound0)?;
-                }
-            } else {
-                // Small group: process per-trace (existing code path)
-                for &idx in &group.indices {
-                    let (trace_ptr, trace_height, trace_width) = trace_ptrs[idx];
-                    let window_start = self.ht_diff_idxs[idx];
-
-                    let block_sums_len = unsafe {
-                        _stacked_reduction_r0_required_temp_buffer_size(
-                            trace_height as u32,
-                            trace_width as u32,
-                            l_skip as u32,
-                        )
-                    } as usize;
-
-                    if block_sums_len > self.d_block_sums.len() {
-                        self.d_block_sums = DeviceBuffer::<EF>::with_capacity(block_sums_len);
-                    }
-
-                    unsafe {
-                        let lambda_pows_ptr =
-                            self.d_lambda_pows.as_ptr().add(2 * window_start);
-
-                        stacked_reduction_sumcheck_round0(
-                            &self.eq_r_ns,
-                            trace_ptr,
-                            lambda_pows_ptr,
-                            &mut self.d_block_sums,
-                            d_g_output,
-                            trace_height,
-                            trace_width,
-                            l_skip,
-                        )
-                        .map_err(StackedReductionError::SumcheckRound0)?;
-                    }
-                }
+            if block_sums_len > self.d_block_sums.len() {
+                self.d_block_sums = DeviceBuffer::<EF>::with_capacity(block_sums_len);
             }
+
+            unsafe {
+                // 2 per column for (eq, k_rot) - coeff_eq and coeff_rot
+                let lambda_pows_ptr = self.d_lambda_pows.as_ptr().add(2 * window[0]);
+
+                stacked_reduction_sumcheck_round0(
+                    &self.eq_r_ns,
+                    trace_ptr,
+                    lambda_pows_ptr,
+                    &mut self.d_block_sums,
+                    d_g_output,
+                    trace_height,
+                    trace_width,
+                    l_skip,
+                )
+                .map_err(StackedReductionError::SumcheckRound0)?;
+            };
         }
 
         // CPU reconstruction: s₀(Z) = E0(Z)*G0(Z) + E1(Z)*G1(Z) + E2(Z)*G2(Z)
@@ -814,117 +706,41 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
             let stacked_width = layout.width();
             debug_assert_eq!(layout.height(), 1 << (l_skip + n_stack));
             let folded_evals = DeviceBuffer::<EF>::with_capacity(num_x * stacked_width);
+            // We must fill with zeros because some parts will be left empty due to stacking
             folded_evals
                 .fill_zero()
                 .map_err(StackedReductionError::FillZero)?;
-
-            // Pre-compute dst_offsets for each trace
-            let mut dst_offsets: Vec<usize> = Vec::with_capacity(stacked.traces.len());
-            let mut offset = 0;
+            let mut dst_offset = 0;
             for trace in &stacked.traces {
-                dst_offsets.push(offset);
-                if trace.width() > 0 && trace.height() > 0 {
-                    let new_height = max(trace.height(), skip_domain) / skip_domain;
-                    offset += new_height * trace.width();
-                }
-            }
-
-            // Group traces by height within this commit
-            struct FoldGroup {
-                height: usize,
-                trace_indices: Vec<usize>,
-            }
-
-            let mut fold_groups: Vec<FoldGroup> = Vec::new();
-            for (i, trace) in stacked.traces.iter().enumerate() {
                 if trace.width() == 0 || trace.height() == 0 {
                     continue;
                 }
-                if let Some(last) = fold_groups.last_mut() {
-                    if last.height == trace.height() {
-                        last.trace_indices.push(i);
-                        continue;
-                    }
+                let new_height = max(trace.height(), skip_domain) / skip_domain;
+
+                // Launch single-trace kernel for this trace
+                // SAFETY:
+                // - `trace.buffer()` is a valid device pointer for `trace.height() * trace.width()`
+                //   elements
+                // - `folded_evals` at `dst_offset` is valid for `new_height * trace.width()`
+                //   elements since we allocated `num_x * stacked_width` and traces fill
+                //   contiguously
+                // - `d_omega_skip_pows` and `d_inv_lagrange_denoms` have length `>= skip_domain`
+                unsafe {
+                    let dst = folded_evals.as_mut_ptr().add(dst_offset);
+                    stacked_reduction_fold_ple(
+                        trace.buffer().as_ptr(),
+                        dst,
+                        &self.d_omega_skip_pows,
+                        &d_inv_lagrange_denoms,
+                        trace.height(),
+                        trace.width(),
+                        l_skip,
+                    )
+                    .map_err(StackedReductionError::FoldPle)?;
                 }
-                fold_groups.push(FoldGroup {
-                    height: trace.height(),
-                    trace_indices: vec![i],
-                });
+
+                dst_offset += new_height * trace.width();
             }
-
-            // Merge groups with same height
-            fold_groups.sort_by_key(|g| g.height);
-            let mut merged_fold: Vec<FoldGroup> = Vec::new();
-            for g in fold_groups {
-                if let Some(last) = merged_fold.last_mut() {
-                    if last.height == g.height {
-                        last.trace_indices.extend(g.trace_indices);
-                        continue;
-                    }
-                }
-                merged_fold.push(g);
-            }
-
-            for group in &merged_fold {
-                if group.trace_indices.len() >= BATCH_THRESHOLD {
-                    // Build descriptors for batched fold_ple
-                    let mut descs: Vec<FoldPleDesc> = Vec::with_capacity(group.trace_indices.len());
-                    let mut col_prefix_sums: Vec<u32> =
-                        Vec::with_capacity(group.trace_indices.len() + 1);
-                    col_prefix_sums.push(0);
-                    let mut total_cols: u32 = 0;
-
-                    for &ti in &group.trace_indices {
-                        let trace = &stacked.traces[ti];
-                        unsafe {
-                            descs.push(FoldPleDesc {
-                                src: trace.buffer().as_ptr(),
-                                dst: folded_evals.as_mut_ptr().add(dst_offsets[ti]),
-                                trace_width: trace.width() as u32,
-                            });
-                        }
-                        total_cols += trace.width() as u32;
-                        col_prefix_sums.push(total_cols);
-                    }
-
-                    let d_descs = descs.to_device().map_err(StackedReductionError::MemCopy)?;
-                    let d_col_prefix_sums = col_prefix_sums
-                        .to_device()
-                        .map_err(StackedReductionError::MemCopy)?;
-
-                    unsafe {
-                        batched_stacked_reduction_fold_ple(
-                            &d_descs,
-                            &d_col_prefix_sums,
-                            total_cols,
-                            &self.d_omega_skip_pows,
-                            &d_inv_lagrange_denoms,
-                            group.height,
-                            l_skip,
-                        )
-                        .map_err(StackedReductionError::FoldPle)?;
-                    }
-                } else {
-                    // Small group: process per-trace
-                    for &ti in &group.trace_indices {
-                        let trace = &stacked.traces[ti];
-                        unsafe {
-                            let dst = folded_evals.as_mut_ptr().add(dst_offsets[ti]);
-                            stacked_reduction_fold_ple(
-                                trace.buffer().as_ptr(),
-                                dst,
-                                &self.d_omega_skip_pows,
-                                &d_inv_lagrange_denoms,
-                                trace.height(),
-                                trace.width(),
-                                l_skip,
-                            )
-                            .map_err(StackedReductionError::FoldPle)?;
-                        }
-                    }
-                }
-            }
-
             self.q_evals.push(folded_evals);
         }
 
