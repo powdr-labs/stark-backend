@@ -617,10 +617,6 @@ where
     let mut d_sum_evals = DeviceBuffer::<EF>::with_capacity(2);
 
     let precompute_m_env = precompute_m_enabled();
-    let precompute_m_min_blocks_threshold = precompute_m_min_blocks_threshold();
-    let precompute_m_target_blocks = precompute_m_target_blocks();
-    let precompute_m_tail_tile_override = precompute_m_tail_tile_override();
-    let precompute_m_min_n = precompute_m_min_n();
 
     // Work buffer to avoid revert operations on layer. Only needed for non-last rounds.
     // For the last round (round == total_rounds - 1), we fold in-place on layer.
@@ -629,7 +625,7 @@ where
     // Fold-eval fallback rounds (rem_n < min_n) need at most 2^min_n elements.
     let max_work_size = if total_rounds > 2 {
         if precompute_m_env {
-            (total_leaves >> (2 + GKR_WINDOW_SIZE)).max(1 << precompute_m_min_n)
+            (total_leaves >> (2 + GKR_WINDOW_SIZE)).max(1 << GKR_WINDOW_DEFAULT_MIN_N)
         } else {
             total_leaves >> 2
         }
@@ -647,6 +643,10 @@ where
     } else {
         DeviceBuffer::new()
     };
+    let precompute_m_min_blocks_threshold = precompute_m_min_blocks_threshold();
+    let precompute_m_target_blocks = precompute_m_target_blocks();
+    let precompute_m_tail_tile_override = precompute_m_tail_tile_override();
+    let precompute_m_min_n = precompute_m_min_n();
     let mut m_buffer = DeviceBuffer::<EF>::new();
     let mut m_partial_buffer = DeviceBuffer::<EF>::new();
     let mut eq_r_prefix_buffer = DeviceBuffer::<EF>::new();
