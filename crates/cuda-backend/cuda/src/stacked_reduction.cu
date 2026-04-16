@@ -40,6 +40,22 @@ struct UnstackedPleFoldPacket {
     uint32_t width;
 };
 
+// Descriptor for batched Round 0 block_sum kernel.
+// All descriptors in a batch have the same trace_height.
+struct StackedR0Desc {
+    const Fp *trace_ptr;        // device pointer to trace buffer
+    const FpExt *lambda_pows;   // pre-offset: d_lambda_pows.as_ptr() + 2 * window[0]
+    uint32_t trace_width;
+};
+
+// Descriptor for batched PLE fold kernel.
+// All descriptors in a batch have the same trace_height.
+struct FoldPleDesc {
+    const Fp *src;              // trace buffer pointer
+    FpExt *dst;                 // output buffer pointer (pre-offset within per-commit folded_evals)
+    uint32_t trace_width;
+};
+
 // Descriptor for batched degenerate MLE round kernel
 struct DegenMleDesc {
     uint32_t col_offset;    // = window[0], indexes into unstacked_cols, eq_ub, lambda_pows
@@ -217,6 +233,151 @@ __global__ void stacked_reduction_fold_ple_kernel(
     // and kernel exits immediately after this write
     if (active_chunk && tid_in_chunk == 0) {
         dst[col_idx * new_height + row_idx] = result;
+    }
+}
+
+// Binary search: find the largest i such that prefix_sums[i] <= val.
+// prefix_sums must be sorted in ascending order with prefix_sums[0] = 0.
+__device__ __forceinline__ uint32_t upper_bound_search(
+    const uint32_t *prefix_sums,
+    uint32_t n,
+    uint32_t val
+) {
+    uint32_t lo = 0, hi = n;
+    while (lo < hi) {
+        uint32_t mid = (lo + hi) >> 1;
+        if (prefix_sums[mid] <= val) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo - 1;
+}
+
+// Batched Round 0 block_sum kernel.
+// All descriptors share the same trace_height (and thus the same grid.x = blocks_per_row).
+// Grid: (blocks_per_row, total_columns), where total_columns = sum of desc[i].trace_width.
+// Each block maps to a (descriptor, local_column) via binary search on col_prefix_sums.
+__global__ void batched_stacked_reduction_round0_block_sum_kernel(
+    const StackedR0Desc *__restrict__ descs,
+    const uint32_t *__restrict__ col_prefix_sums,  // [num_descs + 1]
+    uint32_t num_descs,
+    const FpExt *__restrict__ eq_r_ns,
+    FpExt *__restrict__ block_sums,
+    uint32_t height,
+    uint32_t l_skip,
+    uint32_t skip_mask,
+    uint32_t num_x,
+    uint32_t log_stride
+) {
+    extern __shared__ char smem[];
+    const uint32_t PADDED_X = blockDim.x + 1;
+    FpExt *shared_sum = reinterpret_cast<FpExt *>(smem);
+
+    uint32_t tidx = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t z_idx = tidx & skip_mask;
+    uint32_t x_int = tidx >> l_skip;
+    uint32_t global_col = blockIdx.y;
+
+    // Find which descriptor this column belongs to
+    uint32_t desc_idx = upper_bound_search(col_prefix_sums, num_descs + 1, global_col);
+    uint32_t local_col = global_col - col_prefix_sums[desc_idx];
+
+    StackedR0Desc desc = descs[desc_idx];
+
+    // Compute G weights
+    FpExt eq_cube = get_eq_cube(eq_r_ns, num_x, x_int);
+    FpExt eq_cube_rot_prev = get_eq_cube(eq_r_ns, num_x, rot_prev(x_int, num_x));
+    FpExt k_rot_diff = eq_cube_rot_prev - eq_cube;
+
+    FpExt coeff_eq = desc.lambda_pows[2 * local_col];
+    FpExt coeff_rot = desc.lambda_pows[2 * local_col + 1];
+
+    FpExt w0 = coeff_eq * eq_cube;
+    FpExt w1 = coeff_rot * eq_cube;
+    FpExt w2 = coeff_rot * k_rot_diff;
+
+    // Load trace value
+    auto evals = desc.trace_ptr + local_col * height + (x_int << (l_skip - log_stride));
+    auto stride_mask = (1u << log_stride) - 1;
+    Fp q = (z_idx & stride_mask) == 0 ? evals[z_idx >> log_stride] : Fp::zero();
+
+    // Store 3 partial sums to shared memory
+    shared_sum[0 * PADDED_X + threadIdx.x] = w0 * q;
+    shared_sum[1 * PADDED_X + threadIdx.x] = w1 * q;
+    shared_sum[2 * PADDED_X + threadIdx.x] = w2 * q;
+
+    __syncthreads();
+
+    if ((threadIdx.x >> l_skip) == 0) {
+        FpExt g0 = shared_sum[0 * PADDED_X + z_idx];
+        FpExt g1 = shared_sum[1 * PADDED_X + z_idx];
+        FpExt g2 = shared_sum[2 * PADDED_X + z_idx];
+
+        for (int lane = 1; lane < (blockDim.x >> l_skip); ++lane) {
+            g0 += shared_sum[0 * PADDED_X + (lane << l_skip) + z_idx];
+            g1 += shared_sum[1 * PADDED_X + (lane << l_skip) + z_idx];
+            g2 += shared_sum[2 * PADDED_X + (lane << l_skip) + z_idx];
+        }
+
+        uint32_t skip_domain = 1u << l_skip;
+        FpExt *out_ptr =
+            block_sums + (global_col * gridDim.x + blockIdx.x) * (NUM_G * skip_domain);
+        out_ptr[0 * skip_domain + z_idx] = g0;
+        out_ptr[1 * skip_domain + z_idx] = g1;
+        out_ptr[2 * skip_domain + z_idx] = g2;
+    }
+}
+
+// Batched PLE fold kernel.
+// All descriptors share the same trace_height.
+// Grid: (num_row_blocks, total_columns), where total_columns = sum of desc[i].trace_width.
+__global__ void batched_stacked_reduction_fold_ple_kernel(
+    const FoldPleDesc *__restrict__ descs,
+    const uint32_t *__restrict__ col_prefix_sums,  // [num_descs + 1]
+    uint32_t num_descs,
+    const Fp *__restrict__ omega_skip_pows,
+    const FpExt *__restrict__ inv_lagrange_denoms,
+    uint32_t trace_height,
+    uint32_t new_height,
+    uint32_t skip_domain
+) {
+    extern __shared__ char smem_raw[];
+    FpExt *smem = reinterpret_cast<FpExt *>(smem_raw);
+
+    uint32_t global_col = blockIdx.y;
+    uint32_t chunks_per_block = blockDim.x / skip_domain;
+    uint32_t chunk_in_block = threadIdx.x / skip_domain;
+    uint32_t tid_in_chunk = threadIdx.x % skip_domain;
+    uint32_t row_idx = blockIdx.x * chunks_per_block + chunk_in_block;
+
+    // Find which descriptor this column belongs to
+    uint32_t desc_idx = upper_bound_search(col_prefix_sums, num_descs + 1, global_col);
+    uint32_t local_col = global_col - col_prefix_sums[desc_idx];
+
+    FoldPleDesc desc = descs[desc_idx];
+
+    bool const active_chunk = (row_idx < new_height);
+
+    FpExt local_val(Fp::zero());
+    if (active_chunk) {
+        uint32_t src_len = std::min(trace_height, skip_domain);
+        uint32_t stride = skip_domain / src_len;
+        const Fp *cell_src = desc.src + local_col * trace_height + row_idx * src_len;
+
+        if (tid_in_chunk < src_len) {
+            uint32_t idx = tid_in_chunk;
+            local_val =
+                cell_src[idx] * omega_skip_pows[idx * stride] * inv_lagrange_denoms[idx * stride];
+        }
+    }
+
+    FpExt result =
+        sumcheck::chunk_reduce_sum(local_val, smem, tid_in_chunk, skip_domain, chunk_in_block);
+
+    if (active_chunk && tid_in_chunk == 0) {
+        desc.dst[local_col * new_height + row_idx] = result;
     }
 }
 
@@ -803,6 +964,98 @@ extern "C" int _batched_stacked_reduction_sumcheck_mle_round(
         descs, block_prefix_sums, num_descs,
         q_evals, eq_r_ns, k_rot_ns, unstacked_cols_base, lambda_pows_base,
         output, q_height
+    );
+
+    return CHECK_KERNEL();
+}
+
+// Batched Round 0 block_sum launcher.
+// All descriptors must share the same trace_height.
+// Launches one batched block_sum kernel, then per-descriptor final_reduce_block_sums<true>.
+extern "C" int _batched_stacked_reduction_sumcheck_round0(
+    const StackedR0Desc *descs,
+    const uint32_t *col_prefix_sums,  // device: [num_descs + 1]
+    const uint32_t *h_col_prefix_sums,  // host copy: [num_descs + 1]
+    uint32_t num_descs,
+    const FpExt *eq_r_ns,
+    FpExt *block_sums,
+    FpExt *output,                    // [NUM_G * skip_domain], ADD to existing values
+    uint32_t trace_height,
+    uint32_t l_skip,
+    uint32_t num_x
+) {
+    uint32_t total_columns = h_col_prefix_sums[num_descs];
+    if (total_columns == 0) return 0;
+
+    uint32_t skip_domain = 1u << l_skip;
+    uint32_t stride = std::max(skip_domain / trace_height, 1u);
+    auto lifted_height = std::max(trace_height, skip_domain);
+    auto max_threads = std::max(skip_domain, 256u);
+    auto [row_grid, block] = kernel_launch_params(lifted_height, max_threads);
+    uint32_t blocks_per_row = row_grid.x;
+
+    // 2D grid: x for rows, y for total columns across all descriptors
+    dim3 grid(blocks_per_row, total_columns);
+    size_t shmem_sum_size = sizeof(FpExt) * (block.x + 1) * NUM_G;
+
+    batched_stacked_reduction_round0_block_sum_kernel<<<grid, block, shmem_sum_size>>>(
+        descs, col_prefix_sums, num_descs,
+        eq_r_ns, block_sums,
+        trace_height, l_skip,
+        skip_domain - 1, num_x, 31 - __builtin_clz(stride)
+    );
+
+    int err = CHECK_KERNEL();
+    if (err != 0) return err;
+
+    // Final reduce per descriptor: each descriptor's blocks are contiguous in block_sums
+    uint32_t output_size = NUM_G * skip_domain;
+    for (uint32_t i = 0; i < num_descs; i++) {
+        uint32_t col_start = h_col_prefix_sums[i];
+        uint32_t width = h_col_prefix_sums[i + 1] - col_start;
+        uint32_t num_blocks = width * blocks_per_row;
+        FpExt *desc_block_sums = block_sums + col_start * blocks_per_row * output_size;
+
+        auto [reduce_grid, reduce_block] = kernel_launch_params(num_blocks);
+        size_t reduce_shmem = div_ceil(reduce_block.x, WARP_SIZE) * sizeof(FpExt);
+        sumcheck::final_reduce_block_sums<true>
+            <<<output_size, reduce_block, reduce_shmem>>>(desc_block_sums, output, num_blocks);
+
+        err = CHECK_KERNEL();
+        if (err != 0) return err;
+    }
+
+    return 0;
+}
+
+// Batched PLE fold launcher.
+// All descriptors must share the same trace_height.
+extern "C" int _batched_stacked_reduction_fold_ple(
+    const FoldPleDesc *descs,
+    const uint32_t *col_prefix_sums,  // device: [num_descs + 1]
+    uint32_t num_descs,
+    uint32_t total_columns,
+    const Fp *omega_skip_pows,
+    const FpExt *inv_lagrange_denoms,
+    uint32_t trace_height,
+    uint32_t l_skip
+) {
+    if (total_columns == 0) return 0;
+    uint32_t skip_domain = 1u << l_skip;
+    uint32_t new_height = std::max(trace_height, skip_domain) / skip_domain;
+
+    uint32_t block_size = std::max(256u, skip_domain);
+    uint32_t chunks_per_block = block_size / skip_domain;
+
+    dim3 grid(div_ceil(new_height, chunks_per_block), total_columns);
+    dim3 block(block_size);
+
+    uint32_t total_warps_in_block = block_size / WARP_SIZE;
+    size_t smem_bytes = (skip_domain > WARP_SIZE) ? total_warps_in_block * sizeof(FpExt) : 0;
+
+    batched_stacked_reduction_fold_ple_kernel<<<grid, block, smem_bytes>>>(
+        descs, col_prefix_sums, num_descs,
+        omega_skip_pows, inv_lagrange_denoms, trace_height, new_height, skip_domain
     );
 
     return CHECK_KERNEL();
