@@ -44132,7 +44132,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333760506.3733"
+      "value": "1776266230589.5256"
     },
     {
       "labels": [
@@ -44146,7 +44146,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "163392724"
+      "value": "163604852"
     },
     {
       "labels": [
@@ -44160,7 +44160,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "163393012"
+      "value": "163605140"
     },
     {
       "labels": [
@@ -44198,7 +44198,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333760510.0215"
+      "value": "1776266230593.14"
     },
     {
       "labels": [
@@ -44212,7 +44212,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "180169908"
+      "value": "180382036"
     },
     {
       "labels": [
@@ -44226,7 +44226,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "180169908"
+      "value": "180382036"
     },
     {
       "labels": [
@@ -44264,7 +44264,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333760510.0315"
+      "value": "1776266230593.1472"
     },
     {
       "labels": [
@@ -44278,7 +44278,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "180169908"
+      "value": "180382036"
     },
     {
       "labels": [
@@ -44292,7 +44292,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "180169908"
+      "value": "180382036"
     },
     {
       "labels": [
@@ -44326,7 +44326,7 @@
         ]
       ],
       "metric": "transport_pk_to_device_time_ms",
-      "value": "43"
+      "value": "42"
     },
     {
       "labels": [
@@ -44336,12 +44336,12 @@
         ]
       ],
       "metric": "new_time_ms",
-      "value": "211"
+      "value": "213"
     },
     {
       "labels": [],
       "metric": "transport_pk_to_device_time_ms",
-      "value": "32"
+      "value": "30"
     },
     {
       "labels": [
@@ -44351,7 +44351,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333760563.146"
+      "value": "1776266230644.1987"
     },
     {
       "labels": [
@@ -44361,7 +44361,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "865901920"
+      "value": "866137952"
     },
     {
       "labels": [
@@ -44371,7 +44371,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "865902136"
+      "value": "866138168"
     },
     {
       "labels": [
@@ -44396,7 +44396,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333760590.4922"
+      "value": "1776266230671.5393"
     },
     {
       "labels": [
@@ -44406,7 +44406,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000119616"
+      "value": "1000355648"
     },
     {
       "labels": [
@@ -44416,7 +44416,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1000119616"
+      "value": "1000355648"
     },
     {
       "labels": [
@@ -44441,7 +44441,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333760590.5125"
+      "value": "1776266230671.5486"
     },
     {
       "labels": [
@@ -44451,7 +44451,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000119616"
+      "value": "1000355648"
     },
     {
       "labels": [
@@ -44461,7 +44461,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1000119616"
+      "value": "1000355648"
     },
     {
       "labels": [
@@ -44486,7 +44486,7 @@
         ]
       ],
       "metric": "execute_metered_time_ms",
-      "value": "194"
+      "value": "185"
     },
     {
       "labels": [
@@ -44496,7 +44496,7 @@
         ]
       ],
       "metric": "execute_metered_insn_mi/s",
-      "value": "227.78093778762747"
+      "value": "239.0810418431946"
     },
     {
       "labels": [
@@ -44514,7 +44514,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333760918.0674"
+      "value": "1776266230985.9858"
     },
     {
       "labels": [
@@ -44532,7 +44532,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "5831968864"
+      "value": "5832204896"
     },
     {
       "labels": [
@@ -44550,7 +44550,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "5831968864"
+      "value": "5832204896"
     },
     {
       "labels": [
@@ -44582,7 +44582,7 @@
         ]
       ],
       "metric": "set_initial_memory_time_ms",
-      "value": "89"
+      "value": "87"
     },
     {
       "labels": [
@@ -44596,7 +44596,7 @@
         ]
       ],
       "metric": "execute_preflight_insn_mi/s",
-      "value": "30.08217158215852"
+      "value": "30.88172632545001"
     },
     {
       "labels": [
@@ -44610,7 +44610,7 @@
         ]
       ],
       "metric": "memory_finalize_time_ms",
-      "value": "1"
+      "value": "0"
     },
     {
       "labels": [
@@ -44624,7 +44624,7 @@
         ]
       ],
       "metric": "execute_preflight_time_ms",
-      "value": "347"
+      "value": "338"
     },
     {
       "labels": [
@@ -44642,7 +44642,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761268.8147"
+      "value": "1776266231327.3118"
     },
     {
       "labels": [
@@ -44660,7 +44660,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1009713868"
+      "value": "1009949900"
     },
     {
       "labels": [
@@ -44678,7 +44678,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "5841563180"
+      "value": "5841799212"
     },
     {
       "labels": [
@@ -44872,7 +44872,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "16"
+      "value": "15"
     },
     {
       "labels": [
@@ -44908,7 +44908,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "16"
+      "value": "17"
     },
     {
       "labels": [
@@ -44926,7 +44926,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "33"
+      "value": "32"
     },
     {
       "labels": [
@@ -44940,7 +44940,7 @@
         ]
       ],
       "metric": "system_trace_gen_time_ms",
-      "value": "89"
+      "value": "88"
     },
     {
       "labels": [
@@ -44954,7 +44954,7 @@
         ]
       ],
       "metric": "trace_gen_time_ms",
-      "value": "89"
+      "value": "88"
     },
     {
       "labels": [
@@ -44976,7 +44976,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761357.2395"
+      "value": "1776266231414.1096"
     },
     {
       "labels": [
@@ -44998,7 +44998,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6234055372"
+      "value": "6234291404"
     },
     {
       "labels": [
@@ -45020,7 +45020,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "6234074140"
+      "value": "6234310172"
     },
     {
       "labels": [
@@ -45082,7 +45082,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761750.7017"
+      "value": "1776266231806.342"
     },
     {
       "labels": [
@@ -45104,7 +45104,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1254621892"
+      "value": "1254857924"
     },
     {
       "labels": [
@@ -45126,7 +45126,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7517563244"
+      "value": "7517799276"
     },
     {
       "labels": [
@@ -45188,7 +45188,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761462.4727"
+      "value": "1776266231519.329"
     },
     {
       "labels": [
@@ -45210,7 +45210,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6368273068"
+      "value": "6368509100"
     },
     {
       "labels": [
@@ -45232,7 +45232,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "6368273068"
+      "value": "6368509100"
     },
     {
       "labels": [
@@ -45312,7 +45312,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761462.92"
+      "value": "1776266231519.75"
     },
     {
       "labels": [
@@ -45334,7 +45334,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6368274100"
+      "value": "6368510132"
     },
     {
       "labels": [
@@ -45356,7 +45356,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "6368274100"
+      "value": "6368510132"
     },
     {
       "labels": [
@@ -45396,7 +45396,7 @@
         ]
       ],
       "metric": "prover.rap_constraints.logup_gkr.input_evals_time_ms",
-      "value": "29"
+      "value": "28"
     },
     {
       "labels": [
@@ -45418,7 +45418,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761492.4448"
+      "value": "1776266231548.001"
     },
     {
       "labels": [
@@ -45440,7 +45440,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "14958208692"
+      "value": "14958444724"
     },
     {
       "labels": [
@@ -45462,7 +45462,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "14991763524"
+      "value": "14991999556"
     },
     {
       "labels": [
@@ -45506,7 +45506,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761492.5208"
+      "value": "1776266231548.0747"
     },
     {
       "labels": [
@@ -45528,7 +45528,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "14958208692"
+      "value": "14958444724"
     },
     {
       "labels": [
@@ -45550,7 +45550,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "14991763524"
+      "value": "14991999556"
     },
     {
       "labels": [
@@ -45594,7 +45594,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761623.0706"
+      "value": "1776266231678.0369"
     },
     {
       "labels": [
@@ -45616,7 +45616,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "15237131252"
+      "value": "15237367284"
     },
     {
       "labels": [
@@ -45638,7 +45638,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "15238573012"
+      "value": "15238809044"
     },
     {
       "labels": [
@@ -45696,7 +45696,7 @@
         ]
       ],
       "metric": "prover.rap_constraints.logup_gkr_time_ms",
-      "value": "160"
+      "value": "158"
     },
     {
       "labels": [
@@ -45718,7 +45718,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761623.132"
+      "value": "1776266231678.07"
     },
     {
       "labels": [
@@ -45740,7 +45740,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6368274100"
+      "value": "6368510132"
     },
     {
       "labels": [
@@ -45762,7 +45762,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "15238573012"
+      "value": "15238809044"
     },
     {
       "labels": [
@@ -45806,7 +45806,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761661.8584"
+      "value": "1776266231716.8657"
     },
     {
       "labels": [
@@ -45828,7 +45828,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6394745488"
+      "value": "6394981520"
     },
     {
       "labels": [
@@ -45850,7 +45850,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7434941368"
+      "value": "7435175256"
     },
     {
       "labels": [
@@ -45930,7 +45930,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761662.6614"
+      "value": "1776266231717.6252"
     },
     {
       "labels": [
@@ -45952,7 +45952,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6875938804"
+      "value": "6876174836"
     },
     {
       "labels": [
@@ -45974,7 +45974,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7434941368"
+      "value": "7435175256"
     },
     {
       "labels": [
@@ -46068,7 +46068,7 @@
         ]
       ],
       "metric": "prove_zerocheck_and_logup_gpu_time_ms",
-      "value": "227"
+      "value": "225"
     },
     {
       "labels": [
@@ -46090,7 +46090,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761690.3096"
+      "value": "1776266231745.37"
     },
     {
       "labels": [
@@ -46112,7 +46112,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6368273140"
+      "value": "6368509172"
     },
     {
       "labels": [
@@ -46134,7 +46134,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "9017683276"
+      "value": "9017919308"
     },
     {
       "labels": [
@@ -46174,7 +46174,7 @@
         ]
       ],
       "metric": "prover.rap_constraints_time_ms",
-      "value": "227"
+      "value": "225"
     },
     {
       "labels": [
@@ -46286,7 +46286,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761752.189"
+      "value": "1776266231807.8037"
     },
     {
       "labels": [
@@ -46308,7 +46308,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1002775300"
+      "value": "1003011332"
     },
     {
       "labels": [
@@ -46330,7 +46330,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7517563244"
+      "value": "7517799276"
     },
     {
       "labels": [
@@ -46392,7 +46392,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761752.2017"
+      "value": "1776266231807.8147"
     },
     {
       "labels": [
@@ -46414,7 +46414,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1001718500"
+      "value": "1001954532"
     },
     {
       "labels": [
@@ -46436,7 +46436,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7517563244"
+      "value": "7517799276"
     },
     {
       "labels": [
@@ -46476,7 +46476,7 @@
         ]
       ],
       "metric": "prover.openings_time_ms",
-      "value": "61"
+      "value": "62"
     },
     {
       "labels": [
@@ -46494,7 +46494,7 @@
         ]
       ],
       "metric": "stark_prove_excluding_trace_time_ms",
-      "value": "396"
+      "value": "395"
     },
     {
       "labels": [
@@ -46508,7 +46508,7 @@
         ]
       ],
       "metric": "total_proof_time_ms",
-      "value": "923"
+      "value": "909"
     },
     {
       "labels": [
@@ -46518,7 +46518,7 @@
         ]
       ],
       "metric": "prove_segment_time_ms",
-      "value": "406"
+      "value": "404"
     },
     {
       "labels": [
@@ -46536,7 +46536,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333761793.011"
+      "value": "1776266231848.65"
     },
     {
       "labels": [
@@ -46554,7 +46554,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "5833567676"
+      "value": "5833803708"
     },
     {
       "labels": [
@@ -46572,7 +46572,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "5833567676"
+      "value": "5833803708"
     },
     {
       "labels": [
@@ -46618,7 +46618,7 @@
         ]
       ],
       "metric": "execute_preflight_insn_mi/s",
-      "value": "30.265800002974817"
+      "value": "30.91423987554086"
     },
     {
       "labels": [
@@ -46646,7 +46646,7 @@
         ]
       ],
       "metric": "execute_preflight_time_ms",
-      "value": "337"
+      "value": "330"
     },
     {
       "labels": [
@@ -46664,7 +46664,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762132.456"
+      "value": "1776266232181.0732"
     },
     {
       "labels": [
@@ -46682,7 +46682,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1003308272"
+      "value": "1003544304"
     },
     {
       "labels": [
@@ -46700,7 +46700,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "5835377327"
+      "value": "5835613359"
     },
     {
       "labels": [
@@ -46750,7 +46750,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "6"
+      "value": "5"
     },
     {
       "labels": [
@@ -46876,7 +46876,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "14"
+      "value": "16"
     },
     {
       "labels": [
@@ -46912,7 +46912,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "16"
+      "value": "17"
     },
     {
       "labels": [
@@ -46930,7 +46930,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "28"
+      "value": "31"
     },
     {
       "labels": [
@@ -46944,7 +46944,7 @@
         ]
       ],
       "metric": "system_trace_gen_time_ms",
-      "value": "79"
+      "value": "85"
     },
     {
       "labels": [
@@ -46958,7 +46958,7 @@
         ]
       ],
       "metric": "trace_gen_time_ms",
-      "value": "79"
+      "value": "85"
     },
     {
       "labels": [
@@ -46980,7 +46980,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762209.9412"
+      "value": "1776266232264.596"
     },
     {
       "labels": [
@@ -47002,7 +47002,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6227969264"
+      "value": "6228205296"
     },
     {
       "labels": [
@@ -47024,7 +47024,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "6227987168"
+      "value": "6228223200"
     },
     {
       "labels": [
@@ -47086,7 +47086,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762613.9429"
+      "value": "1776266232658.741"
     },
     {
       "labels": [
@@ -47108,7 +47108,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1253426408"
+      "value": "1253662440"
     },
     {
       "labels": [
@@ -47130,7 +47130,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7511474832"
+      "value": "7511710864"
     },
     {
       "labels": [
@@ -47192,7 +47192,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762315.1697"
+      "value": "1776266232369.6116"
     },
     {
       "labels": [
@@ -47214,7 +47214,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6362186960"
+      "value": "6362422992"
     },
     {
       "labels": [
@@ -47236,7 +47236,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "6362186960"
+      "value": "6362422992"
     },
     {
       "labels": [
@@ -47316,7 +47316,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762315.5283"
+      "value": "1776266232369.933"
     },
     {
       "labels": [
@@ -47338,7 +47338,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6362187992"
+      "value": "6362424024"
     },
     {
       "labels": [
@@ -47360,7 +47360,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "6362187992"
+      "value": "6362424024"
     },
     {
       "labels": [
@@ -47400,7 +47400,7 @@
         ]
       ],
       "metric": "prover.rap_constraints.logup_gkr.input_evals_time_ms",
-      "value": "43"
+      "value": "34"
     },
     {
       "labels": [
@@ -47422,7 +47422,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762358.6196"
+      "value": "1776266232404.026"
     },
     {
       "labels": [
@@ -47444,7 +47444,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "14952122584"
+      "value": "14952358616"
     },
     {
       "labels": [
@@ -47466,7 +47466,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "14985677416"
+      "value": "14985913448"
     },
     {
       "labels": [
@@ -47510,7 +47510,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762358.652"
+      "value": "1776266232404.0593"
     },
     {
       "labels": [
@@ -47532,7 +47532,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "14952122584"
+      "value": "14952358616"
     },
     {
       "labels": [
@@ -47554,7 +47554,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "14985677416"
+      "value": "14985913448"
     },
     {
       "labels": [
@@ -47598,7 +47598,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762488.7256"
+      "value": "1776266232533.6987"
     },
     {
       "labels": [
@@ -47620,7 +47620,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "15231045144"
+      "value": "15231281176"
     },
     {
       "labels": [
@@ -47642,7 +47642,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "15232486904"
+      "value": "15232722936"
     },
     {
       "labels": [
@@ -47682,7 +47682,7 @@
         ]
       ],
       "metric": "fractional_sumcheck_gpu_time_ms",
-      "value": "130"
+      "value": "129"
     },
     {
       "labels": [
@@ -47700,7 +47700,7 @@
         ]
       ],
       "metric": "prover.rap_constraints.logup_gkr_time_ms",
-      "value": "173"
+      "value": "163"
     },
     {
       "labels": [
@@ -47722,7 +47722,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762488.797"
+      "value": "1776266232533.7334"
     },
     {
       "labels": [
@@ -47744,7 +47744,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6362187992"
+      "value": "6362424024"
     },
     {
       "labels": [
@@ -47766,7 +47766,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "15232486904"
+      "value": "15232722936"
     },
     {
       "labels": [
@@ -47810,7 +47810,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762527.0498"
+      "value": "1776266232571.917"
     },
     {
       "labels": [
@@ -47832,7 +47832,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6388431172"
+      "value": "6388667204"
     },
     {
       "labels": [
@@ -47854,7 +47854,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7428627052"
+      "value": "7428860940"
     },
     {
       "labels": [
@@ -47934,7 +47934,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762527.7358"
+      "value": "1776266232572.6038"
     },
     {
       "labels": [
@@ -47956,7 +47956,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6867725608"
+      "value": "6867961640"
     },
     {
       "labels": [
@@ -47978,7 +47978,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7428627052"
+      "value": "7428860940"
     },
     {
       "labels": [
@@ -48072,7 +48072,7 @@
         ]
       ],
       "metric": "prove_zerocheck_and_logup_gpu_time_ms",
-      "value": "237"
+      "value": "228"
     },
     {
       "labels": [
@@ -48094,7 +48094,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762552.8906"
+      "value": "1776266232597.936"
     },
     {
       "labels": [
@@ -48116,7 +48116,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6362187032"
+      "value": "6362423064"
     },
     {
       "labels": [
@@ -48138,7 +48138,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "9009864936"
+      "value": "9010100968"
     },
     {
       "labels": [
@@ -48178,7 +48178,7 @@
         ]
       ],
       "metric": "prover.rap_constraints_time_ms",
-      "value": "237"
+      "value": "228"
     },
     {
       "labels": [
@@ -48290,7 +48290,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762615.1292"
+      "value": "1776266232660.1096"
     },
     {
       "labels": [
@@ -48312,7 +48312,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1001579816"
+      "value": "1001815848"
     },
     {
       "labels": [
@@ -48334,7 +48334,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7511474832"
+      "value": "7511710864"
     },
     {
       "labels": [
@@ -48374,7 +48374,7 @@
         ]
       ],
       "metric": "prover.openings.whir_time_ms",
-      "value": "45"
+      "value": "44"
     },
     {
       "labels": [
@@ -48396,7 +48396,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762615.143"
+      "value": "1776266232660.1238"
     },
     {
       "labels": [
@@ -48418,7 +48418,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000523016"
+      "value": "1000759048"
     },
     {
       "labels": [
@@ -48440,7 +48440,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7511474832"
+      "value": "7511710864"
     },
     {
       "labels": [
@@ -48498,7 +48498,7 @@
         ]
       ],
       "metric": "stark_prove_excluding_trace_time_ms",
-      "value": "405"
+      "value": "395"
     },
     {
       "labels": [
@@ -48512,7 +48512,7 @@
         ]
       ],
       "metric": "total_proof_time_ms",
-      "value": "862"
+      "value": "852"
     },
     {
       "labels": [
@@ -48530,7 +48530,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762656.143"
+      "value": "1776266232701.125"
     },
     {
       "labels": [
@@ -48548,7 +48548,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "5832372192"
+      "value": "5832608224"
     },
     {
       "labels": [
@@ -48566,7 +48566,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "5832372192"
+      "value": "5832608224"
     },
     {
       "labels": [
@@ -48612,7 +48612,7 @@
         ]
       ],
       "metric": "execute_preflight_insn_mi/s",
-      "value": "30.241305066423664"
+      "value": "29.600027982301196"
     },
     {
       "labels": [
@@ -48640,7 +48640,7 @@
         ]
       ],
       "metric": "execute_preflight_time_ms",
-      "value": "337"
+      "value": "344"
     },
     {
       "labels": [
@@ -48658,7 +48658,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333762995.5479"
+      "value": "1776266233047.441"
     },
     {
       "labels": [
@@ -48676,7 +48676,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1003327404"
+      "value": "1003563436"
     },
     {
       "labels": [
@@ -48694,7 +48694,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "5835176716"
+      "value": "5835412748"
     },
     {
       "labels": [
@@ -48762,7 +48762,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "5"
+      "value": "4"
     },
     {
       "labels": [
@@ -48888,7 +48888,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "16"
+      "value": "14"
     },
     {
       "labels": [
@@ -48924,7 +48924,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "17"
+      "value": "15"
     },
     {
       "labels": [
@@ -48942,7 +48942,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "33"
+      "value": "29"
     },
     {
       "labels": [
@@ -48956,7 +48956,7 @@
         ]
       ],
       "metric": "system_trace_gen_time_ms",
-      "value": "87"
+      "value": "77"
     },
     {
       "labels": [
@@ -48970,7 +48970,7 @@
         ]
       ],
       "metric": "trace_gen_time_ms",
-      "value": "87"
+      "value": "77"
     },
     {
       "labels": [
@@ -48992,7 +48992,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763081.0842"
+      "value": "1776266233123.4924"
     },
     {
       "labels": [
@@ -49014,7 +49014,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6247658412"
+      "value": "6247894444"
     },
     {
       "labels": [
@@ -49036,7 +49036,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "6247677180"
+      "value": "6247913212"
     },
     {
       "labels": [
@@ -49098,7 +49098,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763451.4712"
+      "value": "1776266233494.0566"
     },
     {
       "labels": [
@@ -49120,7 +49120,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1253445540"
+      "value": "1253681572"
     },
     {
       "labels": [
@@ -49142,7 +49142,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7531166284"
+      "value": "7531402316"
     },
     {
       "labels": [
@@ -49204,7 +49204,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763186.247"
+      "value": "1776266233228.455"
     },
     {
       "labels": [
@@ -49226,7 +49226,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6381876108"
+      "value": "6382112140"
     },
     {
       "labels": [
@@ -49248,7 +49248,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "6381876108"
+      "value": "6382112140"
     },
     {
       "labels": [
@@ -49328,7 +49328,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763186.6372"
+      "value": "1776266233228.8323"
     },
     {
       "labels": [
@@ -49350,7 +49350,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6381877140"
+      "value": "6382113172"
     },
     {
       "labels": [
@@ -49372,7 +49372,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "6381877140"
+      "value": "6382113172"
     },
     {
       "labels": [
@@ -49434,7 +49434,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763195.7847"
+      "value": "1776266233237.9753"
     },
     {
       "labels": [
@@ -49456,7 +49456,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "14971811732"
+      "value": "14972047764"
     },
     {
       "labels": [
@@ -49478,7 +49478,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "15005366564"
+      "value": "15005602596"
     },
     {
       "labels": [
@@ -49522,7 +49522,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763195.81"
+      "value": "1776266233238.0007"
     },
     {
       "labels": [
@@ -49544,7 +49544,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "14971811732"
+      "value": "14972047764"
     },
     {
       "labels": [
@@ -49566,7 +49566,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "15005366564"
+      "value": "15005602596"
     },
     {
       "labels": [
@@ -49610,7 +49610,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763326.1367"
+      "value": "1776266233367.7888"
     },
     {
       "labels": [
@@ -49632,7 +49632,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "15250734292"
+      "value": "15250970324"
     },
     {
       "labels": [
@@ -49654,7 +49654,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "15252176052"
+      "value": "15252412084"
     },
     {
       "labels": [
@@ -49694,7 +49694,7 @@
         ]
       ],
       "metric": "fractional_sumcheck_gpu_time_ms",
-      "value": "130"
+      "value": "129"
     },
     {
       "labels": [
@@ -49734,7 +49734,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763326.177"
+      "value": "1776266233367.818"
     },
     {
       "labels": [
@@ -49756,7 +49756,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6381877140"
+      "value": "6382113172"
     },
     {
       "labels": [
@@ -49778,7 +49778,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "15252176052"
+      "value": "15252412084"
     },
     {
       "labels": [
@@ -49822,7 +49822,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763364.8677"
+      "value": "1776266233406.4854"
     },
     {
       "labels": [
@@ -49844,7 +49844,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6408435360"
+      "value": "6408671392"
     },
     {
       "labels": [
@@ -49866,7 +49866,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7448631240"
+      "value": "7448865128"
     },
     {
       "labels": [
@@ -49946,7 +49946,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763365.6096"
+      "value": "1776266233407.1782"
     },
     {
       "labels": [
@@ -49968,7 +49968,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6891219668"
+      "value": "6891455700"
     },
     {
       "labels": [
@@ -49990,7 +49990,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7448631240"
+      "value": "7448865128"
     },
     {
       "labels": [
@@ -50106,7 +50106,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763391.4666"
+      "value": "1776266233432.8728"
     },
     {
       "labels": [
@@ -50128,7 +50128,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6381876180"
+      "value": "6382112212"
     },
     {
       "labels": [
@@ -50150,7 +50150,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "9034278692"
+      "value": "9034514724"
     },
     {
       "labels": [
@@ -50302,7 +50302,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763452.6714"
+      "value": "1776266233494.985"
     },
     {
       "labels": [
@@ -50324,7 +50324,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1001598948"
+      "value": "1001834980"
     },
     {
       "labels": [
@@ -50346,7 +50346,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7531166284"
+      "value": "7531402316"
     },
     {
       "labels": [
@@ -50386,7 +50386,7 @@
         ]
       ],
       "metric": "prover.openings.whir_time_ms",
-      "value": "43"
+      "value": "44"
     },
     {
       "labels": [
@@ -50408,7 +50408,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763452.6812"
+      "value": "1776266233494.9937"
     },
     {
       "labels": [
@@ -50430,7 +50430,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000542148"
+      "value": "1000778180"
     },
     {
       "labels": [
@@ -50452,7 +50452,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7531166284"
+      "value": "7531402316"
     },
     {
       "labels": [
@@ -50492,7 +50492,7 @@
         ]
       ],
       "metric": "prover.openings_time_ms",
-      "value": "61"
+      "value": "62"
     },
     {
       "labels": [
@@ -50524,7 +50524,7 @@
         ]
       ],
       "metric": "total_proof_time_ms",
-      "value": "837"
+      "value": "834"
     },
     {
       "labels": [
@@ -50542,7 +50542,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763493.4924"
+      "value": "1776266233535.8374"
     },
     {
       "labels": [
@@ -50560,7 +50560,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "5832391324"
+      "value": "5832627356"
     },
     {
       "labels": [
@@ -50578,7 +50578,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "5832391324"
+      "value": "5832627356"
     },
     {
       "labels": [
@@ -50624,7 +50624,7 @@
         ]
       ],
       "metric": "execute_preflight_insn_mi/s",
-      "value": "30.359898870399174"
+      "value": "31.26459101858065"
     },
     {
       "labels": [
@@ -50652,7 +50652,7 @@
         ]
       ],
       "metric": "execute_preflight_time_ms",
-      "value": "334"
+      "value": "324"
     },
     {
       "labels": [
@@ -50670,7 +50670,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763829.7788"
+      "value": "1776266233862.4326"
     },
     {
       "labels": [
@@ -50688,7 +50688,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1001714408"
+      "value": "1001950440"
     },
     {
       "labels": [
@@ -50706,7 +50706,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "5833651723"
+      "value": "5833887755"
     },
     {
       "labels": [
@@ -50936,7 +50936,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "16"
+      "value": "15"
     },
     {
       "labels": [
@@ -50954,7 +50954,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "33"
+      "value": "28"
     },
     {
       "labels": [
@@ -50968,7 +50968,7 @@
         ]
       ],
       "metric": "system_trace_gen_time_ms",
-      "value": "84"
+      "value": "77"
     },
     {
       "labels": [
@@ -50982,7 +50982,7 @@
         ]
       ],
       "metric": "trace_gen_time_ms",
-      "value": "84"
+      "value": "77"
     },
     {
       "labels": [
@@ -51004,7 +51004,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333763912.1292"
+      "value": "1776266233938.1462"
     },
     {
       "labels": [
@@ -51026,7 +51026,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6274693864"
+      "value": "6274929896"
     },
     {
       "labels": [
@@ -51048,7 +51048,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "6274712632"
+      "value": "6274948664"
     },
     {
       "labels": [
@@ -51110,7 +51110,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764317.0671"
+      "value": "1776266234348.1777"
     },
     {
       "labels": [
@@ -51132,7 +51132,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1253135072"
+      "value": "1253371104"
     },
     {
       "labels": [
@@ -51154,7 +51154,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7558201736"
+      "value": "7558437768"
     },
     {
       "labels": [
@@ -51216,7 +51216,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764017.078"
+      "value": "1776266234043.548"
     },
     {
       "labels": [
@@ -51238,7 +51238,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6408911560"
+      "value": "6409147592"
     },
     {
       "labels": [
@@ -51260,7 +51260,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "6408911560"
+      "value": "6409147592"
     },
     {
       "labels": [
@@ -51340,7 +51340,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764017.4165"
+      "value": "1776266234043.926"
     },
     {
       "labels": [
@@ -51362,7 +51362,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6408912592"
+      "value": "6409148624"
     },
     {
       "labels": [
@@ -51384,7 +51384,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "6408912592"
+      "value": "6409148624"
     },
     {
       "labels": [
@@ -51424,7 +51424,7 @@
         ]
       ],
       "metric": "prover.rap_constraints.logup_gkr.input_evals_time_ms",
-      "value": "40"
+      "value": "42"
     },
     {
       "labels": [
@@ -51446,7 +51446,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764058.2134"
+      "value": "1776266234086.1887"
     },
     {
       "labels": [
@@ -51468,7 +51468,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "14998847184"
+      "value": "14999083216"
     },
     {
       "labels": [
@@ -51490,7 +51490,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "15032402016"
+      "value": "15032638048"
     },
     {
       "labels": [
@@ -51534,7 +51534,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764058.2407"
+      "value": "1776266234086.2163"
     },
     {
       "labels": [
@@ -51556,7 +51556,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "14998847184"
+      "value": "14999083216"
     },
     {
       "labels": [
@@ -51578,7 +51578,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "15032402016"
+      "value": "15032638048"
     },
     {
       "labels": [
@@ -51622,7 +51622,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764188.6736"
+      "value": "1776266234220.2285"
     },
     {
       "labels": [
@@ -51644,7 +51644,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "15277769744"
+      "value": "15278005776"
     },
     {
       "labels": [
@@ -51666,7 +51666,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "15279211504"
+      "value": "15279447536"
     },
     {
       "labels": [
@@ -51706,7 +51706,7 @@
         ]
       ],
       "metric": "fractional_sumcheck_gpu_time_ms",
-      "value": "130"
+      "value": "134"
     },
     {
       "labels": [
@@ -51724,7 +51724,7 @@
         ]
       ],
       "metric": "prover.rap_constraints.logup_gkr_time_ms",
-      "value": "171"
+      "value": "176"
     },
     {
       "labels": [
@@ -51746,7 +51746,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764188.7197"
+      "value": "1776266234220.2734"
     },
     {
       "labels": [
@@ -51768,7 +51768,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6408912592"
+      "value": "6409148624"
     },
     {
       "labels": [
@@ -51790,7 +51790,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "15279211504"
+      "value": "15279447536"
     },
     {
       "labels": [
@@ -51834,7 +51834,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764228.0876"
+      "value": "1776266234259.6416"
     },
     {
       "labels": [
@@ -51856,7 +51856,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6435290764"
+      "value": "6435526796"
     },
     {
       "labels": [
@@ -51878,7 +51878,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7475486644"
+      "value": "7475720532"
     },
     {
       "labels": [
@@ -51958,7 +51958,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764228.8372"
+      "value": "1776266234262.786"
     },
     {
       "labels": [
@@ -51980,7 +51980,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6923664400"
+      "value": "6923900432"
     },
     {
       "labels": [
@@ -52002,7 +52002,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7475486644"
+      "value": "7475720532"
     },
     {
       "labels": [
@@ -52042,7 +52042,7 @@
         ]
       ],
       "metric": "prover.rap_constraints.round0_time_ms",
-      "value": "40"
+      "value": "42"
     },
     {
       "labels": [
@@ -52078,7 +52078,7 @@
         ]
       ],
       "metric": "prover.rap_constraints.mle_rounds_time_ms",
-      "value": "26"
+      "value": "24"
     },
     {
       "labels": [
@@ -52096,7 +52096,7 @@
         ]
       ],
       "metric": "prove_zerocheck_and_logup_gpu_time_ms",
-      "value": "238"
+      "value": "243"
     },
     {
       "labels": [
@@ -52118,7 +52118,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764255.7979"
+      "value": "1776266234287.4512"
     },
     {
       "labels": [
@@ -52140,7 +52140,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "6408911632"
+      "value": "6409147664"
     },
     {
       "labels": [
@@ -52162,7 +52162,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "9118894432"
+      "value": "9119130464"
     },
     {
       "labels": [
@@ -52202,7 +52202,7 @@
         ]
       ],
       "metric": "prover.rap_constraints_time_ms",
-      "value": "238"
+      "value": "243"
     },
     {
       "labels": [
@@ -52314,7 +52314,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764318.3105"
+      "value": "1776266234349.4092"
     },
     {
       "labels": [
@@ -52336,7 +52336,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1001288480"
+      "value": "1001524512"
     },
     {
       "labels": [
@@ -52358,7 +52358,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7558201736"
+      "value": "7558437768"
     },
     {
       "labels": [
@@ -52420,7 +52420,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764318.3271"
+      "value": "1776266234349.4314"
     },
     {
       "labels": [
@@ -52442,7 +52442,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000231680"
+      "value": "1000467712"
     },
     {
       "labels": [
@@ -52464,7 +52464,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7558201736"
+      "value": "7558437768"
     },
     {
       "labels": [
@@ -52504,7 +52504,7 @@
         ]
       ],
       "metric": "prover.openings_time_ms",
-      "value": "62"
+      "value": "61"
     },
     {
       "labels": [
@@ -52522,7 +52522,7 @@
         ]
       ],
       "metric": "stark_prove_excluding_trace_time_ms",
-      "value": "406"
+      "value": "411"
     },
     {
       "labels": [
@@ -52536,7 +52536,7 @@
         ]
       ],
       "metric": "total_proof_time_ms",
-      "value": "865"
+      "value": "854"
     },
     {
       "labels": [
@@ -52554,7 +52554,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764359.1404"
+      "value": "1776266234390.2834"
     },
     {
       "labels": [
@@ -52572,7 +52572,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "5832080856"
+      "value": "5832316888"
     },
     {
       "labels": [
@@ -52590,7 +52590,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "5832080856"
+      "value": "5832316888"
     },
     {
       "labels": [
@@ -52636,7 +52636,7 @@
         ]
       ],
       "metric": "execute_preflight_insn_mi/s",
-      "value": "29.67644386320983"
+      "value": "30.8006328277175"
     },
     {
       "labels": [
@@ -52664,7 +52664,7 @@
         ]
       ],
       "metric": "execute_preflight_time_ms",
-      "value": "119"
+      "value": "114"
     },
     {
       "labels": [
@@ -52682,7 +52682,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764480.0005"
+      "value": "1776266234506.915"
     },
     {
       "labels": [
@@ -52700,7 +52700,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1002221520"
+      "value": "1002457552"
     },
     {
       "labels": [
@@ -52718,7 +52718,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "5834070832"
+      "value": "5834306864"
     },
     {
       "labels": [
@@ -52966,7 +52966,7 @@
         ]
       ],
       "metric": "single_trace_gen_time_ms",
-      "value": "9"
+      "value": "10"
     },
     {
       "labels": [
@@ -52980,7 +52980,7 @@
         ]
       ],
       "metric": "system_trace_gen_time_ms",
-      "value": "28"
+      "value": "31"
     },
     {
       "labels": [
@@ -52994,7 +52994,7 @@
         ]
       ],
       "metric": "trace_gen_time_ms",
-      "value": "28"
+      "value": "31"
     },
     {
       "labels": [
@@ -53016,7 +53016,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764507.0593"
+      "value": "1776266234536.2153"
     },
     {
       "labels": [
@@ -53038,7 +53038,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3427910096"
+      "value": "3428146128"
     },
     {
       "labels": [
@@ -53060,7 +53060,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3427928864"
+      "value": "3428164896"
     },
     {
       "labels": [
@@ -53122,7 +53122,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764722.2773"
+      "value": "1776266234751.2786"
     },
     {
       "labels": [
@@ -53144,7 +53144,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1253208008"
+      "value": "1253444040"
     },
     {
       "labels": [
@@ -53166,7 +53166,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "4132604016"
+      "value": "4132840048"
     },
     {
       "labels": [
@@ -53228,7 +53228,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764562.4646"
+      "value": "1776266234591.6494"
     },
     {
       "labels": [
@@ -53250,7 +53250,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3562127792"
+      "value": "3562363824"
     },
     {
       "labels": [
@@ -53272,7 +53272,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3562127792"
+      "value": "3562363824"
     },
     {
       "labels": [
@@ -53352,7 +53352,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764562.7832"
+      "value": "1776266234591.964"
     },
     {
       "labels": [
@@ -53374,7 +53374,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3562128824"
+      "value": "3562364856"
     },
     {
       "labels": [
@@ -53396,7 +53396,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3562128824"
+      "value": "3562364856"
     },
     {
       "labels": [
@@ -53458,7 +53458,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764567.4292"
+      "value": "1776266234596.6055"
     },
     {
       "labels": [
@@ -53480,7 +53480,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "7857096120"
+      "value": "7857332152"
     },
     {
       "labels": [
@@ -53502,7 +53502,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7890650952"
+      "value": "7890886984"
     },
     {
       "labels": [
@@ -53546,7 +53546,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764567.5078"
+      "value": "1776266234596.6711"
     },
     {
       "labels": [
@@ -53568,7 +53568,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "7857096120"
+      "value": "7857332152"
     },
     {
       "labels": [
@@ -53590,7 +53590,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7890650952"
+      "value": "7890886984"
     },
     {
       "labels": [
@@ -53634,7 +53634,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764635.6963"
+      "value": "1776266234664.7026"
     },
     {
       "labels": [
@@ -53656,7 +53656,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "7996558072"
+      "value": "7996794104"
     },
     {
       "labels": [
@@ -53678,7 +53678,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7996951256"
+      "value": "7997187288"
     },
     {
       "labels": [
@@ -53736,7 +53736,7 @@
         ]
       ],
       "metric": "prover.rap_constraints.logup_gkr_time_ms",
-      "value": "73"
+      "value": "72"
     },
     {
       "labels": [
@@ -53758,7 +53758,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764635.716"
+      "value": "1776266234664.7234"
     },
     {
       "labels": [
@@ -53780,7 +53780,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3562128824"
+      "value": "3562364856"
     },
     {
       "labels": [
@@ -53802,7 +53802,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "7996951256"
+      "value": "7997187288"
     },
     {
       "labels": [
@@ -53846,7 +53846,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764656.2654"
+      "value": "1776266234685.319"
     },
     {
       "labels": [
@@ -53868,7 +53868,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3575191676"
+      "value": "3575427708"
     },
     {
       "labels": [
@@ -53890,7 +53890,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "4120459684"
+      "value": "4120693572"
     },
     {
       "labels": [
@@ -53970,7 +53970,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764656.972"
+      "value": "1776266234686.0088"
     },
     {
       "labels": [
@@ -53992,7 +53992,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3812475912"
+      "value": "3812711944"
     },
     {
       "labels": [
@@ -54014,7 +54014,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "4120459684"
+      "value": "4120693572"
     },
     {
       "labels": [
@@ -54130,7 +54130,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764671.7266"
+      "value": "1776266234700.886"
     },
     {
       "labels": [
@@ -54152,7 +54152,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3562127864"
+      "value": "3562363896"
     },
     {
       "labels": [
@@ -54174,7 +54174,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "4850776076"
+      "value": "4851012108"
     },
     {
       "labels": [
@@ -54326,7 +54326,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764724.6194"
+      "value": "1776266234753.561"
     },
     {
       "labels": [
@@ -54348,7 +54348,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1001361416"
+      "value": "1001597448"
     },
     {
       "labels": [
@@ -54370,7 +54370,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "4132604016"
+      "value": "4132840048"
     },
     {
       "labels": [
@@ -54432,7 +54432,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764724.6353"
+      "value": "1776266234753.577"
     },
     {
       "labels": [
@@ -54454,7 +54454,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000304616"
+      "value": "1000540648"
     },
     {
       "labels": [
@@ -54476,7 +54476,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "4132604016"
+      "value": "4132840048"
     },
     {
       "labels": [
@@ -54548,7 +54548,7 @@
         ]
       ],
       "metric": "total_proof_time_ms",
-      "value": "406"
+      "value": "404"
     },
     {
       "labels": [
@@ -54568,7 +54568,7 @@
         ]
       ],
       "metric": "app_prove_time_ms",
-      "value": "4121"
+      "value": "4070"
     },
     {
       "labels": [
@@ -54624,7 +54624,7 @@
         ]
       ],
       "metric": "generate_blob_time_ms",
-      "value": "4"
+      "value": "3"
     },
     {
       "labels": [
@@ -54656,7 +54656,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764752.7107"
+      "value": "1776266234781.043"
     },
     {
       "labels": [
@@ -54674,7 +54674,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1362225944"
+      "value": "1362461976"
     },
     {
       "labels": [
@@ -54692,7 +54692,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1375009392"
+      "value": "1375245424"
     },
     {
       "labels": [
@@ -54728,7 +54728,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764752.7463"
+      "value": "1776266234781.0825"
     },
     {
       "labels": [
@@ -54746,7 +54746,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1362229752"
+      "value": "1362465784"
     },
     {
       "labels": [
@@ -54764,7 +54764,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1375009392"
+      "value": "1375245424"
     },
     {
       "labels": [
@@ -54800,7 +54800,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764752.76"
+      "value": "1776266234781.098"
     },
     {
       "labels": [
@@ -54818,7 +54818,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1362229752"
+      "value": "1362465784"
     },
     {
       "labels": [
@@ -54836,7 +54836,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1375009392"
+      "value": "1375245424"
     },
     {
       "labels": [
@@ -54872,7 +54872,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764764.126"
+      "value": "1776266234792.5134"
     },
     {
       "labels": [
@@ -54890,7 +54890,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1412131880"
+      "value": "1412367912"
     },
     {
       "labels": [
@@ -54908,7 +54908,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1412131880"
+      "value": "1412367912"
     },
     {
       "labels": [
@@ -54944,7 +54944,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764764.161"
+      "value": "1776266234792.5496"
     },
     {
       "labels": [
@@ -54962,7 +54962,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1413966960"
+      "value": "1414202992"
     },
     {
       "labels": [
@@ -54980,7 +54980,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1413966960"
+      "value": "1414202992"
     },
     {
       "labels": [
@@ -55016,7 +55016,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764764.1797"
+      "value": "1776266234792.569"
     },
     {
       "labels": [
@@ -55034,7 +55034,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1418030120"
+      "value": "1418266152"
     },
     {
       "labels": [
@@ -55052,7 +55052,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1418030120"
+      "value": "1418266152"
     },
     {
       "labels": [
@@ -55088,7 +55088,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764789.003"
+      "value": "1776266234817.6108"
     },
     {
       "labels": [
@@ -55106,7 +55106,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1585802608"
+      "value": "1586038640"
     },
     {
       "labels": [
@@ -55124,7 +55124,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1585802608"
+      "value": "1586038640"
     },
     {
       "labels": [
@@ -55160,7 +55160,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764792.6707"
+      "value": "1776266234820.9458"
     },
     {
       "labels": [
@@ -55178,7 +55178,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1506045560"
+      "value": "1506281592"
     },
     {
       "labels": [
@@ -55196,7 +55196,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1585802608"
+      "value": "1586038640"
     },
     {
       "labels": [
@@ -55232,7 +55232,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764792.7144"
+      "value": "1776266234820.9922"
     },
     {
       "labels": [
@@ -55250,7 +55250,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1510284248"
+      "value": "1510520280"
     },
     {
       "labels": [
@@ -55268,7 +55268,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1585802608"
+      "value": "1586038640"
     },
     {
       "labels": [
@@ -55300,7 +55300,7 @@
         ]
       ],
       "metric": "subcircuit_generate_proving_ctxs_time_ms",
-      "value": "65"
+      "value": "64"
     },
     {
       "labels": [
@@ -55336,7 +55336,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764793.3892"
+      "value": "1776266234821.6719"
     },
     {
       "labels": [
@@ -55358,7 +55358,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3422829432"
+      "value": "3423065464"
     },
     {
       "labels": [
@@ -55380,7 +55380,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3422869296"
+      "value": "3423105328"
     },
     {
       "labels": [
@@ -55442,7 +55442,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764918.4954"
+      "value": "1776266234946.697"
     },
     {
       "labels": [
@@ -55464,7 +55464,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1126657992"
+      "value": "1126894024"
     },
     {
       "labels": [
@@ -55486,7 +55486,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3914718872"
+      "value": "3914954904"
     },
     {
       "labels": [
@@ -55526,7 +55526,7 @@
         ]
       ],
       "metric": "merkle_tree_time_ms",
-      "value": "2"
+      "value": "1"
     },
     {
       "labels": [
@@ -55548,7 +55548,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764843.259"
+      "value": "1776266234871.4702"
     },
     {
       "labels": [
@@ -55570,7 +55570,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3456383832"
+      "value": "3456619864"
     },
     {
       "labels": [
@@ -55592,7 +55592,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3456383832"
+      "value": "3456619864"
     },
     {
       "labels": [
@@ -55672,7 +55672,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764843.806"
+      "value": "1776266234872.02"
     },
     {
       "labels": [
@@ -55694,7 +55694,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3456385416"
+      "value": "3456621448"
     },
     {
       "labels": [
@@ -55716,7 +55716,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3456385416"
+      "value": "3456621448"
     },
     {
       "labels": [
@@ -55778,7 +55778,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764844.2197"
+      "value": "1776266234872.4404"
     },
     {
       "labels": [
@@ -55800,7 +55800,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3724820872"
+      "value": "3725056904"
     },
     {
       "labels": [
@@ -55822,7 +55822,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3808716064"
+      "value": "3808952096"
     },
     {
       "labels": [
@@ -55866,7 +55866,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764844.2427"
+      "value": "1776266234872.465"
     },
     {
       "labels": [
@@ -55888,7 +55888,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3724820872"
+      "value": "3725056904"
     },
     {
       "labels": [
@@ -55910,7 +55910,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3808716064"
+      "value": "3808952096"
     },
     {
       "labels": [
@@ -55954,7 +55954,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764858.9705"
+      "value": "1776266234886.929"
     },
     {
       "labels": [
@@ -55976,7 +55976,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3859300808"
+      "value": "3859536840"
     },
     {
       "labels": [
@@ -55998,7 +55998,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3859399080"
+      "value": "3859635112"
     },
     {
       "labels": [
@@ -56078,7 +56078,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764858.9888"
+      "value": "1776266234886.9473"
     },
     {
       "labels": [
@@ -56100,7 +56100,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3456385416"
+      "value": "3456621448"
     },
     {
       "labels": [
@@ -56122,7 +56122,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3859399080"
+      "value": "3859635112"
     },
     {
       "labels": [
@@ -56166,7 +56166,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764882.83"
+      "value": "1776266234910.6504"
     },
     {
       "labels": [
@@ -56188,7 +56188,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3460087384"
+      "value": "3460323416"
     },
     {
       "labels": [
@@ -56210,7 +56210,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3800955232"
+      "value": "3801191264"
     },
     {
       "labels": [
@@ -56290,7 +56290,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764883.9905"
+      "value": "1776266234911.8035"
     },
     {
       "labels": [
@@ -56312,7 +56312,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3622945736"
+      "value": "3623181768"
     },
     {
       "labels": [
@@ -56334,7 +56334,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3800955232"
+      "value": "3801191264"
     },
     {
       "labels": [
@@ -56374,7 +56374,7 @@
         ]
       ],
       "metric": "prover.rap_constraints.round0_time_ms",
-      "value": "25"
+      "value": "24"
     },
     {
       "labels": [
@@ -56450,7 +56450,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764903.6125"
+      "value": "1776266234931.6301"
     },
     {
       "labels": [
@@ -56472,7 +56472,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3456383904"
+      "value": "3456619936"
     },
     {
       "labels": [
@@ -56494,7 +56494,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "4303266376"
+      "value": "4303502408"
     },
     {
       "labels": [
@@ -56646,7 +56646,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764919.6467"
+      "value": "1776266234947.9395"
     },
     {
       "labels": [
@@ -56668,7 +56668,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000452104"
+      "value": "1000688136"
     },
     {
       "labels": [
@@ -56690,7 +56690,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3914718872"
+      "value": "3914954904"
     },
     {
       "labels": [
@@ -56730,7 +56730,7 @@
         ]
       ],
       "metric": "prover.openings.whir_time_ms",
-      "value": "9"
+      "value": "10"
     },
     {
       "labels": [
@@ -56752,7 +56752,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764919.6567"
+      "value": "1776266234947.953"
     },
     {
       "labels": [
@@ -56774,7 +56774,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000304616"
+      "value": "1000540648"
     },
     {
       "labels": [
@@ -56796,7 +56796,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3914718872"
+      "value": "3914954904"
     },
     {
       "labels": [
@@ -56878,7 +56878,7 @@
         ]
       ],
       "metric": "single_leaf_agg_time_ms",
-      "value": "83"
+      "value": "84"
     },
     {
       "labels": [
@@ -56892,7 +56892,7 @@
         ]
       ],
       "metric": "execute_preflight_time_ms",
-      "value": "2"
+      "value": "1"
     },
     {
       "labels": [
@@ -56948,7 +56948,7 @@
         ]
       ],
       "metric": "generate_proving_ctxs_time_ms",
-      "value": "7"
+      "value": "8"
     },
     {
       "labels": [
@@ -56966,7 +56966,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764925.6455"
+      "value": "1776266234954.3208"
     },
     {
       "labels": [
@@ -56984,7 +56984,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1092622172"
+      "value": "1092858204"
     },
     {
       "labels": [
@@ -57002,7 +57002,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1095367740"
+      "value": "1095603772"
     },
     {
       "labels": [
@@ -57038,7 +57038,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764925.665"
+      "value": "1776266234954.3406"
     },
     {
       "labels": [
@@ -57056,7 +57056,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1092623124"
+      "value": "1092859156"
     },
     {
       "labels": [
@@ -57074,7 +57074,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1095367740"
+      "value": "1095603772"
     },
     {
       "labels": [
@@ -57110,7 +57110,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764925.674"
+      "value": "1776266234954.3474"
     },
     {
       "labels": [
@@ -57128,7 +57128,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1092623124"
+      "value": "1092859156"
     },
     {
       "labels": [
@@ -57146,7 +57146,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1095367740"
+      "value": "1095603772"
     },
     {
       "labels": [
@@ -57182,7 +57182,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764927.5"
+      "value": "1776266234956.252"
     },
     {
       "labels": [
@@ -57200,7 +57200,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1101653208"
+      "value": "1101889240"
     },
     {
       "labels": [
@@ -57218,7 +57218,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1101653208"
+      "value": "1101889240"
     },
     {
       "labels": [
@@ -57254,7 +57254,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764927.5132"
+      "value": "1776266234956.2673"
     },
     {
       "labels": [
@@ -57272,7 +57272,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1102112032"
+      "value": "1102348064"
     },
     {
       "labels": [
@@ -57290,7 +57290,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1102112032"
+      "value": "1102348064"
     },
     {
       "labels": [
@@ -57326,7 +57326,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764927.525"
+      "value": "1776266234956.2756"
     },
     {
       "labels": [
@@ -57344,7 +57344,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1103127768"
+      "value": "1103363800"
     },
     {
       "labels": [
@@ -57362,7 +57362,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1103127768"
+      "value": "1103363800"
     },
     {
       "labels": [
@@ -57398,7 +57398,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764933.6511"
+      "value": "1776266234962.638"
     },
     {
       "labels": [
@@ -57416,7 +57416,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1149875936"
+      "value": "1150111968"
     },
     {
       "labels": [
@@ -57434,7 +57434,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1149875936"
+      "value": "1150111968"
     },
     {
       "labels": [
@@ -57470,7 +57470,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764934.4517"
+      "value": "1776266234963.7402"
     },
     {
       "labels": [
@@ -57488,7 +57488,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1134410356"
+      "value": "1134646388"
     },
     {
       "labels": [
@@ -57506,7 +57506,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1149875936"
+      "value": "1150111968"
     },
     {
       "labels": [
@@ -57542,7 +57542,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764934.4702"
+      "value": "1776266234963.7676"
     },
     {
       "labels": [
@@ -57560,7 +57560,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1135469836"
+      "value": "1135705868"
     },
     {
       "labels": [
@@ -57578,7 +57578,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1149875936"
+      "value": "1150111968"
     },
     {
       "labels": [
@@ -57610,7 +57610,7 @@
         ]
       ],
       "metric": "subcircuit_generate_proving_ctxs_time_ms",
-      "value": "14"
+      "value": "15"
     },
     {
       "labels": [
@@ -57624,7 +57624,7 @@
         ]
       ],
       "metric": "trace_gen_time_ms",
-      "value": "14"
+      "value": "16"
     },
     {
       "labels": [
@@ -57646,7 +57646,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764934.6653"
+      "value": "1776266234964.061"
     },
     {
       "labels": [
@@ -57668,7 +57668,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1638771228"
+      "value": "1639007260"
     },
     {
       "labels": [
@@ -57690,7 +57690,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1638811092"
+      "value": "1639047124"
     },
     {
       "labels": [
@@ -57752,7 +57752,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765001.359"
+      "value": "1776266235031.123"
     },
     {
       "labels": [
@@ -57774,7 +57774,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1126657992"
+      "value": "1126894024"
     },
     {
       "labels": [
@@ -57796,7 +57796,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1792494908"
+      "value": "1792730940"
     },
     {
       "labels": [
@@ -57836,7 +57836,7 @@
         ]
       ],
       "metric": "merkle_tree_time_ms",
-      "value": "2"
+      "value": "1"
     },
     {
       "labels": [
@@ -57858,7 +57858,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764949.7175"
+      "value": "1776266234979.112"
     },
     {
       "labels": [
@@ -57880,7 +57880,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1672325628"
+      "value": "1672561660"
     },
     {
       "labels": [
@@ -57902,7 +57902,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1672325628"
+      "value": "1672561660"
     },
     {
       "labels": [
@@ -57982,7 +57982,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764950.2441"
+      "value": "1776266234979.7603"
     },
     {
       "labels": [
@@ -58004,7 +58004,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1672327212"
+      "value": "1672563244"
     },
     {
       "labels": [
@@ -58026,7 +58026,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1672327212"
+      "value": "1672563244"
     },
     {
       "labels": [
@@ -58088,7 +58088,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764950.4539"
+      "value": "1776266234979.9602"
     },
     {
       "labels": [
@@ -58110,7 +58110,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1739436076"
+      "value": "1739672108"
     },
     {
       "labels": [
@@ -58132,7 +58132,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1823326404"
+      "value": "1823562436"
     },
     {
       "labels": [
@@ -58176,7 +58176,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764950.4868"
+      "value": "1776266234979.993"
     },
     {
       "labels": [
@@ -58198,7 +58198,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1739436076"
+      "value": "1739672108"
     },
     {
       "labels": [
@@ -58220,7 +58220,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1823326404"
+      "value": "1823562436"
     },
     {
       "labels": [
@@ -58264,7 +58264,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764960.866"
+      "value": "1776266234990.3418"
     },
     {
       "labels": [
@@ -58286,7 +58286,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1873719404"
+      "value": "1873955436"
     },
     {
       "labels": [
@@ -58308,7 +58308,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1873768524"
+      "value": "1874004556"
     },
     {
       "labels": [
@@ -58388,7 +58388,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764960.8823"
+      "value": "1776266234990.3582"
     },
     {
       "labels": [
@@ -58410,7 +58410,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1672327212"
+      "value": "1672563244"
     },
     {
       "labels": [
@@ -58432,7 +58432,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1873768524"
+      "value": "1874004556"
     },
     {
       "labels": [
@@ -58476,7 +58476,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764976.1116"
+      "value": "1776266235005.5212"
     },
     {
       "labels": [
@@ -58498,7 +58498,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1673789980"
+      "value": "1674026012"
     },
     {
       "labels": [
@@ -58520,7 +58520,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1755992868"
+      "value": "1756228900"
     },
     {
       "labels": [
@@ -58600,7 +58600,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764977.3281"
+      "value": "1776266235007.1462"
     },
     {
       "labels": [
@@ -58622,7 +58622,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1726814684"
+      "value": "1727050716"
     },
     {
       "labels": [
@@ -58644,7 +58644,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1755992868"
+      "value": "1756228900"
     },
     {
       "labels": [
@@ -58738,7 +58738,7 @@
         ]
       ],
       "metric": "prove_zerocheck_and_logup_gpu_time_ms",
-      "value": "39"
+      "value": "40"
     },
     {
       "labels": [
@@ -58760,7 +58760,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333764989.9534"
+      "value": "1776266235019.8962"
     },
     {
       "labels": [
@@ -58782,7 +58782,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1672325700"
+      "value": "1672561732"
     },
     {
       "labels": [
@@ -58804,7 +58804,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1918584824"
+      "value": "1918820856"
     },
     {
       "labels": [
@@ -58844,7 +58844,7 @@
         ]
       ],
       "metric": "prover.rap_constraints_time_ms",
-      "value": "39"
+      "value": "40"
     },
     {
       "labels": [
@@ -58956,7 +58956,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765002.7078"
+      "value": "1776266235032.5063"
     },
     {
       "labels": [
@@ -58978,7 +58978,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000452104"
+      "value": "1000688136"
     },
     {
       "labels": [
@@ -59000,7 +59000,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1792494908"
+      "value": "1792730940"
     },
     {
       "labels": [
@@ -59062,7 +59062,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765002.7166"
+      "value": "1776266235032.5154"
     },
     {
       "labels": [
@@ -59084,7 +59084,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000304616"
+      "value": "1000540648"
     },
     {
       "labels": [
@@ -59106,7 +59106,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1792494908"
+      "value": "1792730940"
     },
     {
       "labels": [
@@ -59178,7 +59178,7 @@
         ]
       ],
       "metric": "total_proof_time_ms",
-      "value": "83"
+      "value": "84"
     },
     {
       "labels": [
@@ -59188,7 +59188,7 @@
         ]
       ],
       "metric": "agg_layer_time_ms",
-      "value": "275"
+      "value": "276"
     },
     {
       "labels": [
@@ -59202,7 +59202,7 @@
         ]
       ],
       "metric": "execute_preflight_time_ms",
-      "value": "3"
+      "value": "2"
     },
     {
       "labels": [
@@ -59276,7 +59276,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765012.987"
+      "value": "1776266235042.231"
     },
     {
       "labels": [
@@ -59294,7 +59294,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1101889648"
+      "value": "1102125680"
     },
     {
       "labels": [
@@ -59312,7 +59312,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1106251240"
+      "value": "1106487272"
     },
     {
       "labels": [
@@ -59348,7 +59348,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765013.0073"
+      "value": "1776266235042.252"
     },
     {
       "labels": [
@@ -59366,7 +59366,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1101897696"
+      "value": "1102133728"
     },
     {
       "labels": [
@@ -59384,7 +59384,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1106251240"
+      "value": "1106487272"
     },
     {
       "labels": [
@@ -59420,7 +59420,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765013.0142"
+      "value": "1776266235042.2598"
     },
     {
       "labels": [
@@ -59438,7 +59438,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1101897696"
+      "value": "1102133728"
     },
     {
       "labels": [
@@ -59456,7 +59456,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1106251240"
+      "value": "1106487272"
     },
     {
       "labels": [
@@ -59492,7 +59492,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765016.9138"
+      "value": "1776266235046.1243"
     },
     {
       "labels": [
@@ -59510,7 +59510,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1120474952"
+      "value": "1120710984"
     },
     {
       "labels": [
@@ -59528,7 +59528,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1120474952"
+      "value": "1120710984"
     },
     {
       "labels": [
@@ -59564,7 +59564,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765016.9292"
+      "value": "1776266235046.1392"
     },
     {
       "labels": [
@@ -59582,7 +59582,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1121392512"
+      "value": "1121628544"
     },
     {
       "labels": [
@@ -59600,7 +59600,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1121392512"
+      "value": "1121628544"
     },
     {
       "labels": [
@@ -59636,7 +59636,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765016.938"
+      "value": "1776266235046.1492"
     },
     {
       "labels": [
@@ -59654,7 +59654,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1123424072"
+      "value": "1123660104"
     },
     {
       "labels": [
@@ -59672,7 +59672,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1123424072"
+      "value": "1123660104"
     },
     {
       "labels": [
@@ -59708,7 +59708,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765032.5564"
+      "value": "1776266235062.326"
     },
     {
       "labels": [
@@ -59726,7 +59726,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1257641952"
+      "value": "1257877984"
     },
     {
       "labels": [
@@ -59744,7 +59744,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1257641952"
+      "value": "1257877984"
     },
     {
       "labels": [
@@ -59780,7 +59780,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765034.9204"
+      "value": "1776266235064.775"
     },
     {
       "labels": [
@@ -59798,7 +59798,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1219851136"
+      "value": "1220087168"
     },
     {
       "labels": [
@@ -59816,7 +59816,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1257641952"
+      "value": "1257877984"
     },
     {
       "labels": [
@@ -59852,7 +59852,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765034.944"
+      "value": "1776266235064.7974"
     },
     {
       "labels": [
@@ -59870,7 +59870,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1221962432"
+      "value": "1222198464"
     },
     {
       "labels": [
@@ -59888,7 +59888,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1257641952"
+      "value": "1257877984"
     },
     {
       "labels": [
@@ -59956,7 +59956,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765035.3079"
+      "value": "1776266235065.163"
     },
     {
       "labels": [
@@ -59978,7 +59978,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "2916431216"
+      "value": "2916667248"
     },
     {
       "labels": [
@@ -60000,7 +60000,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "2916470816"
+      "value": "2916706848"
     },
     {
       "labels": [
@@ -60062,7 +60062,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765149.536"
+      "value": "1776266235178.946"
     },
     {
       "labels": [
@@ -60084,7 +60084,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1063350216"
+      "value": "1063586248"
     },
     {
       "labels": [
@@ -60106,7 +60106,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3313948064"
+      "value": "3314184096"
     },
     {
       "labels": [
@@ -60168,7 +60168,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765076.405"
+      "value": "1776266235106.2957"
     },
     {
       "labels": [
@@ -60190,7 +60190,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "2933208400"
+      "value": "2933444432"
     },
     {
       "labels": [
@@ -60212,7 +60212,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "2933208400"
+      "value": "2933444432"
     },
     {
       "labels": [
@@ -60292,7 +60292,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765076.9346"
+      "value": "1776266235106.699"
     },
     {
       "labels": [
@@ -60314,7 +60314,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "2933209936"
+      "value": "2933445968"
     },
     {
       "labels": [
@@ -60336,7 +60336,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "2933209936"
+      "value": "2933445968"
     },
     {
       "labels": [
@@ -60398,7 +60398,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765077.366"
+      "value": "1776266235107.1318"
     },
     {
       "labels": [
@@ -60420,7 +60420,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3201645392"
+      "value": "3201881424"
     },
     {
       "labels": [
@@ -60442,7 +60442,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3285536168"
+      "value": "3285772200"
     },
     {
       "labels": [
@@ -60486,7 +60486,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765077.3992"
+      "value": "1776266235107.1655"
     },
     {
       "labels": [
@@ -60508,7 +60508,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3201645392"
+      "value": "3201881424"
     },
     {
       "labels": [
@@ -60530,7 +60530,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3285536168"
+      "value": "3285772200"
     },
     {
       "labels": [
@@ -60574,7 +60574,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765091.7483"
+      "value": "1776266235121.45"
     },
     {
       "labels": [
@@ -60596,7 +60596,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3336125328"
+      "value": "3336361360"
     },
     {
       "labels": [
@@ -60618,7 +60618,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3336223600"
+      "value": "3336459632"
     },
     {
       "labels": [
@@ -60676,7 +60676,7 @@
         ]
       ],
       "metric": "prover.rap_constraints.logup_gkr_time_ms",
-      "value": "15"
+      "value": "14"
     },
     {
       "labels": [
@@ -60698,7 +60698,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765091.778"
+      "value": "1776266235121.4778"
     },
     {
       "labels": [
@@ -60720,7 +60720,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "2933209936"
+      "value": "2933445968"
     },
     {
       "labels": [
@@ -60742,7 +60742,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3336223600"
+      "value": "3336459632"
     },
     {
       "labels": [
@@ -60786,7 +60786,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765107.6511"
+      "value": "1776266235137.3455"
     },
     {
       "labels": [
@@ -60808,7 +60808,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "2941377316"
+      "value": "2941613348"
     },
     {
       "labels": [
@@ -60830,7 +60830,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3244444652"
+      "value": "3244680684"
     },
     {
       "labels": [
@@ -60910,7 +60910,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765108.134"
+      "value": "1776266235137.8245"
     },
     {
       "labels": [
@@ -60932,7 +60932,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "3311790368"
+      "value": "3312026400"
     },
     {
       "labels": [
@@ -60954,7 +60954,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3314411788"
+      "value": "3314647820"
     },
     {
       "labels": [
@@ -61070,7 +61070,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765137.2573"
+      "value": "1776266235167.2856"
     },
     {
       "labels": [
@@ -61092,7 +61092,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "2933208472"
+      "value": "2933444504"
     },
     {
       "labels": [
@@ -61114,7 +61114,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "4837963856"
+      "value": "4838199888"
     },
     {
       "labels": [
@@ -61266,7 +61266,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765152.883"
+      "value": "1776266235180.362"
     },
     {
       "labels": [
@@ -61288,7 +61288,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000341512"
+      "value": "1000577544"
     },
     {
       "labels": [
@@ -61310,7 +61310,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3313948064"
+      "value": "3314184096"
     },
     {
       "labels": [
@@ -61350,7 +61350,7 @@
         ]
       ],
       "metric": "prover.openings.whir_time_ms",
-      "value": "10"
+      "value": "7"
     },
     {
       "labels": [
@@ -61372,7 +61372,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765152.8918"
+      "value": "1776266235180.3699"
     },
     {
       "labels": [
@@ -61394,7 +61394,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000304616"
+      "value": "1000540648"
     },
     {
       "labels": [
@@ -61416,7 +61416,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "3313948064"
+      "value": "3314184096"
     },
     {
       "labels": [
@@ -61456,7 +61456,7 @@
         ]
       ],
       "metric": "prover.openings_time_ms",
-      "value": "15"
+      "value": "13"
     },
     {
       "labels": [
@@ -61474,7 +61474,7 @@
         ]
       ],
       "metric": "stark_prove_excluding_trace_time_ms",
-      "value": "117"
+      "value": "115"
     },
     {
       "labels": [
@@ -61488,7 +61488,7 @@
         ]
       ],
       "metric": "total_proof_time_ms",
-      "value": "150"
+      "value": "147"
     },
     {
       "labels": [
@@ -61498,7 +61498,7 @@
         ]
       ],
       "metric": "single_internal_agg_time_ms",
-      "value": "150"
+      "value": "147"
     },
     {
       "labels": [
@@ -61508,7 +61508,7 @@
         ]
       ],
       "metric": "agg_layer_time_ms",
-      "value": "150"
+      "value": "147"
     },
     {
       "labels": [
@@ -61596,7 +61596,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765159.3535"
+      "value": "1776266235187.2046"
     },
     {
       "labels": [
@@ -61614,7 +61614,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1060620540"
+      "value": "1060856572"
     },
     {
       "labels": [
@@ -61632,7 +61632,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1062372452"
+      "value": "1062608484"
     },
     {
       "labels": [
@@ -61668,7 +61668,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765159.3638"
+      "value": "1776266235187.215"
     },
     {
       "labels": [
@@ -61686,7 +61686,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1060624564"
+      "value": "1060860596"
     },
     {
       "labels": [
@@ -61704,7 +61704,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1062372452"
+      "value": "1062608484"
     },
     {
       "labels": [
@@ -61740,7 +61740,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765159.3704"
+      "value": "1776266235187.2214"
     },
     {
       "labels": [
@@ -61758,7 +61758,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1060624564"
+      "value": "1060860596"
     },
     {
       "labels": [
@@ -61776,7 +61776,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1062372452"
+      "value": "1062608484"
     },
     {
       "labels": [
@@ -61812,7 +61812,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765161.443"
+      "value": "1776266235189.23"
     },
     {
       "labels": [
@@ -61830,7 +61830,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1069663920"
+      "value": "1069899952"
     },
     {
       "labels": [
@@ -61848,7 +61848,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1069663920"
+      "value": "1069899952"
     },
     {
       "labels": [
@@ -61884,7 +61884,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765161.4563"
+      "value": "1776266235189.2424"
     },
     {
       "labels": [
@@ -61902,7 +61902,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1069778664"
+      "value": "1070014696"
     },
     {
       "labels": [
@@ -61920,7 +61920,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1069778664"
+      "value": "1070014696"
     },
     {
       "labels": [
@@ -61956,7 +61956,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765161.4648"
+      "value": "1776266235189.251"
     },
     {
       "labels": [
@@ -61974,7 +61974,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1070032560"
+      "value": "1070268592"
     },
     {
       "labels": [
@@ -61992,7 +61992,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1070032560"
+      "value": "1070268592"
     },
     {
       "labels": [
@@ -62028,7 +62028,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765161.719"
+      "value": "1776266235189.5076"
     },
     {
       "labels": [
@@ -62046,7 +62046,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1074776920"
+      "value": "1075012952"
     },
     {
       "labels": [
@@ -62064,7 +62064,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1074776920"
+      "value": "1075012952"
     },
     {
       "labels": [
@@ -62100,7 +62100,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765161.8318"
+      "value": "1776266235189.6235"
     },
     {
       "labels": [
@@ -62118,7 +62118,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1070610100"
+      "value": "1070846132"
     },
     {
       "labels": [
@@ -62136,7 +62136,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1074776920"
+      "value": "1075012952"
     },
     {
       "labels": [
@@ -62172,7 +62172,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765161.846"
+      "value": "1776266235189.636"
     },
     {
       "labels": [
@@ -62190,7 +62190,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1071137348"
+      "value": "1071373380"
     },
     {
       "labels": [
@@ -62208,7 +62208,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1074776920"
+      "value": "1075012952"
     },
     {
       "labels": [
@@ -62254,7 +62254,7 @@
         ]
       ],
       "metric": "trace_gen_time_ms",
-      "value": "8"
+      "value": "9"
     },
     {
       "labels": [
@@ -62276,7 +62276,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765161.962"
+      "value": "1776266235189.7522"
     },
     {
       "labels": [
@@ -62298,7 +62298,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1557664732"
+      "value": "1557900764"
     },
     {
       "labels": [
@@ -62320,7 +62320,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1557704332"
+      "value": "1557940364"
     },
     {
       "labels": [
@@ -62382,7 +62382,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765222.5227"
+      "value": "1776266235250.5745"
     },
     {
       "labels": [
@@ -62404,7 +62404,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1063350216"
+      "value": "1063586248"
     },
     {
       "labels": [
@@ -62426,7 +62426,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1686279180"
+      "value": "1686515212"
     },
     {
       "labels": [
@@ -62488,7 +62488,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765175.125"
+      "value": "1776266235202.9253"
     },
     {
       "labels": [
@@ -62510,7 +62510,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1574441916"
+      "value": "1574677948"
     },
     {
       "labels": [
@@ -62532,7 +62532,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1574441916"
+      "value": "1574677948"
     },
     {
       "labels": [
@@ -62612,7 +62612,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765175.5232"
+      "value": "1776266235203.3293"
     },
     {
       "labels": [
@@ -62634,7 +62634,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1574443452"
+      "value": "1574679484"
     },
     {
       "labels": [
@@ -62656,7 +62656,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1574443452"
+      "value": "1574679484"
     },
     {
       "labels": [
@@ -62718,7 +62718,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765175.7039"
+      "value": "1776266235203.5183"
     },
     {
       "labels": [
@@ -62740,7 +62740,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1641552316"
+      "value": "1641788348"
     },
     {
       "labels": [
@@ -62762,7 +62762,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1725440884"
+      "value": "1725676916"
     },
     {
       "labels": [
@@ -62806,7 +62806,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765175.733"
+      "value": "1776266235203.548"
     },
     {
       "labels": [
@@ -62828,7 +62828,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1641552316"
+      "value": "1641788348"
     },
     {
       "labels": [
@@ -62850,7 +62850,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1725440884"
+      "value": "1725676916"
     },
     {
       "labels": [
@@ -62894,7 +62894,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765185.8638"
+      "value": "1776266235213.6846"
     },
     {
       "labels": [
@@ -62916,7 +62916,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1775835644"
+      "value": "1776071676"
     },
     {
       "labels": [
@@ -62938,7 +62938,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1775884764"
+      "value": "1776120796"
     },
     {
       "labels": [
@@ -63018,7 +63018,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765185.88"
+      "value": "1776266235213.6992"
     },
     {
       "labels": [
@@ -63040,7 +63040,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1574443452"
+      "value": "1574679484"
     },
     {
       "labels": [
@@ -63062,7 +63062,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1775884764"
+      "value": "1776120796"
     },
     {
       "labels": [
@@ -63106,7 +63106,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765197.0745"
+      "value": "1776266235224.9482"
     },
     {
       "labels": [
@@ -63128,7 +63128,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1575863588"
+      "value": "1576099620"
     },
     {
       "labels": [
@@ -63150,7 +63150,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1617783556"
+      "value": "1618010452"
     },
     {
       "labels": [
@@ -63230,7 +63230,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765197.831"
+      "value": "1776266235225.704"
     },
     {
       "labels": [
@@ -63252,7 +63252,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1669926556"
+      "value": "1670162588"
     },
     {
       "labels": [
@@ -63274,7 +63274,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1670188680"
+      "value": "1670424712"
     },
     {
       "labels": [
@@ -63314,7 +63314,7 @@
         ]
       ],
       "metric": "prover.rap_constraints.round0_time_ms",
-      "value": "11"
+      "value": "12"
     },
     {
       "labels": [
@@ -63368,7 +63368,7 @@
         ]
       ],
       "metric": "prove_zerocheck_and_logup_gpu_time_ms",
-      "value": "37"
+      "value": "38"
     },
     {
       "labels": [
@@ -63390,7 +63390,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765213.0962"
+      "value": "1776266235241.1948"
     },
     {
       "labels": [
@@ -63412,7 +63412,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1574441988"
+      "value": "1574678020"
     },
     {
       "labels": [
@@ -63434,7 +63434,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "2065512384"
+      "value": "2065748416"
     },
     {
       "labels": [
@@ -63474,7 +63474,7 @@
         ]
       ],
       "metric": "prover.rap_constraints_time_ms",
-      "value": "37"
+      "value": "38"
     },
     {
       "labels": [
@@ -63586,7 +63586,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765223.7874"
+      "value": "1776266235253.8809"
     },
     {
       "labels": [
@@ -63608,7 +63608,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000341512"
+      "value": "1000577544"
     },
     {
       "labels": [
@@ -63630,7 +63630,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1686279180"
+      "value": "1686515212"
     },
     {
       "labels": [
@@ -63670,7 +63670,7 @@
         ]
       ],
       "metric": "prover.openings.whir_time_ms",
-      "value": "8"
+      "value": "10"
     },
     {
       "labels": [
@@ -63692,7 +63692,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765223.8052"
+      "value": "1776266235253.9045"
     },
     {
       "labels": [
@@ -63714,7 +63714,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000304616"
+      "value": "1000540648"
     },
     {
       "labels": [
@@ -63736,7 +63736,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1686279180"
+      "value": "1686515212"
     },
     {
       "labels": [
@@ -63776,7 +63776,7 @@
         ]
       ],
       "metric": "prover.openings_time_ms",
-      "value": "10"
+      "value": "12"
     },
     {
       "labels": [
@@ -63794,7 +63794,7 @@
         ]
       ],
       "metric": "stark_prove_excluding_trace_time_ms",
-      "value": "61"
+      "value": "64"
     },
     {
       "labels": [
@@ -63808,7 +63808,7 @@
         ]
       ],
       "metric": "total_proof_time_ms",
-      "value": "70"
+      "value": "73"
     },
     {
       "labels": [
@@ -63818,7 +63818,7 @@
         ]
       ],
       "metric": "single_internal_agg_time_ms",
-      "value": "70"
+      "value": "73"
     },
     {
       "labels": [
@@ -63828,7 +63828,7 @@
         ]
       ],
       "metric": "agg_layer_time_ms",
-      "value": "70"
+      "value": "73"
     },
     {
       "labels": [
@@ -63916,7 +63916,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765229.226"
+      "value": "1776266235259.7778"
     },
     {
       "labels": [
@@ -63934,7 +63934,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1043843260"
+      "value": "1044079292"
     },
     {
       "labels": [
@@ -63952,7 +63952,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1044890580"
+      "value": "1045126612"
     },
     {
       "labels": [
@@ -63988,7 +63988,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765229.2356"
+      "value": "1776266235259.788"
     },
     {
       "labels": [
@@ -64006,7 +64006,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1043847284"
+      "value": "1044083316"
     },
     {
       "labels": [
@@ -64024,7 +64024,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1044890580"
+      "value": "1045126612"
     },
     {
       "labels": [
@@ -64060,7 +64060,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765229.241"
+      "value": "1776266235259.7942"
     },
     {
       "labels": [
@@ -64078,7 +64078,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1043847284"
+      "value": "1044083316"
     },
     {
       "labels": [
@@ -64096,7 +64096,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1044890580"
+      "value": "1045126612"
     },
     {
       "labels": [
@@ -64132,7 +64132,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765230.4192"
+      "value": "1776266235261.0327"
     },
     {
       "labels": [
@@ -64150,7 +64150,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1048710896"
+      "value": "1048946928"
     },
     {
       "labels": [
@@ -64168,7 +64168,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1048710896"
+      "value": "1048946928"
     },
     {
       "labels": [
@@ -64204,7 +64204,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765230.4321"
+      "value": "1776266235261.0457"
     },
     {
       "labels": [
@@ -64222,7 +64222,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1048825640"
+      "value": "1049061672"
     },
     {
       "labels": [
@@ -64240,7 +64240,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1048825640"
+      "value": "1049061672"
     },
     {
       "labels": [
@@ -64276,7 +64276,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765230.4392"
+      "value": "1776266235261.0535"
     },
     {
       "labels": [
@@ -64294,7 +64294,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1049079536"
+      "value": "1049315568"
     },
     {
       "labels": [
@@ -64312,7 +64312,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1049079536"
+      "value": "1049315568"
     },
     {
       "labels": [
@@ -64348,7 +64348,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765230.6948"
+      "value": "1776266235261.3103"
     },
     {
       "labels": [
@@ -64366,7 +64366,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1053823896"
+      "value": "1054059928"
     },
     {
       "labels": [
@@ -64384,7 +64384,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1053823896"
+      "value": "1054059928"
     },
     {
       "labels": [
@@ -64420,7 +64420,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765230.8354"
+      "value": "1776266235261.4155"
     },
     {
       "labels": [
@@ -64438,7 +64438,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1051047540"
+      "value": "1051283572"
     },
     {
       "labels": [
@@ -64456,7 +64456,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1053823896"
+      "value": "1054059928"
     },
     {
       "labels": [
@@ -64492,7 +64492,7 @@
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765230.8477"
+      "value": "1776266235261.4312"
     },
     {
       "labels": [
@@ -64510,7 +64510,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1051574788"
+      "value": "1051810820"
     },
     {
       "labels": [
@@ -64528,7 +64528,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1053823896"
+      "value": "1054059928"
     },
     {
       "labels": [
@@ -64574,1422 +64574,6 @@
         ]
       ],
       "metric": "trace_gen_time_ms",
-      "value": "6"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.rs_code_matrix"
-        ]
-      ],
-      "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765230.9517"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.rs_code_matrix"
-        ]
-      ],
-      "metric": "gpu_mem.current_bytes",
-      "value": "1353552860"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.rs_code_matrix"
-        ]
-      ],
-      "metric": "gpu_mem.local_peak_bytes",
-      "value": "1353592460"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.rs_code_matrix"
-        ]
-      ],
-      "metric": "gpu_mem.reserved_bytes",
-      "value": "15099494400"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "rs_code_matrix_time_ms",
-      "value": "0"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.merkle_tree"
-        ]
-      ],
-      "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765284.5408"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.merkle_tree"
-        ]
-      ],
-      "metric": "gpu_mem.current_bytes",
-      "value": "1063350216"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.merkle_tree"
-        ]
-      ],
-      "metric": "gpu_mem.local_peak_bytes",
-      "value": "1461691404"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.merkle_tree"
-        ]
-      ],
-      "metric": "gpu_mem.reserved_bytes",
-      "value": "15099494400"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "merkle_tree_time_ms",
-      "value": "1"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.stacked_commit"
-        ]
-      ],
-      "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765240.3044"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.stacked_commit"
-        ]
-      ],
-      "metric": "gpu_mem.current_bytes",
-      "value": "1370330044"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.stacked_commit"
-        ]
-      ],
-      "metric": "gpu_mem.local_peak_bytes",
-      "value": "1370330044"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.stacked_commit"
-        ]
-      ],
-      "metric": "gpu_mem.reserved_bytes",
-      "value": "15099494400"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "stacked_commit_time_ms",
-      "value": "9"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "prover.main_trace_commit_time_ms",
-      "value": "9"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.before_gkr_input_evals"
-        ]
-      ],
-      "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765240.8003"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.before_gkr_input_evals"
-        ]
-      ],
-      "metric": "gpu_mem.current_bytes",
-      "value": "1370331580"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.before_gkr_input_evals"
-        ]
-      ],
-      "metric": "gpu_mem.local_peak_bytes",
-      "value": "1370331580"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.before_gkr_input_evals"
-        ]
-      ],
-      "metric": "gpu_mem.reserved_bytes",
-      "value": "15099494400"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "prover.rap_constraints.logup_gkr.input_evals_time_ms",
-      "value": "0"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.gkr_input_evals"
-        ]
-      ],
-      "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765240.9807"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.gkr_input_evals"
-        ]
-      ],
-      "metric": "gpu_mem.current_bytes",
-      "value": "1437440444"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.gkr_input_evals"
-        ]
-      ],
-      "metric": "gpu_mem.local_peak_bytes",
-      "value": "1521329012"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.gkr_input_evals"
-        ]
-      ],
-      "metric": "gpu_mem.reserved_bytes",
-      "value": "15099494400"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "frac_sumcheck.segment_tree"
-        ]
-      ],
-      "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765240.9995"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "frac_sumcheck.segment_tree"
-        ]
-      ],
-      "metric": "gpu_mem.current_bytes",
-      "value": "1437440444"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "frac_sumcheck.segment_tree"
-        ]
-      ],
-      "metric": "gpu_mem.local_peak_bytes",
-      "value": "1521329012"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "frac_sumcheck.segment_tree"
-        ]
-      ],
-      "metric": "gpu_mem.reserved_bytes",
-      "value": "15099494400"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "frac_sumcheck.gkr_rounds"
-        ]
-      ],
-      "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765251.1953"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "frac_sumcheck.gkr_rounds"
-        ]
-      ],
-      "metric": "gpu_mem.current_bytes",
-      "value": "1571723772"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "frac_sumcheck.gkr_rounds"
-        ]
-      ],
-      "metric": "gpu_mem.local_peak_bytes",
-      "value": "1571772892"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "frac_sumcheck.gkr_rounds"
-        ]
-      ],
-      "metric": "gpu_mem.reserved_bytes",
-      "value": "15099494400"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "fractional_sumcheck_gpu_time_ms",
-      "value": "10"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "prover.rap_constraints.logup_gkr_time_ms",
-      "value": "10"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.batch_constraints.before_round0"
-        ]
-      ],
-      "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765251.2102"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.batch_constraints.before_round0"
-        ]
-      ],
-      "metric": "gpu_mem.current_bytes",
-      "value": "1370331580"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.batch_constraints.before_round0"
-        ]
-      ],
-      "metric": "gpu_mem.local_peak_bytes",
-      "value": "1571772892"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.batch_constraints.before_round0"
-        ]
-      ],
-      "metric": "gpu_mem.reserved_bytes",
-      "value": "15099494400"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.batch_constraints.round0"
-        ]
-      ],
-      "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765262.1484"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.batch_constraints.round0"
-        ]
-      ],
-      "metric": "gpu_mem.current_bytes",
-      "value": "1371684132"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.batch_constraints.round0"
-        ]
-      ],
-      "metric": "gpu_mem.local_peak_bytes",
-      "value": "1410654980"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.batch_constraints.round0"
-        ]
-      ],
-      "metric": "gpu_mem.reserved_bytes",
-      "value": "15099494400"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "prover.rap_constraints.ple_round0_time_ms",
-      "value": "10"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "s'_0 -> s_0 cpu interpolations_time_ms",
-      "value": "0"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.batch_constraints.fold_ple_evals"
-        ]
-      ],
-      "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765262.8884"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.batch_constraints.fold_ple_evals"
-        ]
-      ],
-      "metric": "gpu_mem.current_bytes",
-      "value": "1443196572"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.batch_constraints.fold_ple_evals"
-        ]
-      ],
-      "metric": "gpu_mem.local_peak_bytes",
-      "value": "1443458696"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.batch_constraints.fold_ple_evals"
-        ]
-      ],
-      "metric": "gpu_mem.reserved_bytes",
-      "value": "15099494400"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "prover.rap_constraints.round0_time_ms",
-      "value": "11"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "LogupZerocheck::sumcheck_polys_batch_eval_time_ms",
-      "value": "0"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "prover.rap_constraints.mle_rounds_time_ms",
-      "value": "13"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "prove_zerocheck_and_logup_gpu_time_ms",
-      "value": "35"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.rap_constraints"
-        ]
-      ],
-      "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765276.519"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.rap_constraints"
-        ]
-      ],
-      "metric": "gpu_mem.current_bytes",
-      "value": "1370330116"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.rap_constraints"
-        ]
-      ],
-      "metric": "gpu_mem.local_peak_bytes",
-      "value": "1737083920"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.rap_constraints"
-        ]
-      ],
-      "metric": "gpu_mem.reserved_bytes",
-      "value": "15099494400"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "prover.rap_constraints_time_ms",
-      "value": "35"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "prover.openings.stacked_reduction.round0_time_ms",
-      "value": "0"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "prover.openings.stacked_reduction.mle_rounds_time_ms",
-      "value": "1"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "prover.openings.stacked_reduction_time_ms",
-      "value": "2"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "opened_rows_d2h_time_ms",
-      "value": "0"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "batch_open_rows_time_ms",
-      "value": "0"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.prove_whir_opening"
-        ]
-      ],
-      "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765286.1965"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.prove_whir_opening"
-        ]
-      ],
-      "metric": "gpu_mem.current_bytes",
-      "value": "1000341512"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.prove_whir_opening"
-        ]
-      ],
-      "metric": "gpu_mem.local_peak_bytes",
-      "value": "1461691404"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ],
-        [
-          "module",
-          "prover.prove_whir_opening"
-        ]
-      ],
-      "metric": "gpu_mem.reserved_bytes",
-      "value": "15099494400"
-    },
-    {
-      "labels": [
-        [
-          "phase",
-          "prover"
-        ],
-        [
-          "idx",
-          "1"
-        ],
-        [
-          "group",
-          "internal_recursive.1"
-        ]
-      ],
-      "metric": "prover.openings.whir_time_ms",
       "value": "7"
     },
     {
@@ -66008,11 +64592,1427 @@
         ],
         [
           "module",
+          "prover.rs_code_matrix"
+        ]
+      ],
+      "metric": "gpu_mem.timestamp_ms",
+      "value": "1776266235261.5422"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.rs_code_matrix"
+        ]
+      ],
+      "metric": "gpu_mem.current_bytes",
+      "value": "1353788892"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.rs_code_matrix"
+        ]
+      ],
+      "metric": "gpu_mem.local_peak_bytes",
+      "value": "1353828492"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.rs_code_matrix"
+        ]
+      ],
+      "metric": "gpu_mem.reserved_bytes",
+      "value": "15099494400"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "rs_code_matrix_time_ms",
+      "value": "0"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.merkle_tree"
+        ]
+      ],
+      "metric": "gpu_mem.timestamp_ms",
+      "value": "1776266235315.7358"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.merkle_tree"
+        ]
+      ],
+      "metric": "gpu_mem.current_bytes",
+      "value": "1063586248"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.merkle_tree"
+        ]
+      ],
+      "metric": "gpu_mem.local_peak_bytes",
+      "value": "1461927436"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.merkle_tree"
+        ]
+      ],
+      "metric": "gpu_mem.reserved_bytes",
+      "value": "15099494400"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "merkle_tree_time_ms",
+      "value": "1"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.stacked_commit"
+        ]
+      ],
+      "metric": "gpu_mem.timestamp_ms",
+      "value": "1776266235270.9038"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.stacked_commit"
+        ]
+      ],
+      "metric": "gpu_mem.current_bytes",
+      "value": "1370566076"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.stacked_commit"
+        ]
+      ],
+      "metric": "gpu_mem.local_peak_bytes",
+      "value": "1370566076"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.stacked_commit"
+        ]
+      ],
+      "metric": "gpu_mem.reserved_bytes",
+      "value": "15099494400"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "stacked_commit_time_ms",
+      "value": "9"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "prover.main_trace_commit_time_ms",
+      "value": "9"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.before_gkr_input_evals"
+        ]
+      ],
+      "metric": "gpu_mem.timestamp_ms",
+      "value": "1776266235271.4343"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.before_gkr_input_evals"
+        ]
+      ],
+      "metric": "gpu_mem.current_bytes",
+      "value": "1370567612"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.before_gkr_input_evals"
+        ]
+      ],
+      "metric": "gpu_mem.local_peak_bytes",
+      "value": "1370567612"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.before_gkr_input_evals"
+        ]
+      ],
+      "metric": "gpu_mem.reserved_bytes",
+      "value": "15099494400"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "prover.rap_constraints.logup_gkr.input_evals_time_ms",
+      "value": "0"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.gkr_input_evals"
+        ]
+      ],
+      "metric": "gpu_mem.timestamp_ms",
+      "value": "1776266235271.6187"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.gkr_input_evals"
+        ]
+      ],
+      "metric": "gpu_mem.current_bytes",
+      "value": "1437676476"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.gkr_input_evals"
+        ]
+      ],
+      "metric": "gpu_mem.local_peak_bytes",
+      "value": "1521565044"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.gkr_input_evals"
+        ]
+      ],
+      "metric": "gpu_mem.reserved_bytes",
+      "value": "15099494400"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "frac_sumcheck.segment_tree"
+        ]
+      ],
+      "metric": "gpu_mem.timestamp_ms",
+      "value": "1776266235271.6404"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "frac_sumcheck.segment_tree"
+        ]
+      ],
+      "metric": "gpu_mem.current_bytes",
+      "value": "1437676476"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "frac_sumcheck.segment_tree"
+        ]
+      ],
+      "metric": "gpu_mem.local_peak_bytes",
+      "value": "1521565044"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "frac_sumcheck.segment_tree"
+        ]
+      ],
+      "metric": "gpu_mem.reserved_bytes",
+      "value": "15099494400"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "frac_sumcheck.gkr_rounds"
+        ]
+      ],
+      "metric": "gpu_mem.timestamp_ms",
+      "value": "1776266235281.8142"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "frac_sumcheck.gkr_rounds"
+        ]
+      ],
+      "metric": "gpu_mem.current_bytes",
+      "value": "1571959804"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "frac_sumcheck.gkr_rounds"
+        ]
+      ],
+      "metric": "gpu_mem.local_peak_bytes",
+      "value": "1572008924"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "frac_sumcheck.gkr_rounds"
+        ]
+      ],
+      "metric": "gpu_mem.reserved_bytes",
+      "value": "15099494400"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "fractional_sumcheck_gpu_time_ms",
+      "value": "10"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "prover.rap_constraints.logup_gkr_time_ms",
+      "value": "10"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.batch_constraints.before_round0"
+        ]
+      ],
+      "metric": "gpu_mem.timestamp_ms",
+      "value": "1776266235281.8345"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.batch_constraints.before_round0"
+        ]
+      ],
+      "metric": "gpu_mem.current_bytes",
+      "value": "1370567612"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.batch_constraints.before_round0"
+        ]
+      ],
+      "metric": "gpu_mem.local_peak_bytes",
+      "value": "1572008924"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.batch_constraints.before_round0"
+        ]
+      ],
+      "metric": "gpu_mem.reserved_bytes",
+      "value": "15099494400"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.batch_constraints.round0"
+        ]
+      ],
+      "metric": "gpu_mem.timestamp_ms",
+      "value": "1776266235292.837"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.batch_constraints.round0"
+        ]
+      ],
+      "metric": "gpu_mem.current_bytes",
+      "value": "1371920164"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.batch_constraints.round0"
+        ]
+      ],
+      "metric": "gpu_mem.local_peak_bytes",
+      "value": "1410881876"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.batch_constraints.round0"
+        ]
+      ],
+      "metric": "gpu_mem.reserved_bytes",
+      "value": "15099494400"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "prover.rap_constraints.ple_round0_time_ms",
+      "value": "11"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "s'_0 -> s_0 cpu interpolations_time_ms",
+      "value": "0"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.batch_constraints.fold_ple_evals"
+        ]
+      ],
+      "metric": "gpu_mem.timestamp_ms",
+      "value": "1776266235293.5845"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.batch_constraints.fold_ple_evals"
+        ]
+      ],
+      "metric": "gpu_mem.current_bytes",
+      "value": "1443432604"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.batch_constraints.fold_ple_evals"
+        ]
+      ],
+      "metric": "gpu_mem.local_peak_bytes",
+      "value": "1443694728"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.batch_constraints.fold_ple_evals"
+        ]
+      ],
+      "metric": "gpu_mem.reserved_bytes",
+      "value": "15099494400"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "prover.rap_constraints.round0_time_ms",
+      "value": "11"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "LogupZerocheck::sumcheck_polys_batch_eval_time_ms",
+      "value": "0"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "prover.rap_constraints.mle_rounds_time_ms",
+      "value": "13"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "prove_zerocheck_and_logup_gpu_time_ms",
+      "value": "36"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.rap_constraints"
+        ]
+      ],
+      "metric": "gpu_mem.timestamp_ms",
+      "value": "1776266235307.3545"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.rap_constraints"
+        ]
+      ],
+      "metric": "gpu_mem.current_bytes",
+      "value": "1370566148"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.rap_constraints"
+        ]
+      ],
+      "metric": "gpu_mem.local_peak_bytes",
+      "value": "1737319952"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.rap_constraints"
+        ]
+      ],
+      "metric": "gpu_mem.reserved_bytes",
+      "value": "15099494400"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "prover.rap_constraints_time_ms",
+      "value": "36"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "prover.openings.stacked_reduction.round0_time_ms",
+      "value": "0"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "prover.openings.stacked_reduction.mle_rounds_time_ms",
+      "value": "1"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "prover.openings.stacked_reduction_time_ms",
+      "value": "2"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "opened_rows_d2h_time_ms",
+      "value": "0"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "batch_open_rows_time_ms",
+      "value": "0"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.prove_whir_opening"
+        ]
+      ],
+      "metric": "gpu_mem.timestamp_ms",
+      "value": "1776266235318.7676"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.prove_whir_opening"
+        ]
+      ],
+      "metric": "gpu_mem.current_bytes",
+      "value": "1000577544"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.prove_whir_opening"
+        ]
+      ],
+      "metric": "gpu_mem.local_peak_bytes",
+      "value": "1461927436"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
+          "prover.prove_whir_opening"
+        ]
+      ],
+      "metric": "gpu_mem.reserved_bytes",
+      "value": "15099494400"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ]
+      ],
+      "metric": "prover.openings.whir_time_ms",
+      "value": "9"
+    },
+    {
+      "labels": [
+        [
+          "phase",
+          "prover"
+        ],
+        [
+          "idx",
+          "1"
+        ],
+        [
+          "group",
+          "internal_recursive.1"
+        ],
+        [
+          "module",
           "prover.openings"
         ]
       ],
       "metric": "gpu_mem.timestamp_ms",
-      "value": "1776333765286.2046"
+      "value": "1776266235318.7751"
     },
     {
       "labels": [
@@ -66034,7 +66034,7 @@
         ]
       ],
       "metric": "gpu_mem.current_bytes",
-      "value": "1000304616"
+      "value": "1000540648"
     },
     {
       "labels": [
@@ -66056,7 +66056,7 @@
         ]
       ],
       "metric": "gpu_mem.local_peak_bytes",
-      "value": "1461691404"
+      "value": "1461927436"
     },
     {
       "labels": [
@@ -66096,7 +66096,7 @@
         ]
       ],
       "metric": "prover.openings_time_ms",
-      "value": "9"
+      "value": "11"
     },
     {
       "labels": [
@@ -66114,7 +66114,7 @@
         ]
       ],
       "metric": "stark_prove_excluding_trace_time_ms",
-      "value": "55"
+      "value": "57"
     },
     {
       "labels": [
@@ -66128,7 +66128,7 @@
         ]
       ],
       "metric": "total_proof_time_ms",
-      "value": "61"
+      "value": "64"
     },
     {
       "labels": [
@@ -66138,7 +66138,7 @@
         ]
       ],
       "metric": "single_internal_agg_time_ms",
-      "value": "61"
+      "value": "64"
     },
     {
       "labels": [
@@ -66148,7 +66148,7 @@
         ]
       ],
       "metric": "agg_layer_time_ms",
-      "value": "61"
+      "value": "64"
     }
   ]
 }

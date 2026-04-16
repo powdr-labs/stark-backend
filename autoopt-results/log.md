@@ -261,3 +261,91 @@
 **Result**: failure — APC 300: STARK excl trace 1292ms → 1250ms (-42ms, 1.96x lower vs baseline). APC 0: STARK excl trace 2134ms → 2271ms (+137ms regression, exceeds 20ms rollback threshold).
 
 **Summary**: The warmup successfully eliminated the codeword allocation cold-start at APC 300 (rs_code_matrix seg 0: 58ms → 14ms), but caused a consistent +177ms LogUp GKR regression at APC 0 (verified across 4 runs). This is the same VPMM pool state sensitivity pattern seen in multistream-stacked-reduction-round0 and batch-global-gkr-input-eval — changing the pool's free region layout disrupts memory access patterns for bandwidth-bound GKR kernels. An alternative using VPMM initial_pages (pre-allocation at pool construction time) barely helped (58ms → 51ms) because pages get consumed by intermediate allocations before proving starts.
+
+## 2026-04-15-1600-fix-batch-round0-revert-and-reapply
+
+**Idea**: Pre-compute logup Round 0 interaction DAG rules at keygen time to eliminate per-AIR CPU-side DAG reconstruction in Phase 2 and enable a future batched kernel path.
+
+**Result**: failure — Round 0 at APC 300: 181ms → 210ms (+29ms, 1.16x higher). STARK excl trace at APC 300: 1111ms → 1154ms (+43ms, 1.04x higher vs before). (vs baseline: 2.13x lower, slight regression from previous 2.21x)
+
+**Summary**: Two approaches were tried. Approach 1 (Phase 1 pre-computation per the plan) caused a severe +96ms regression at APC 300 by serializing work that Phase 2 parallelized across 8 threads. Approach 2 (keygen-time pre-computation, maintaining Phase 2 parallelism) still regressed by ~28ms at APC 300. The likely cause is that the removed per-AIR CPU work (DAG construction, rule encoding) was providing beneficial pacing between GPU kernel launches across 8 threads — eliminating it causes tighter kernel launch bursts and increased GPU command queue contention. The batch kernel path (Step 5) was not attempted because the prerequisite pre-computation steps failed.
+
+## 2026-04-15-1800-reenable-batch-round0-small-airs
+
+**Idea**: Re-enable the batch Round 0 descriptor-array kernel path for small AIRs, which was reverted due to GPU hang. The OOM blocker was assumed resolved by VPMM page size increase.
+
+**Result**: failure — Batch CUDA kernel hangs when >12 AIRs are batched. GPU shows 100% utilization but kernel never completes. With only 12 batchable AIRs (of ~300 at APC 300), optimization saves negligible time. STARK excl trace at APC 300: 1110ms (unchanged, 2.21x lower vs baseline 2455ms).
+
+**Summary**: Fully implemented the batch eval-only + deferred extraction design (CUDA kernels, FFI bindings, Rust orchestration, Phase 2 integration). Systematic diagnosis via binary search narrowed the hang to >12 batched AIRs: 1-12 AIRs complete correctly, 15+ hang at current_stream_sync. The plan assumed the previous hang was OOM-related (resolved by VPMM 16 MiB pages), but the root cause is a bug in the batch CUDA kernel itself — likely an out-of-bounds intermediates buffer access that scales with AIR count. The kernel code was restored from reverted commit 0d1bb2f9 unchanged; the bug exists in that kernel. Key learning: the batch approach for Round 0 has both an unsolved kernel bug AND the same L2 cache thrashing issue that blocked batch-global-gkr-input-eval.
+
+## 2026-04-15-2100-precompute-mle-fold-layout
+
+**Idea**: Pre-compute fold descriptor arrays for all MLE rounds and bulk-upload once, fusing the two per-round fold_pingpong calls into a single kernel launch.
+
+**Result**: failure — MLE Rounds at APC 300: 166ms → 166ms (0ms change). STARK excl trace at APC 300: 1144ms → 1119ms (vs baseline: 2.19x lower, vs previous: -25ms, noise).
+
+**Summary**: Replaced 112 per-round to_device() calls and 28 kernel launches with 4 bulk uploads and 14 fused launches. All 94 tests pass, no regression at APC 0. The improvement was undetectable because the total CUDA API overhead eliminated (~0.3-0.5ms across 2 segments) is 100x below the measurement noise floor. MLE Rounds is now firmly kernel-execution-bound (~113ms of 166ms); further improvements require algorithmic or kernel-level changes, not CUDA API overhead reduction.
+
+## 2026-04-15-2230-prealloc-whir-fold-buffers
+
+**Idea**: Pre-allocate and reuse WHIR sumcheck fold buffers via a pingpong pattern to eliminate per-round VPMM allocation churn.
+
+**Result**: failure — WHIR at APC 300: 130ms → 126ms (-4ms, below 5ms rollback threshold). STARK excl trace at APC 300: 1117ms → 1115ms (vs baseline: 2.20x lower, vs previous: -2ms, noise).
+
+**Summary**: Pre-allocated one pair of scratch DeviceBuffers at maximum size and used std::mem::swap to alternate between scratch and current buffers for non-final inner rounds. All 14 WHIR tests pass, no regression at APC 0. The improvement was only ~4ms because only 6 VPMM allocations are eliminated (inner rounds 0-2 of WHIR round 0), and per-VPMM-operation overhead is ~0.5-1ms (not ~2ms as estimated). The pool state stabilization hypothesis did not materialize — WHIR's 26ms regression from baseline is driven by factors other than intra-WHIR allocation patterns.
+
+## 2026-04-16-0030-hoist-mle-trace-ctx-construction
+
+**Idea**: Pre-allocate per-trace main_ptrs DeviceBuffers before the MLE round loop and reuse via copy_to() instead of to_device() to eliminate ~8400 cudaMallocAsync/cudaFreeAsync cycles per proof.
+
+**Result**: success (marginal) — MLE Rounds at APC 300: 166ms → 162ms avg (-4ms, 1.02x lower). STARK excl trace at APC 300: 1182ms → 1118ms avg (2.20x lower vs baseline 2455ms). (vs previous: MLE -4ms, STARK -64ms but dominated by WHIR noise)
+
+**Summary**: Added a d_main_ptrs_pool field to LogupZerocheckGpu, pre-allocated one DeviceBuffer per trace alongside the existing ping-pong fold buffers, and replaced to_device() with copy_to() + non_owning views in both Case A (late_eval) and Case B (early_eval) TraceCtx construction. The 4ms MLE Rounds improvement matches the data-backed 3-5ms prediction from the plan, confirming the CUDA pool allocator's per-cycle alloc+free overhead is ~0.5us. No regression at APC 0. MLE Rounds is now firmly kernel-execution-bound.
+
+## 2026-04-16-0200-batch-fold-ple-descriptor-array
+
+**Idea**: Replace per-trace sequential `fold_ple_from_evals` kernel launches (~797 at APC 300) with batched descriptor-array kernel launches (2 total: one rotate=false, one rotate=true).
+
+**Result**: failure — Round 0 at APC 300: 181ms → 181ms (0ms change). STARK excl trace at APC 300: 1115ms → 1112ms (vs baseline: 2.21x lower, vs previous: -3ms, noise).
+
+**Summary**: Implemented a batched CUDA kernel with FoldPleDesc descriptors and binary search block mapping, replacing ~797 per-trace kernel launches with 2 batched launches. All 94 tests pass, no regression at APC 0. The improvement was undetectable because per-launch CUDA overhead (~2-3µs × 797 = ~2ms) is at the noise floor, and the default stream already executes kernels sequentially — batching only removes launch gaps that the CUDA driver pipeline already hides. fold_ple at 9.5ms total GPU time is only 0.8% of STARK excl trace, making it too small a target for meaningful gains.
+
+## 2026-04-16-0600-tune-vpmm-page-size-for-whir
+
+**Idea**: Tune VPMM page size from 16 MiB to an intermediate value (4-8 MiB) to recover the 25ms WHIR regression while preserving large-allocation benefits.
+
+**Result**: failure — STARK excl trace at APC 300: 1110ms → 1120ms (+10ms, 1.01x higher vs before). APC 0: 1804ms → 1907ms (+103ms regression). (vs baseline: 2.19x lower, unchanged from previous 2.21x)
+
+**Summary**: Swept page sizes 4, 8, and 16 MiB (12 MiB is not viable due to VA_SIZE alignment). WHIR recovered partially at 8 MiB (-10ms) and fully at 4 MiB (-22ms), but LogUp GKR regressed by 2-3x more at each step (8 MiB: +24ms GKR, 4 MiB: +75ms GKR). APC 0 regressed by +103ms at 8 MiB. The WHIR regression from baseline is a tolerable cost of the 16 MiB page size; no intermediate value improves the overall metric. The GKR sensitivity to VPMM pool state is the dominant constraint.
+
+## 2026-04-16-0830-gpu-stacked-reduction-poly-extraction
+
+**Idea**: Move Stacked Reduction Round 0 polynomial reconstruction (iDFT + polynomial multiplication + accumulation) from CPU to GPU using batch_ntt_small and AoS/SoA conversion primitives.
+
+**Result**: failure — Stacked Reduction at APC 300: 75ms → 74ms (-1ms, below 5ms rollback threshold). STARK excl trace at APC 300: 1107ms → 1124ms (vs baseline: 2.18x lower, vs previous: +17ms, noise).
+
+**Summary**: Replaced per-bucket D2H + CPU NTT pipeline with a 10-step GPU kernel pipeline (AoS→SoA → iDFT → zero-pad → DFT → SoA→AoS → pointwise mul → iDFT → accumulate). All 94 tests pass, no regression at APC 0. The improvement was only 1-2ms because (1) CPU NTT of 256-512 EF elements is already ~10-20µs per operation, making total CPU work ~2-3ms not ~10ms as estimated, (2) the 180 GPU kernel launches add ~1-1.5ms of CUDA overhead that nearly offsets the savings, and (3) D2H sync overhead was ~50µs/call not ~200µs. The CPU polynomial reconstruction accounts for only ~3% of Stacked Reduction time — too small a target.
+
+## 2026-04-16-1100-tune-gkr-precompute-m-parameters
+
+**Idea**: Tune GKR fractional sumcheck PrecomputeM parameters (MIN_N, TARGET_BLOCKS, TAIL_TILE) to reduce GKR inner round cost at APC 300.
+
+**Result**: failure — LogUp GKR at APC 300: 367ms → 363ms (-4ms, within noise). STARK excl trace at APC 300: 1113ms → 1113ms (0ms change). (vs baseline: 2.21x lower, unchanged from previous)
+
+**Summary**: Swept 10 parameter configurations via environment variables. Raising MIN_N (shifting layers from PrecomputeM to FoldEval) made GKR monotonically worse: MIN_N=24 +6ms, MIN_N=26 +24ms, MIN_N=28 +68ms, disabled +87ms. Lowering MIN_N (more PrecomputeM layers) had no measurable benefit: MIN_N=20 -2ms, MIN_N=18 -4ms, MIN_N=16 +19ms. TARGET_BLOCKS and TAIL_TILE sweeps were also within noise (±14ms). The current defaults are near-optimal. Key finding: PrecomputeM is faster than FoldEval for layers at rem_n≥22 because its windowed approach (w=3) amortizes per-round D2H sync + CPU transcript overhead, saving ~2-3ms per window vs 3 FoldEval rounds. Fixed a buffer sizing bug where the work buffer used the compile-time MIN_N constant instead of the runtime env var value, causing CUDA crashes when MIN_N is overridden to a higher value.
+
+## 2026-04-16-1430-column-batched-ntt-for-rs-code-matrix
+
+**Idea**: Split the forward NTT in rs_code_matrix into L2-cache-sized column batches (~1000 columns, ~64MB per batch) to improve memory locality for the 3.4GB working set at APC 300.
+
+**Result**: failure — Trace Commit at APC 300: 197ms → 191ms (-6ms, at noise floor). STARK excl trace at APC 300: 1121ms → 1115ms (-6ms, within noise). (vs baseline: 2.20x lower, unchanged from previous)
+
+**Summary**: Added `batch_ntt_column_batched` that splits NTT into L2-sized batches with non-owning DeviceBuffer views. The hypothesis that L2 reuse between NTT steps would improve bandwidth did not materialize because all CUDA threads access the full batch concurrently within each kernel launch, causing L2 eviction before the second step begins. The ~6ms Trace Commit improvement is consistent with modest DRAM page locality gains from reducing the concurrent address range, but is indistinguishable from measurement noise. The NTT is fundamentally bandwidth-bound, and kernel-level fusion (not Rust-level batching) would be needed to achieve inter-step L2 reuse.
+
+## 2026-04-16-1600-batch-stacked-reduction-round0-descriptors
+
+**Idea**: Batch per-trace stacked reduction Round 0 kernel launches (sumcheck block sums + PLE fold) using descriptor arrays to reduce ~800 kernel launches per segment to ~100.
+
+**Result**: failure — Stacked Reduction at APC 300: 74ms → 74ms (0ms change). STARK excl trace at APC 300: 1127ms → 1122ms (-5ms, within noise). (vs baseline: 2.19x lower, unchanged from previous)
+
+**Summary**: Implemented batched CUDA kernels with column-based binary search descriptor mapping for both Round 0 block_sum and PLE fold. Height-grouped orchestration in Rust batches same-height traces (>=10 threshold) into single kernel launches. All 94 tests pass, no regression at APC 0. The improvement was undetectable because per-launch CUDA overhead (~2-3µs × 797 = ~2ms) is at the noise floor, and the CUDA driver pipeline already hides inter-kernel launch gaps for sequential kernels on the default stream. Stacked Reduction at 74ms (6.6% of STARK excl trace) is now too small a target for kernel launch batching.

@@ -1,3 +1,3 @@
-# 2026-04-15-0800-cache-codeword-buffer-across-segments
+# 2026-04-16-1600-batch-stacked-reduction-round0-descriptors
 
-Cache the RS codeword `DeviceBuffer` in the GPU device across segment prove() calls, avoiding the cold `cudaMallocAsync` that triggers a real `cudaMalloc` for the first segment. At APC 300, seg 0's `rs_code_matrix` takes 57ms while seg 1's takes 0ms — the entire gap is the first-time 192MB allocation through the CUDA async memory pool. By caching the codeword buffer after each segment and reusing it for the next, every segment gets 0ms allocation. Expected saving: ~57ms at APC 300.
+Batch the per-trace stacked reduction Round 0 kernel launches (sumcheck block sums + PLE fold) using descriptor arrays. At APC 300, the stacked reduction Round 0 loop calls `stacked_reduction_sumcheck_round0` and `stacked_reduction_fold_ple` once per backing trace matrix (~400 per segment across all commits), many of which are tiny (1-2 columns, height 2^5-2^8). Grouping same-height matrices into single batched kernel launches reduces ~800 kernel launches per segment to ~100, saving kernel launch overhead and improving SM utilization for the numerous tiny launches.
