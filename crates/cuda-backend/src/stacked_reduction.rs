@@ -4,6 +4,7 @@ use itertools::{zip_eq, Itertools};
 use openvm_cuda_common::{
     copy::{cuda_memcpy, MemCopyD2H, MemCopyH2D},
     d_buffer::DeviceBuffer,
+    error::CudaError,
     memory_manager::MemTracker,
 };
 use openvm_stark_backend::{
@@ -26,15 +27,16 @@ use tracing::{debug, info_span, instrument};
 use crate::{
     base::DeviceMatrix,
     cuda::{
-        batch_ntt_small::ensure_device_ntt_twiddles_initialized,
-        poly::vector_scalar_multiply_ext,
+        batch_ntt_small::{batch_ntt_small, ensure_device_ntt_twiddles_initialized},
+        matrix::{batch_expand_pad, split_ext_to_base_col_major_matrix},
+        poly::{transpose_fp_to_fpext_vec, vector_scalar_multiply_ext},
         stacked_reduction::{
             _stacked_reduction_r0_required_temp_buffer_size,
             batched_stacked_reduction_sumcheck_mle_round,
             batched_stacked_reduction_sumcheck_mle_round_degenerate,
-            compute_mle_launch_params, initialize_k_rot_from_eq_segments,
-            stacked_reduction_fold_ple, stacked_reduction_sumcheck_round0, DegenMleDesc,
-            NonDegenMleDesc, NUM_G,
+            compute_mle_launch_params, ef_accumulate, ef_pointwise_mul3_sum,
+            initialize_k_rot_from_eq_segments, stacked_reduction_fold_ple,
+            stacked_reduction_sumcheck_round0, DegenMleDesc, NonDegenMleDesc, NUM_G,
         },
         sumcheck::{fold_mle, triangular_fold_mle},
     },
@@ -569,6 +571,12 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
         d_g_neg: Vec<DeviceBuffer<EF>>,
         s_0_deg: usize,
     ) -> Result<UnivariatePoly<EF>, StackedReductionError> {
+        // GPU path: keep G data on device, use batch_ntt_small for NTT operations
+        if self.l_skip + 1 <= 10 {
+            return self.reconstruct_s0_from_g_gpu(&d_g_pos, &d_g_neg, s_0_deg);
+        }
+
+        // CPU fallback for large l_skip (> MAX_NTT_LEVEL - 1)
         let l_skip = self.l_skip;
         let skip_domain = 1 << l_skip;
         let large_uni_domain = (s_0_deg + 1).next_power_of_two(); // 2 * skip_domain
@@ -683,6 +691,201 @@ impl<D: Copy + Clone + Send + Sync + 'static> StackedReductionGpu<D> {
         for (o, c) in out.iter_mut().zip(s_coeffs) {
             *o += c;
         }
+    }
+
+    /// GPU-based polynomial reconstruction: s₀ = Σ_bucket E_bucket × G_bucket.
+    ///
+    /// Pre-computes E evaluations on CPU, uploads them once, then runs a GPU NTT pipeline
+    /// per bucket (iDFT → zero-pad → DFT → pointwise multiply → iDFT → accumulate).
+    /// Eliminates per-bucket D2H transfers and CPU NTT work.
+    fn reconstruct_s0_from_g_gpu(
+        &self,
+        d_g_pos: &DeviceBuffer<EF>,
+        d_g_neg: &[DeviceBuffer<EF>],
+        s_0_deg: usize,
+    ) -> Result<UnivariatePoly<EF>, StackedReductionError> {
+        let l_skip = self.l_skip;
+        let skip_domain = 1 << l_skip;
+        let large_uni_domain = (s_0_deg + 1).next_power_of_two();
+        let dft = Radix2BowersSerial;
+
+        // Pre-compute ALL E evaluations on CPU and pack into a flat vector
+        let num_buckets = 1 + l_skip;
+        let evals_per_bucket = NUM_G * large_uni_domain;
+        let mut all_e_evals = vec![EF::ZERO; num_buckets * evals_per_bucket];
+
+        // n≥0 bucket (bucket index 0)
+        {
+            let e0 = eq_uni_poly::<F, EF>(l_skip, self.r_0);
+            let e1 = eq_uni_poly::<F, EF>(l_skip, self.r_0 * self.omega_skip);
+            let e2 = eq_uni_at_one_poly(l_skip, self.eq_const);
+            for (i, e_poly) in [e0, e1, e2].into_iter().enumerate() {
+                let mut padded = e_poly.into_coeffs();
+                padded.resize(large_uni_domain, EF::ZERO);
+                let evals = dft.dft(padded);
+                let offset = i * large_uni_domain;
+                all_e_evals[offset..offset + large_uni_domain].copy_from_slice(&evals);
+            }
+        }
+
+        // n<0 buckets (bucket indices 1..=l_skip)
+        for bucket_idx in 0..l_skip {
+            let n_abs = bucket_idx + 1;
+            let l = l_skip - n_abs;
+            let omega_l = self.omega_skip.exp_power_of_2(n_abs);
+            let r_uni = self.r_0.exp_power_of_2(n_abs);
+
+            let ind = build_indicator_poly(l_skip, -(n_abs as isize));
+            let e0_base = eq_uni_poly::<F, EF>(l, r_uni);
+            let e1_base = eq_uni_poly::<F, EF>(l, r_uni * omega_l);
+            let e2_base = eq_uni_at_one_poly(l, self.eq_const);
+
+            let e0_neg = poly_multiply_ntt(&dft, e0_base.coeffs(), ind.coeffs(), skip_domain);
+            let e1_neg = poly_multiply_ntt(&dft, e1_base.coeffs(), ind.coeffs(), skip_domain);
+            let e2_neg = poly_multiply_ntt(&dft, e2_base.coeffs(), ind.coeffs(), skip_domain);
+
+            let bucket_offset = (1 + bucket_idx) * evals_per_bucket;
+            for (i, e_coeffs) in [&e0_neg, &e1_neg, &e2_neg].into_iter().enumerate() {
+                let mut padded = e_coeffs.to_vec();
+                padded.resize(large_uni_domain, EF::ZERO);
+                let evals = dft.dft(padded);
+                let offset = bucket_offset + i * large_uni_domain;
+                all_e_evals[offset..offset + large_uni_domain].copy_from_slice(&evals);
+            }
+        }
+
+        // Single H2D upload of all E evaluations
+        let d_all_e_evals = all_e_evals.to_device()?;
+
+        // Allocate reusable work buffers
+        let mut d_g_soa = DeviceBuffer::<F>::with_capacity(D_EF * NUM_G * skip_domain);
+        let mut d_g_soa_padded = DeviceBuffer::<F>::with_capacity(D_EF * NUM_G * large_uni_domain);
+        let mut d_g_aos_padded = DeviceBuffer::<EF>::with_capacity(NUM_G * large_uni_domain);
+        let mut d_s_work = DeviceBuffer::<EF>::with_capacity(large_uni_domain);
+        let mut d_s_soa = DeviceBuffer::<F>::with_capacity(D_EF * large_uni_domain);
+        let mut d_s0_accum = DeviceBuffer::<EF>::with_capacity(large_uni_domain);
+        d_s0_accum
+            .fill_zero()
+            .map_err(StackedReductionError::FillZero)?;
+
+        // Process n≥0 bucket
+        unsafe {
+            Self::gpu_ntt_multiply_and_accumulate(
+                d_g_pos,
+                d_all_e_evals.as_ptr(),
+                skip_domain,
+                large_uni_domain,
+                l_skip,
+                &mut d_s0_accum,
+                &mut d_g_soa,
+                &mut d_g_soa_padded,
+                &mut d_g_aos_padded,
+                &mut d_s_work,
+                &mut d_s_soa,
+            )
+            .map_err(StackedReductionError::ReconstructGpu)?;
+        }
+
+        // Process n<0 buckets
+        for (bucket_idx, d_g_neg_bucket) in d_g_neg.iter().enumerate() {
+            let e_offset = (1 + bucket_idx) * evals_per_bucket;
+            unsafe {
+                Self::gpu_ntt_multiply_and_accumulate(
+                    d_g_neg_bucket,
+                    d_all_e_evals.as_ptr().add(e_offset),
+                    skip_domain,
+                    large_uni_domain,
+                    l_skip,
+                    &mut d_s0_accum,
+                    &mut d_g_soa,
+                    &mut d_g_soa_padded,
+                    &mut d_g_aos_padded,
+                    &mut d_s_work,
+                    &mut d_s_soa,
+                )
+                .map_err(StackedReductionError::ReconstructGpu)?;
+            }
+        }
+
+        // Single D2H of accumulated result
+        let mut s0_host = d_s0_accum.to_host()?;
+        s0_host.truncate(s_0_deg + 1);
+        Ok(UnivariatePoly::new(s0_host))
+    }
+
+    /// GPU NTT pipeline for one bucket: iDFT(G) → zero-pad → DFT → pointwise mul(E,G) → iDFT → accumulate.
+    ///
+    /// # Safety
+    /// - `d_g_evals` must contain `NUM_G * skip_domain` valid EF elements.
+    /// - `d_e_evals_ptr` must point to `NUM_G * large_uni_domain` valid EF elements on device.
+    /// - All work buffers must have the correct capacity.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn gpu_ntt_multiply_and_accumulate(
+        d_g_evals: &DeviceBuffer<EF>,
+        d_e_evals_ptr: *const EF,
+        skip_domain: usize,
+        large_uni_domain: usize,
+        l_skip: usize,
+        d_s0_accum: &mut DeviceBuffer<EF>,
+        d_g_soa: &mut DeviceBuffer<F>,
+        d_g_soa_padded: &mut DeviceBuffer<F>,
+        d_g_aos_padded: &mut DeviceBuffer<EF>,
+        d_s_work: &mut DeviceBuffer<EF>,
+        d_s_soa: &mut DeviceBuffer<F>,
+    ) -> Result<(), CudaError> {
+        let g_len = NUM_G * skip_domain;
+
+        // 1. AoS → SoA of G evals (EF → D_EF independent Fp columns)
+        split_ext_to_base_col_major_matrix(d_g_soa, d_g_evals, g_len as u64, g_len as u32)?;
+
+        // 2. iDFT of G in SoA: D_EF * NUM_G = 12 blocks of skip_domain Fp each
+        batch_ntt_small(d_g_soa, l_skip, D_EF * NUM_G, true)?;
+
+        // 3. Zero-pad each block from skip_domain to large_uni_domain
+        batch_expand_pad(
+            d_g_soa_padded.as_mut_ptr(),
+            d_g_soa.as_ptr(),
+            (D_EF * NUM_G) as u32,
+            large_uni_domain as u32,
+            skip_domain as u32,
+        )?;
+
+        // 4. DFT of padded G in SoA: 12 blocks of large_uni_domain Fp each
+        batch_ntt_small(d_g_soa_padded, l_skip + 1, D_EF * NUM_G, false)?;
+
+        // 5. SoA → AoS of G evals on large domain
+        transpose_fp_to_fpext_vec(d_g_aos_padded, d_g_soa_padded)?;
+
+        // 6. Pointwise multiply: s[j] = Σ_i E_i[j] × G_i[j]
+        ef_pointwise_mul3_sum(
+            d_e_evals_ptr,
+            d_g_aos_padded.as_ptr(),
+            d_s_work.as_mut_ptr(),
+            large_uni_domain as u32,
+        )?;
+
+        // 7. AoS → SoA of product
+        split_ext_to_base_col_major_matrix(
+            d_s_soa,
+            d_s_work,
+            large_uni_domain as u64,
+            large_uni_domain as u32,
+        )?;
+
+        // 8. iDFT of product in SoA: D_EF = 4 blocks of large_uni_domain Fp each
+        batch_ntt_small(d_s_soa, l_skip + 1, D_EF, true)?;
+
+        // 9. SoA → AoS of product coefficients
+        transpose_fp_to_fpext_vec(d_s_work, d_s_soa)?;
+
+        // 10. Accumulate into s0 (sequential on same stream, no atomics needed)
+        ef_accumulate(
+            d_s0_accum.as_mut_ptr(),
+            d_s_work.as_ptr(),
+            large_uni_domain as u32,
+        )?;
+
+        Ok(())
     }
 
     #[instrument("stacked_reduction_fold_ple", level = "debug", skip_all)]
