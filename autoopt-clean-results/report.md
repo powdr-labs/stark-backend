@@ -34,17 +34,17 @@ While still not scaling linearly with the statistics above, the proposed prover 
 
 The following table summarizes the effect of the proposed changes, on STARK proving time (excluding trace generation):
 
-| # | Change | Diffstat | APC 0 | vs base | vs prev | APC 100 | vs base | vs prev | APC 300 | vs base | vs prev |
-|---|--------|----------|-------|---------|---------|---------|---------|---------|---------|---------|---------|
-| 0 | Baseline (`VPMM_PAGE_SIZE=16777216`) | — | 1,795ms | — | — | 1,982ms | — | — | 2,307ms | — | — |
-| 1 | Multi-stream Round 0 (8 streams) | +265/-140 | 1,812ms | +17ms<br>(1.01x ↑) | +17ms<br>(1.01x ↑) | 1,745ms | -237ms<br>(1.14x ↓) | -237ms<br>(1.14x ↓) | 1,915ms | -392ms<br>(1.20x ↓) | -392ms<br>(1.20x ↓) |
-| 2 | Multi-stream GKR input eval (8 streams) | +184/-108 | 1,818ms | +23ms<br>(1.01x ↑) | +6ms<br>(1.00x ↑) | 1,739ms | -243ms<br>(1.14x ↓) | -6ms<br>(1.00x ↓) | 1,642ms | -665ms<br>(1.41x ↓) | -273ms<br>(1.17x ↓) |
-| 3 | Batch stacked-reduction MLE sync | +22/-40 | 1,789ms | -6ms<br>(1.00x ↓) | -29ms<br>(1.02x ↓) | 1,489ms | -493ms<br>(1.33x ↓) | -250ms<br>(1.17x ↓) | 1,458ms | -849ms<br>(1.58x ↓) | -184ms<br>(1.13x ↓) |
-| 4 | Batch stacking scatter kernel | +83/-32 | 1,797ms | +2ms<br>(1.00x ↑) | +8ms<br>(1.00x ↑) | 1,407ms | -575ms<br>(1.41x ↓) | -82ms<br>(1.06x ↓) | 1,316ms | -991ms<br>(1.75x ↓) | -142ms<br>(1.11x ↓) |
-| 5 | Batch stacked-reduction MLE round kernels | +456/-49 | 1,785ms | -10ms<br>(1.01x ↓) | -12ms<br>(1.01x ↓) | 1,396ms | -586ms<br>(1.42x ↓) | -11ms<br>(1.01x ↓) | 1,250ms | -1,057ms<br>(1.85x ↓) | -66ms<br>(1.05x ↓) |
-| 6 | Pre-allocate GKR input buffers | +93/-36 | 1,804ms | +9ms<br>(1.01x ↑) | +19ms<br>(1.01x ↑) | 1,373ms | -609ms<br>(1.44x ↓) | -23ms<br>(1.02x ↓) | 1,223ms | -1,084ms<br>(1.89x ↓) | -27ms<br>(1.02x ↓) |
-| 7 | Pre-allocate Round 0 buffers + round-robin balance | +343/-42 | 1,804ms | +9ms<br>(1.01x ↑) | 0ms<br>(flat) | 1,347ms | -635ms<br>(1.47x ↓) | -26ms<br>(1.02x ↓) | 1,213ms | -1,094ms<br>(1.90x ↓) | -10ms<br>(1.01x ↓) |
-| 8 | GPU Round 0 poly extract + overlap logup precompute | +466/-134 | 1,792ms | -3ms<br>(1.00x ↓) | -12ms<br>(1.01x ↓) | 1,331ms | -651ms<br>(1.49x ↓) | -16ms<br>(1.01x ↓) | 1,148ms | -1,159ms<br>(2.01x ↓) | -65ms<br>(1.06x ↓) |
+| # | Change | Diffstat | APC 0 | APC 100 | APC 300 |
+|---|--------|----------|-------|---------|---------|
+| 0 | Baseline (`VPMM_PAGE_SIZE=16777216`) | — | 1,795ms | 1,982ms | 2,307ms |
+| 1 | Multi-stream Round 0 (8 streams) | +265/-140 | 1,812ms<br>vs base: +17ms (1.01x ↑)<br>vs prev: +17ms (1.01x ↑) | 1,745ms<br>vs base: -237ms (1.14x ↓)<br>vs prev: -237ms (1.14x ↓) | 1,915ms<br>vs base: -392ms (1.20x ↓)<br>vs prev: -392ms (1.20x ↓) |
+| 2 | Multi-stream GKR input eval (8 streams) | +184/-108 | 1,818ms<br>vs base: +23ms (1.01x ↑)<br>vs prev: +6ms (1.00x ↑) | 1,739ms<br>vs base: -243ms (1.14x ↓)<br>vs prev: -6ms (1.00x ↓) | 1,642ms<br>vs base: -665ms (1.41x ↓)<br>vs prev: -273ms (1.17x ↓) |
+| 3 | Batch stacked-reduction MLE sync | +22/-40 | 1,789ms<br>vs base: -6ms (1.00x ↓)<br>vs prev: -29ms (1.02x ↓) | 1,489ms<br>vs base: -493ms (1.33x ↓)<br>vs prev: -250ms (1.17x ↓) | 1,458ms<br>vs base: -849ms (1.58x ↓)<br>vs prev: -184ms (1.13x ↓) |
+| 4 | Batch stacking scatter kernel | +83/-32 | 1,797ms<br>vs base: +2ms (1.00x ↑)<br>vs prev: +8ms (1.00x ↑) | 1,407ms<br>vs base: -575ms (1.41x ↓)<br>vs prev: -82ms (1.06x ↓) | 1,316ms<br>vs base: -991ms (1.75x ↓)<br>vs prev: -142ms (1.11x ↓) |
+| 5 | Batch stacked-reduction MLE round kernels | +456/-49 | 1,785ms<br>vs base: -10ms (1.01x ↓)<br>vs prev: -12ms (1.01x ↓) | 1,396ms<br>vs base: -586ms (1.42x ↓)<br>vs prev: -11ms (1.01x ↓) | 1,250ms<br>vs base: -1,057ms (1.85x ↓)<br>vs prev: -66ms (1.05x ↓) |
+| 6 | Pre-allocate GKR input buffers | +93/-36 | 1,804ms<br>vs base: +9ms (1.01x ↑)<br>vs prev: +19ms (1.01x ↑) | 1,373ms<br>vs base: -609ms (1.44x ↓)<br>vs prev: -23ms (1.02x ↓) | 1,223ms<br>vs base: -1,084ms (1.89x ↓)<br>vs prev: -27ms (1.02x ↓) |
+| 7 | Pre-allocate Round 0 buffers + round-robin balance | +343/-42 | 1,804ms<br>vs base: +9ms (1.01x ↑)<br>vs prev: 0ms (flat) | 1,347ms<br>vs base: -635ms (1.47x ↓)<br>vs prev: -26ms (1.02x ↓) | 1,213ms<br>vs base: -1,094ms (1.90x ↓)<br>vs prev: -10ms (1.01x ↓) |
+| 8 | GPU Round 0 poly extract + overlap logup precompute | +466/-134 | 1,792ms<br>vs base: -3ms (1.00x ↓)<br>vs prev: -12ms (1.01x ↓) | 1,331ms<br>vs base: -651ms (1.49x ↓)<br>vs prev: -16ms (1.01x ↓) | 1,148ms<br>vs base: -1,159ms (2.01x ↓)<br>vs prev: -65ms (1.06x ↓) |
 
 Each  change has a significant effect on STARK proving time, with each change being a reasonably-sized diff. The [full diff](https://github.com/powdr-labs/stark-backend/compare/v2-powdr-07-04...powdr-labs:stark-backend:1ca18279fa6f12d907d2c4bc7265eeaeda2025d7) is +1,732/-402 lines of code across 14 files.
 
