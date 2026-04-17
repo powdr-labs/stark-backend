@@ -131,7 +131,7 @@ A `compute_mle_launch_params` Rust helper replicates the CUDA-side auto-tuning h
 - **Measured:** APC 300 `1,213 -> 1,148 ms` (-65 ms, 1.06x). APC 100 `1,347 -> 1,331 ms` (-16 ms). APC 0 `1,804 -> 1,792 ms` (-12 ms — recovers APC 0 drift from earlier steps). Round 0 phase `238 -> 180 ms` at APC 300.
 - **Depends on:** steps 1 and 7.
 
-**What it does.** Two changes landed together because they cannot be measured cleanly apart (see "Bundling and omissions" above):
+**What it does.** Two changes landed together because they cannot be measured cleanly apart:
 
 1. **GPU-side Round 0 polynomial extraction** (iteration 21). For every Round 0 AIR the original code did `cudaStreamSynchronize` to read the evaluation results, then ran CPU post-processing (transpose + iDFT + unshift + Lagrange interpolation + coefficient adjustment) before moving to the next AIR — ~1,246 pipeline drains per proof at APC 300. This change moves the entire post-processing onto the GPU via a pre-computed transformation matrix:
    - `compute_round0_extract_tables(d, l_skip)` runs `UnivariatePoly::from_geometric_cosets_evals_idft` on unit basis vectors at setup to capture the full CPU pipeline as a small matrix per unique degree.

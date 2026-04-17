@@ -48,7 +48,7 @@ The following table summarizes the effect of the proposed changes, on STARK prov
 
 Each  change has a significant effect on STARK proving time, with each change being a reasonably-sized diff. The [full diff](https://github.com/powdr-labs/stark-backend/compare/v2-powdr-07-04...powdr-labs:stark-backend:1ca18279fa6f12d907d2c4bc7265eeaeda2025d7) is +1,732/-402 lines of code across 14 files.
 
-See the [detailed reports](./detailed-reports.md) for more information on each change.
+See the [detailed reports](./detailed_reports.md) for more information on each change.
 
 ### Experimental setup
 
