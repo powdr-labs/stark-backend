@@ -11,7 +11,7 @@ In this guest program, applying autoprecompiles achieves significant reductions 
 | Experiment             | Trace cells      | Constraint instances | Bus interaction messages |
 |------------------------|------------------|----------------------|--------------------------|
 | APC=0 (vanilla OpenVM) | 1.90B            | 1.13B                | 965.5M                   |
-| APC=100                | 1.19B (1.60x ↓)  | 40.4M (1.52x ↓)      | 621.8M (1.55x ↓)         |
+| APC=100                | 1.19B (1.60x ↓)  | 740.4M (1.52x ↓)      | 621.8M (1.55x ↓)         |
 | APC=300                | 811.2M (2.35x ↓) | 505.2M (2.23x ↓)     | 448.5M (2.15x ↓)         |
 
 However, this does not translate to a reduction in STARK proving time (excluding trace generation):
