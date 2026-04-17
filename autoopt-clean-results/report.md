@@ -30,6 +30,8 @@ With all 8 optimizations applied, the STARK proving time excluding trace generat
 
 While still not scaling linearly with the statistics above, the proposed prover changes lead to a significant reduction in proving time as we increase the number of autoprecompiles.
 
+The metrics viewer links above show a more detailed breakdown of the proving time by phase. For example, the "LogUp GKR" phase goes down 1.93x for APC=300 vs APC=0, close to 2.15x reduction in bus interaction messages. On the other hand, the "MLE rounds" phase did not benefit for from the improvements and is still 1.67x slower for APC=300 vs APC=0.
+
 ## Overview of the changes
 
 The following table summarizes the effect of the proposed changes, on STARK proving time (excluding trace generation):
@@ -58,6 +60,10 @@ Also, we set `VPMM_PAGE_SIZE=16777216` for every run, including the baseline. Th
 ### Noise
 
 Each step is a single benchmark run. The original autoopt run characterized noise at roughly ±20 ms for APC 300 and ±15 ms for APC 0/100. APC 0 drifts in the ±30 ms band throughout steps 2-7; APC 0 uses the single-threaded path for Round 0 / GKR input eval (`<100` AIRs), so most of these changes are effectively no-ops for APC 0 and the small positive drifts vs baseline read as noise rather than a real regression. Step 8 pulls APC 0 back to -3 ms vs baseline.
+
+## Future work
+
+The agents didn't yet have access to the NSight Compute profiler (only NSight Systems). We're planning a new `autoopt`, to see if this helps the agents find more optimizations.
 
 ## Notes on the original run
 
