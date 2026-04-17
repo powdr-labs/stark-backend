@@ -28,6 +28,8 @@ optimization steps below build on that baseline.
 
 ## Summary
 
+![STARK proving time excluding trace by iteration](stark_excl_trace_by_iteration.svg)
+
 Measured STARK excl trace (from `spec.py`, in ms) after each commit, with
 `VPMM_PAGE_SIZE=16777216` set for every run. "vs base" compares to step 0;
 "vs prev" compares to the immediately preceding step. Each diff cell is
