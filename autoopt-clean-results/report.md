@@ -46,17 +46,18 @@ The following table summarizes the effect of the proposed changes, on STARK prov
 | 7 | Pre-allocate Round 0 buffers + round-robin balance | +343/-42 | 1,804ms | +9ms<br>(1.01x ↑) | 0ms<br>(flat) | 1,347ms | -635ms<br>(1.47x ↓) | -26ms<br>(1.02x ↓) | 1,213ms | -1,094ms<br>(1.90x ↓) | -10ms<br>(1.01x ↓) |
 | 8 | GPU Round 0 poly extract + overlap logup precompute | +466/-134 | 1,792ms | -3ms<br>(1.00x ↓) | -12ms<br>(1.01x ↓) | 1,331ms | -651ms<br>(1.49x ↓) | -16ms<br>(1.01x ↓) | 1,148ms | -1,159ms<br>(2.01x ↓) | -65ms<br>(1.06x ↓) |
 
+Each  change has a significant effect on STARK proving time, with each change being a reasonably-sized diff. The [full diff](https://github.com/powdr-labs/stark-backend/compare/v2-powdr-07-04...powdr-labs:stark-backend:1ca18279fa6f12d907d2c4bc7265eeaeda2025d7) is +1,732/-402 lines of code across 14 files.
+
 See the [detailed reports](./detailed-reports.md) for more information on each change.
-
-
-### Noise
-
-Each step is a single benchmark run. The original autoopt run characterized noise at roughly ±20 ms for APC 300 and ±15 ms for APC 0/100. APC 0 drifts in the ±30 ms band throughout steps 2-7; APC 0 uses the single-threaded path for Round 0 / GKR input eval (`<100` AIRs), so most of these changes are effectively no-ops for APC 0 and the small positive drifts vs baseline read as noise rather than a real regression. Step 8 pulls APC 0 back to -3 ms vs baseline.
 
 ### Experimental setup
 
 All experiments were run on an NVidea GeForce RTX 4090.
 Also, we set `VPMM_PAGE_SIZE=16777216` for every run, including the baseline. This optimization was one of the items found by `autoopt`. It benefits all runs, including the baseline (1.19x faster).
+
+### Noise
+
+Each step is a single benchmark run. The original autoopt run characterized noise at roughly ±20 ms for APC 300 and ±15 ms for APC 0/100. APC 0 drifts in the ±30 ms band throughout steps 2-7; APC 0 uses the single-threaded path for Round 0 / GKR input eval (`<100` AIRs), so most of these changes are effectively no-ops for APC 0 and the small positive drifts vs baseline read as noise rather than a real regression. Step 8 pulls APC 0 back to -3 ms vs baseline.
 
 ## Notes on the original run
 
