@@ -8,7 +8,7 @@ use std::sync::Arc;
 use eyre::eyre;
 use openvm_stark_backend::{
     prover::{AirProvingContext, DeviceDataTransporter, ProvingContext},
-    ColumnsAir, PartitionedBaseAir, StarkEngine,
+    PartitionedBaseAir, StarkEngine,
 };
 use openvm_stark_sdk::config::{
     app_params_with_100_bits_security, baby_bear_poseidon2::BabyBearPoseidon2CpuEngine,
@@ -30,7 +30,6 @@ impl<F> BaseAir<F> for TestAir {
     }
 }
 impl<F: Field> BaseAirWithPublicValues<F> for TestAir {}
-impl<F: Field> ColumnsAir<F> for TestAir {}
 impl<F: Field> PartitionedBaseAir<F> for TestAir {}
 
 impl<AB: AirBuilder> Air<AB> for TestAir {

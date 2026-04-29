@@ -2,7 +2,7 @@ use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues, PairBuilder};
 use p3_field::{Field, PrimeCharacteristicRing};
 use p3_matrix::{dense::RowMajorMatrix, Matrix};
 
-use crate::{air_builders::PartitionedAirBuilder, ColumnsAir, PartitionedBaseAir};
+use crate::{air_builders::PartitionedAirBuilder, PartitionedBaseAir};
 
 #[derive(Clone)]
 pub struct PreprocessedCachedAir {
@@ -20,7 +20,6 @@ impl PreprocessedCachedAir {
     }
 }
 
-impl<F: Field> ColumnsAir<F> for PreprocessedCachedAir {}
 impl<F: Field> PartitionedBaseAir<F> for PreprocessedCachedAir {
     fn cached_main_widths(&self) -> Vec<usize> {
         vec![1; self.num_cached_parts]

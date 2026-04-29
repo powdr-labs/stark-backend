@@ -15,7 +15,7 @@ use openvm_stark_backend::{
     air_builders::PartitionedAirBuilder,
     prover::{stacked_pcs::stacked_commit, AirProvingContext, ColMajorMatrix, CommittedTraceData},
     utils::disable_debug_builder,
-    ColumnsAir, PartitionedBaseAir, StarkEngine, StarkProtocolConfig,
+    PartitionedBaseAir, StarkEngine, StarkProtocolConfig,
 };
 use openvm_stark_sdk::{config::baby_bear_poseidon2::*, utils::setup_tracing};
 use p3_air::{Air, BaseAir, BaseAirWithPublicValues};
@@ -28,7 +28,6 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 struct SumAir(usize);
 
 impl<F> BaseAirWithPublicValues<F> for SumAir {}
-impl<F> ColumnsAir<F> for SumAir {}
 impl<F> PartitionedBaseAir<F> for SumAir {
     fn cached_main_widths(&self) -> Vec<usize> {
         vec![self.0]
