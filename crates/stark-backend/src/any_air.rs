@@ -14,15 +14,6 @@ use crate::{
     config::StarkProtocolConfig,
 };
 
-/// If available, returns the names of columns used in this AIR.
-pub trait ColumnsAir<F>: BaseAir<F> {
-    /// If the result is `Some(names)`, `names.len() == air.width()` should always
-    /// be true.
-    fn columns(&self) -> Option<Vec<String>> {
-        None
-    }
-}
-
 /// An AIR with 1 or more main trace partitions.
 pub trait PartitionedBaseAir<F>: BaseAir<F> {
     /// By default, an AIR has no cached main trace.
@@ -47,7 +38,6 @@ Air<SymbolicRapBuilder<SC::F>> // for keygen to extract fixed data about the RAP
     + for<'a> Air<DebugConstraintBuilder<'a, SC>> // for debugging
     + BaseAirWithPublicValues<SC::F>
     + PartitionedBaseAir<SC::F>
-    + ColumnsAir<SC::F>
     + Send + Sync
 {
     fn as_any(&self) -> &dyn Any;
@@ -62,7 +52,6 @@ where
         + for<'a> Air<DebugConstraintBuilder<'a, SC>>
         + BaseAirWithPublicValues<SC::F>
         + PartitionedBaseAir<SC::F>
-        + ColumnsAir<SC::F>
         + Send
         + Sync
         + 'static,

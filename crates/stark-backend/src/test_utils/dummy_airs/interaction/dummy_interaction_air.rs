@@ -17,7 +17,7 @@ use crate::{
         stacked_pcs::stacked_commit, AirProvingContext, ColMajorMatrix, CommittedTraceData,
         CpuColMajorBackend,
     },
-    AirRef, ColumnsAir, PartitionedBaseAir, StarkProtocolConfig,
+    AirRef, PartitionedBaseAir, StarkProtocolConfig,
 };
 
 pub struct DummyInteractionCols;
@@ -65,7 +65,6 @@ impl DummyInteractionAir {
 }
 
 impl<F> BaseAirWithPublicValues<F> for DummyInteractionAir {}
-impl<F> ColumnsAir<F> for DummyInteractionAir {}
 impl<F> PartitionedBaseAir<F> for DummyInteractionAir {
     fn cached_main_widths(&self) -> Vec<usize> {
         if self.partition {

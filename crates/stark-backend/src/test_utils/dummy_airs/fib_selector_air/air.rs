@@ -10,7 +10,7 @@ use super::columns::FibonacciSelectorCols;
 use crate::{
     interaction::{InteractionBuilder, LookupBus},
     test_utils::dummy_airs::fib_air::columns::{FibonacciCols, NUM_FIBONACCI_COLS},
-    ColumnsAir, PartitionedBaseAir,
+    PartitionedBaseAir,
 };
 
 pub struct FibonacciSelectorAir {
@@ -31,7 +31,6 @@ impl FibonacciSelectorAir {
     }
 }
 
-impl<F: Field> ColumnsAir<F> for FibonacciSelectorAir {}
 impl<F: Field> PartitionedBaseAir<F> for FibonacciSelectorAir {}
 impl<F: Field> BaseAir<F> for FibonacciSelectorAir {
     fn width(&self) -> usize {

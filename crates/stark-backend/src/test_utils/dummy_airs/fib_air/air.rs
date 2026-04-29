@@ -4,12 +4,11 @@ use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, BaseAirWithPu
 use p3_matrix::Matrix;
 
 use super::columns::{FibonacciCols, NUM_FIBONACCI_COLS};
-use crate::{ColumnsAir, PartitionedBaseAir};
+use crate::PartitionedBaseAir;
 
 #[derive(Clone, Copy)]
 pub struct FibonacciAir;
 
-impl<F> ColumnsAir<F> for FibonacciAir {}
 impl<F> PartitionedBaseAir<F> for FibonacciAir {}
 impl<F> BaseAir<F> for FibonacciAir {
     fn width(&self) -> usize {

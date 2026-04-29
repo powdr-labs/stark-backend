@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use openvm_stark_backend::{
     prover::{AirProvingContext, ColMajorMatrix, DeviceDataTransporter, ProvingContext},
-    ColumnsAir, PartitionedBaseAir, StarkEngine, SystemParams,
+    PartitionedBaseAir, StarkEngine, SystemParams,
 };
 use openvm_stark_sdk::config::{
     app_params_with_100_bits_security,
@@ -34,7 +34,6 @@ impl<F> BaseAir<F> for TestAir {
     }
 }
 impl<F: Field> BaseAirWithPublicValues<F> for TestAir {}
-impl<F: Field> ColumnsAir<F> for TestAir {}
 impl<F: Field> PartitionedBaseAir<F> for TestAir {}
 
 impl<AB: AirBuilder> Air<AB> for TestAir {
