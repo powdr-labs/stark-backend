@@ -3,12 +3,17 @@
 # Usage: run_benchmark.sh <tag_name>
 # Assumes:
 # - stark-backend is already on the target commit
-# - powdr is checked out at /home/georg/powdr
+# - powdr is checked out at /home/georg/powdr on `georgwiese/openvm-deps-update`
+#   (with the `--artifact` CLI flag cherry-picked back in) and the local
+#   [patch."https://github.com/powdr-labs/stark-backend.git"] /
+#   [patch."https://github.com/powdr-labs/openvm.git"] blocks in `Cargo.toml`
+#   uncommented so the workspace resolves both to the local checkouts
+# - openvm is checked out at /home/georg/openvm on `georgwiese/columns-air-trait`
 # - guest artifacts already compiled at /home/georg/powdr/results/pairing/apc{000,100,300}.cbor
 # Outputs:
 # - Per-APC metrics to /home/georg/stark-backend/autoopt-clean-results/$TAG/apc{000,100,300}.json
 #
-# For the actual measurement runs we wrote output to /tmp/autoopt-measurements
+# For the actual measurement runs we wrote output to /tmp/autoopt-pairing-rebase
 # instead so that git checkouts between steps do not touch the output files;
 # the results were copied into this tree after all runs completed.
 

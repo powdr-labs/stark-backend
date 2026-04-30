@@ -2,21 +2,23 @@
 <style>text{fill:#0f172a;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.muted{fill:#475569}.grid{stroke:#cbd5e1;stroke-width:1}.axis{stroke:#334155;stroke-width:1.5}.plot-frame{fill:#ffffff;stroke:#94a3b8;stroke-width:1}.legend-box{fill:#ffffff;stroke:#cbd5e1;stroke-width:1}.key-box{fill:#f8fafc;stroke:#cbd5e1;stroke-width:1}</style>
 <rect width="100%" height="100%" fill="#f8fafc"/>
 <title id="title">STARK proving time excluding trace by iteration</title>
-<desc id="subtitle">Generated from /Users/georg/coding/stark-backend/autoopt-clean-results/results.csv. Each line shows STARK proving time excluding trace for a fixed APC value.</desc>
+<desc id="subtitle">Generated from /home/georg/stark-backend/autoopt-clean-results/results.csv. Each line shows STARK proving time excluding trace for a fixed APC value.</desc>
 <text x="110" y="48" font-size="30" font-weight="700">STARK Proving Time Excluding Trace</text>
 <rect x="110" y="100" width="1240" height="542" rx="8" class="plot-frame"/>
 <line x1="110" y1="642.00" x2="1350" y2="642.00" class="grid"/>
 <text x="94" y="647.00" text-anchor="end" font-size="14" class="muted">0 ms</text>
-<line x1="110" y1="533.60" x2="1350" y2="533.60" class="grid"/>
-<text x="94" y="538.60" text-anchor="end" font-size="14" class="muted">500 ms</text>
-<line x1="110" y1="425.20" x2="1350" y2="425.20" class="grid"/>
-<text x="94" y="430.20" text-anchor="end" font-size="14" class="muted">1,000 ms</text>
-<line x1="110" y1="316.80" x2="1350" y2="316.80" class="grid"/>
-<text x="94" y="321.80" text-anchor="end" font-size="14" class="muted">1,500 ms</text>
-<line x1="110" y1="208.40" x2="1350" y2="208.40" class="grid"/>
-<text x="94" y="213.40" text-anchor="end" font-size="14" class="muted">2,000 ms</text>
+<line x1="110" y1="551.67" x2="1350" y2="551.67" class="grid"/>
+<text x="94" y="556.67" text-anchor="end" font-size="14" class="muted">500 ms</text>
+<line x1="110" y1="461.33" x2="1350" y2="461.33" class="grid"/>
+<text x="94" y="466.33" text-anchor="end" font-size="14" class="muted">1,000 ms</text>
+<line x1="110" y1="371.00" x2="1350" y2="371.00" class="grid"/>
+<text x="94" y="376.00" text-anchor="end" font-size="14" class="muted">1,500 ms</text>
+<line x1="110" y1="280.67" x2="1350" y2="280.67" class="grid"/>
+<text x="94" y="285.67" text-anchor="end" font-size="14" class="muted">2,000 ms</text>
+<line x1="110" y1="190.33" x2="1350" y2="190.33" class="grid"/>
+<text x="94" y="195.33" text-anchor="end" font-size="14" class="muted">2,500 ms</text>
 <line x1="110" y1="100.00" x2="1350" y2="100.00" class="grid"/>
-<text x="94" y="105.00" text-anchor="end" font-size="14" class="muted">2,500 ms</text>
+<text x="94" y="105.00" text-anchor="end" font-size="14" class="muted">3,000 ms</text>
 <line x1="110.00" y1="100" x2="110.00" y2="642" class="grid" stroke-dasharray="4 6"/>
 <text x="110.00" y="668" text-anchor="middle" font-size="14" class="muted">00</text>
 <line x1="265.00" y1="100" x2="265.00" y2="642" class="grid" stroke-dasharray="4 6"/>
@@ -39,36 +41,36 @@
 <line x1="110" y1="100" x2="110" y2="642" class="axis"/>
 <text x="730.00" y="702" text-anchor="middle" font-size="18" font-weight="600">Iteration</text>
 <text x="34" y="371.00" transform="rotate(-90 34 371.00)" text-anchor="middle" font-size="18" font-weight="600">STARK proving time excl. trace (ms)</text>
-<path d="M 110.00 252.84 L 265.00 249.16 L 420.00 247.86 L 575.00 254.14 L 730.00 252.41 L 885.00 255.01 L 1040.00 250.89 L 1195.00 250.89 L 1350.00 253.49" fill="none" stroke="#1d4ed8" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
-<g><title>Iteration 00, APC=0, 1,795 ms</title><circle cx="110.00" cy="252.84" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 01, APC=0, 1,812 ms</title><circle cx="265.00" cy="249.16" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 02, APC=0, 1,818 ms</title><circle cx="420.00" cy="247.86" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 03, APC=0, 1,789 ms</title><circle cx="575.00" cy="254.14" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 04, APC=0, 1,797 ms</title><circle cx="730.00" cy="252.41" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 05, APC=0, 1,785 ms</title><circle cx="885.00" cy="255.01" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 06, APC=0, 1,804 ms</title><circle cx="1040.00" cy="250.89" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 07, APC=0, 1,804 ms</title><circle cx="1195.00" cy="250.89" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 08, APC=0, 1,792 ms</title><circle cx="1350.00" cy="253.49" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
-<path d="M 110.00 212.30 L 265.00 263.68 L 420.00 264.98 L 575.00 319.18 L 730.00 336.96 L 885.00 339.35 L 1040.00 344.33 L 1195.00 349.97 L 1350.00 353.44" fill="none" stroke="#ea580c" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
-<g><title>Iteration 00, APC=100, 1,982 ms</title><circle cx="110.00" cy="212.30" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 01, APC=100, 1,745 ms</title><circle cx="265.00" cy="263.68" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 02, APC=100, 1,739 ms</title><circle cx="420.00" cy="264.98" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 03, APC=100, 1,489 ms</title><circle cx="575.00" cy="319.18" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 04, APC=100, 1,407 ms</title><circle cx="730.00" cy="336.96" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 05, APC=100, 1,396 ms</title><circle cx="885.00" cy="339.35" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 06, APC=100, 1,373 ms</title><circle cx="1040.00" cy="344.33" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 07, APC=100, 1,347 ms</title><circle cx="1195.00" cy="349.97" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 08, APC=100, 1,331 ms</title><circle cx="1350.00" cy="353.44" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
-<path d="M 110.00 141.84 L 265.00 226.83 L 420.00 286.01 L 575.00 325.91 L 730.00 356.69 L 885.00 371.00 L 1040.00 376.85 L 1195.00 379.02 L 1350.00 393.11" fill="none" stroke="#059669" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
-<g><title>Iteration 00, APC=300, 2,307 ms</title><circle cx="110.00" cy="141.84" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 01, APC=300, 1,915 ms</title><circle cx="265.00" cy="226.83" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 02, APC=300, 1,642 ms</title><circle cx="420.00" cy="286.01" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 03, APC=300, 1,458 ms</title><circle cx="575.00" cy="325.91" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 04, APC=300, 1,316 ms</title><circle cx="730.00" cy="356.69" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 05, APC=300, 1,250 ms</title><circle cx="885.00" cy="371.00" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 06, APC=300, 1,223 ms</title><circle cx="1040.00" cy="376.85" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 07, APC=300, 1,213 ms</title><circle cx="1195.00" cy="379.02" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
-<g><title>Iteration 08, APC=300, 1,148 ms</title><circle cx="1350.00" cy="393.11" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
+<path d="M 110.00 313.37 L 265.00 315.54 L 420.00 312.64 L 575.00 317.70 L 730.00 315.72 L 885.00 316.98 L 1040.00 315.72 L 1195.00 316.08 L 1350.00 315.35" fill="none" stroke="#1d4ed8" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<g><title>Iteration 00, APC=0, 1,819 ms</title><circle cx="110.00" cy="313.37" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 01, APC=0, 1,807 ms</title><circle cx="265.00" cy="315.54" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 02, APC=0, 1,823 ms</title><circle cx="420.00" cy="312.64" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 03, APC=0, 1,795 ms</title><circle cx="575.00" cy="317.70" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 04, APC=0, 1,806 ms</title><circle cx="730.00" cy="315.72" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 05, APC=0, 1,799 ms</title><circle cx="885.00" cy="316.98" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 06, APC=0, 1,806 ms</title><circle cx="1040.00" cy="315.72" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 07, APC=0, 1,804 ms</title><circle cx="1195.00" cy="316.08" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 08, APC=0, 1,808 ms</title><circle cx="1350.00" cy="315.35" r="4.5" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5"/></g>
+<path d="M 110.00 281.75 L 265.00 324.39 L 420.00 351.13 L 575.00 369.19 L 730.00 386.18 L 885.00 391.96 L 1040.00 391.05 L 1195.00 394.31 L 1350.00 401.53" fill="none" stroke="#ea580c" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<g><title>Iteration 00, APC=100, 1,994 ms</title><circle cx="110.00" cy="281.75" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 01, APC=100, 1,758 ms</title><circle cx="265.00" cy="324.39" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 02, APC=100, 1,610 ms</title><circle cx="420.00" cy="351.13" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 03, APC=100, 1,510 ms</title><circle cx="575.00" cy="369.19" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 04, APC=100, 1,416 ms</title><circle cx="730.00" cy="386.18" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 05, APC=100, 1,384 ms</title><circle cx="885.00" cy="391.96" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 06, APC=100, 1,389 ms</title><circle cx="1040.00" cy="391.05" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 07, APC=100, 1,371 ms</title><circle cx="1195.00" cy="394.31" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 08, APC=100, 1,331 ms</title><circle cx="1350.00" cy="401.53" r="4.5" fill="#ea580c" stroke="#ffffff" stroke-width="1.5"/></g>
+<path d="M 110.00 220.87 L 265.00 296.20 L 420.00 339.20 L 575.00 371.72 L 730.00 406.95 L 885.00 415.44 L 1040.00 417.25 L 1195.00 421.23 L 1350.00 431.34" fill="none" stroke="#059669" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<g><title>Iteration 00, APC=300, 2,331 ms</title><circle cx="110.00" cy="220.87" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 01, APC=300, 1,914 ms</title><circle cx="265.00" cy="296.20" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 02, APC=300, 1,676 ms</title><circle cx="420.00" cy="339.20" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 03, APC=300, 1,496 ms</title><circle cx="575.00" cy="371.72" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 04, APC=300, 1,301 ms</title><circle cx="730.00" cy="406.95" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 05, APC=300, 1,254 ms</title><circle cx="885.00" cy="415.44" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 06, APC=300, 1,244 ms</title><circle cx="1040.00" cy="417.25" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 07, APC=300, 1,222 ms</title><circle cx="1195.00" cy="421.23" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
+<g><title>Iteration 08, APC=300, 1,166 ms</title><circle cx="1350.00" cy="431.34" r="4.5" fill="#059669" stroke="#ffffff" stroke-width="1.5"/></g>
 <rect x="1140" y="124" width="180" height="110" rx="8" class="legend-box"/>
 <text x="1156" y="152" font-size="16" font-weight="700">Legend</text>
 <line x1="1156" y1="178" x2="1188" y2="178" stroke="#1d4ed8" stroke-width="3.5" stroke-linecap="round"/>

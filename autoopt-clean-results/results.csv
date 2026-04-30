@@ -1,28 +1,28 @@
 step,label,apc,stark_excl_trace_ms,constraints_ms,logup_gkr_ms,round0_ms,mle_rounds_ms,openings_ms,whir_ms,stacked_reduction_ms,trace_commit_ms,app_proof_time_ms,total_ms
-step-00-baseline,Baseline (VPMM_PAGE_SIZE=16777216),0,1795,990,680,181,122,334,218,115,468,3889,4728
-step-00-baseline,Baseline (VPMM_PAGE_SIZE=16777216),100,1982,1256,632,448,171,358,154,202,365,4735,5862
-step-00-baseline,Baseline (VPMM_PAGE_SIZE=16777216),300,2307,1515,645,671,197,435,125,309,354,5278,6672
-step-01-multistream-round0,Multi-stream Round 0 (8 streams),0,1812,1005,695,182,122,335,218,115,469,3902,4735
-step-01-multistream-round0,Multi-stream Round 0 (8 streams),100,1745,1017,632,215,167,359,155,201,367,4428,5579
-step-01-multistream-round0,Multi-stream Round 0 (8 streams),300,1915,1117,652,263,201,442,129,312,354,4911,6326
-step-02-multistream-gkr-input,Multi-stream GKR input eval (8 streams),0,1818,1010,701,183,121,335,218,114,470,3878,4719
-step-02-multistream-gkr-input,Multi-stream GKR input eval (8 streams),100,1739,1003,484,341,173,366,161,203,367,4505,5714
-step-02-multistream-gkr-input,Multi-stream GKR input eval (8 streams),300,1642,845,386,263,194,438,126,312,356,4642,6076
-step-03-stacked-mle-sync,Batch stacked-reduction MLE sync,0,1789,1008,699,182,123,306,218,84,472,3887,4673
-step-03-stacked-mle-sync,Batch stacked-reduction MLE sync,100,1489,865,482,214,166,255,156,98,366,4279,5384
-step-03-stacked-mle-sync,Batch stacked-reduction MLE sync,300,1458,850,392,262,195,252,127,125,354,4488,5884
-step-04-stacking-scatter,Batch stacking scatter kernel,0,1797,1009,701,182,121,306,219,85,476,3898,4671
-step-04-stacking-scatter,Batch stacking scatter kernel,100,1407,865,477,215,168,252,154,97,287,4206,5312
-step-04-stacking-scatter,Batch stacking scatter kernel,300,1316,864,402,261,199,253,127,125,197,4329,5698
-step-05-batch-mle-round-kernels,Batch stacked-reduction MLE round kernels,0,1785,1001,692,182,122,298,218,79,480,3894,4651
-step-05-batch-mle-round-kernels,Batch stacked-reduction MLE round kernels,100,1396,877,492,212,170,229,156,70,286,4143,5218
-step-05-batch-mle-round-kernels,Batch stacked-reduction MLE round kernels,300,1250,848,387,263,196,203,126,76,197,4329,5663
-step-06-prealloc-gkr-buffers,Pre-allocate GKR input buffers,0,1804,1020,711,181,123,300,219,80,480,3926,4683
-step-06-prealloc-gkr-buffers,Pre-allocate GKR input buffers,100,1373,860,477,210,169,224,153,70,286,4119,5203
-step-06-prealloc-gkr-buffers,Pre-allocate GKR input buffers,300,1223,821,365,257,197,204,127,75,197,4301,5686
-step-07-prealloc-round0-buffers,Pre-allocate Round 0 buffers + round-robin balance,0,1804,1024,718,179,121,296,218,78,478,3880,4643
-step-07-prealloc-round0-buffers,Pre-allocate Round 0 buffers + round-robin balance,100,1347,833,470,193,167,225,153,69,286,4110,5186
-step-07-prealloc-round0-buffers,Pre-allocate Round 0 buffers + round-robin balance,300,1213,810,363,238,207,204,126,76,197,4254,5603
-step-08-gpu-round0-overlap-logup,GPU Round 0 poly extract + overlap logup precompute,0,1792,1012,707,182,118,299,219,77,476,3875,4633
-step-08-gpu-round0-overlap-logup,GPU Round 0 poly extract + overlap logup precompute,100,1331,816,481,168,164,226,153,71,285,4086,5154
-step-08-gpu-round0-overlap-logup,GPU Round 0 poly extract + overlap logup precompute,300,1148,747,367,180,197,202,125,75,197,4197,5525
+step-00-baseline,Baseline (VPMM_PAGE_SIZE=16777216),0,1819,1005,685,188,126,333,218,114,475,3944,4788
+step-00-baseline,Baseline (VPMM_PAGE_SIZE=16777216),100,1994,1258,632,455,170,365,156,208,367,4745,5880
+step-00-baseline,Baseline (VPMM_PAGE_SIZE=16777216),300,2331,1518,645,674,196,454,128,324,357,5344,6753
+step-01-multistream-round0,Multi-stream Round 0 (8 streams),0,1807,996,682,186,124,335,220,114,472,3894,4742
+step-01-multistream-round0,Multi-stream Round 0 (8 streams),100,1758,1021,632,219,167,368,157,209,366,4510,5658
+step-01-multistream-round0,Multi-stream Round 0 (8 streams),300,1914,1106,645,261,198,451,127,323,355,4925,6348
+step-02-multistream-gkr-input,Multi-stream GKR input eval (8 streams),0,1823,1009,692,189,125,334,217,114,474,3924,4770
+step-02-multistream-gkr-input,Multi-stream GKR input eval (8 streams),100,1610,867,478,212,173,367,157,209,373,4374,5515
+step-02-multistream-gkr-input,Multi-stream GKR input eval (8 streams),300,1676,863,399,262,199,455,128,327,355,4671,6081
+step-03-stacked-mle-sync,Batch stacked-reduction MLE sync,0,1795,1007,689,188,127,306,220,84,474,3843,4632
+step-03-stacked-mle-sync,Batch stacked-reduction MLE sync,100,1510,880,490,222,166,260,154,103,368,4292,5411
+step-03-stacked-mle-sync,Batch stacked-reduction MLE sync,300,1496,868,406,262,197,269,128,140,357,4509,5887
+step-04-stacking-scatter,Batch stacking scatter kernel,0,1806,1017,702,186,127,306,218,84,479,3912,4691
+step-04-stacking-scatter,Batch stacking scatter kernel,100,1416,867,480,215,169,258,154,102,288,4139,5237
+step-04-stacking-scatter,Batch stacking scatter kernel,300,1301,832,369,264,198,268,127,140,198,4324,5684
+step-05-batch-mle-round-kernels,Batch stacked-reduction MLE round kernels,0,1799,1014,699,188,121,297,217,76,484,3897,4669
+step-05-batch-mle-round-kernels,Batch stacked-reduction MLE round kernels,100,1384,861,471,221,166,232,152,77,288,4145,5232
+step-05-batch-mle-round-kernels,Batch stacked-reduction MLE round kernels,300,1254,837,376,263,196,217,127,89,197,4260,5619
+step-06-prealloc-gkr-buffers,Pre-allocate GKR input buffers,0,1806,1026,707,190,121,298,217,76,479,3979,4745
+step-06-prealloc-gkr-buffers,Pre-allocate GKR input buffers,100,1389,868,484,214,168,231,155,75,287,4113,5197
+step-06-prealloc-gkr-buffers,Pre-allocate GKR input buffers,300,1244,826,366,262,196,218,128,88,198,4302,5665
+step-07-prealloc-round0-buffers,Pre-allocate Round 0 buffers + round-robin balance,0,1804,1024,710,185,122,297,217,78,478,3847,4615
+step-07-prealloc-round0-buffers,Pre-allocate Round 0 buffers + round-robin balance,100,1371,850,486,196,164,230,152,77,288,4185,5276
+step-07-prealloc-round0-buffers,Pre-allocate Round 0 buffers + round-robin balance,300,1222,801,361,240,197,221,130,89,199,4225,5592
+step-08-gpu-round0-overlap-logup,GPU Round 0 poly extract + overlap logup precompute,0,1808,1024,712,185,122,298,218,77,480,3908,4661
+step-08-gpu-round0-overlap-logup,GPU Round 0 poly extract + overlap logup precompute,100,1331,809,472,170,165,231,153,77,287,4079,5161
+step-08-gpu-round0-overlap-logup,GPU Round 0 poly extract + overlap logup precompute,300,1166,748,358,189,199,217,126,89,198,4175,5511
