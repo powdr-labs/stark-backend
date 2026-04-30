@@ -83,7 +83,8 @@ While we evaluated the changes on the pairing guest program, the effects can als
 
 The following configuration is closest to the pairing guest program with APC=300:
 ```bash
-METRICS_OUTPUT=metrics.json cargo run -p openvm-benchmark-proving --release --features cuda -- \
+VPMM_PAGE_SIZE=16777216 METRICS_OUTPUT=metrics.json \
+cargo run -p openvm-benchmark-proving --release --features cuda -- \
     --num-airs 311 \
     --cols-per-air 171 \
     --constraints-per-col 0.5 \
@@ -98,4 +99,41 @@ With this configuration, we have:
 - 53,181 x 0.6 = 31,908 bus interactions (vs 33,678 for pairing APC=300 per segment)
 - 53,181 x 2^12 = 217.8M trace cells (vs 224.2M for pairing APC=300 per segment)
 
-TODO
+Unlike the pairing numbers above, these measurements were taken **after** the rebase onto `v2-powdr-beta.2-remove-columns-air`, on the current tip of `autoopt-2026-04-12-clean`. Despite the ~1,300 lines of CUDA changes the rebase pulled in (see the warning at the top of this report), the synthetic benchmark reproduces the qualitative finding: with all 8 optimizations applied, STARK proving time excluding trace generation drops from 673ms to 359ms — a 1.88x speedup, in line with the 2.01x measured for pairing APC=300 (2,307ms → 1,148ms).
+
+| # | Change | Time | vs base | vs prev |
+|---|--------|------|---------|---------|
+| 0 | Baseline (`VPMM_PAGE_SIZE=16777216`) | 673ms | — | — |
+| 1 | Multi-stream Round 0 (8 streams) | 592ms | -81ms<br>(1.14x ↓) | -81ms<br>(1.14x ↓) |
+| 2 | Multi-stream GKR input eval (8 streams) | 557ms | -116ms<br>(1.21x ↓) | -35ms<br>(1.06x ↓) |
+| 3 | Batch stacked-reduction MLE sync | 464ms | -209ms<br>(1.45x ↓) | -93ms<br>(1.20x ↓) |
+| 4 | Batch stacking scatter kernel | 383ms | -290ms<br>(1.76x ↓) | -81ms<br>(1.21x ↓) |
+| 5 | Batch stacked-reduction MLE round kernels | 358ms | -315ms<br>(1.88x ↓) | -25ms<br>(1.07x ↓) |
+| 6 | Pre-allocate GKR input buffers | 360ms | -313ms<br>(1.87x ↓) | +2ms<br>(1.01x ↑) |
+| 7 | Pre-allocate Round 0 buffers + round-robin balance | 358ms | -315ms<br>(1.88x ↓) | -2ms<br>(1.01x ↓) |
+| 8 | GPU Round 0 poly extract + overlap logup precompute | 359ms | -314ms<br>(1.87x ↓) | +1ms<br>(1.00x ↑) |
+
+Each row is the median of 3 measurement runs (with one warmup discarded). Inter-run variance was ~1-3 ms, so the +/-2 ms drifts in steps 6-8 read as noise rather than real regressions.
+
+The per-component breakdown (median ms over 3 runs) localizes where each step paid off:
+
+| Component | step 0 | step 1 | step 2 | step 3 | step 4 | step 5 | step 6 | step 7 | step 8 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Constraints        | 319 | 238 | 202 | 203 | 204 | 202 | 204 | 202 | 202 |
+| &nbsp;&nbsp;LogUp GKR        | 121 | 121 |  85 |  85 |  85 |  85 |  84 |  84 |  84 |
+| &nbsp;&nbsp;Round 0          | 121 |  40 |  41 |  40 |  40 |  40 |  41 |  40 |  38 |
+| &nbsp;&nbsp;MLE Rounds       |  76 |  76 |  76 |  77 |  77 |  76 |  77 |  76 |  78 |
+| Openings           | 209 | 209 | 209 | 115 | 115 |  93 |  93 |  93 |  93 |
+| &nbsp;&nbsp;WHIR             |  65 |  64 |  64 |  63 |  64 |  63 |  63 |  63 |  63 |
+| &nbsp;&nbsp;Stacked Reduction| 143 | 144 | 145 |  51 |  51 |  29 |  29 |  29 |  29 |
+| Trace Commit       | 144 | 143 | 142 | 144 |  62 |  62 |  62 |  62 |  62 |
+
+Four components account for nearly all of the 314 ms speedup:
+- **Stacked Reduction** (-114 ms): the largest single drop. Step 3 batches the previously per-window GPU pipeline drain, then step 5 batches the MLE round kernels themselves.
+- **Round 0** (-83 ms): step 1 parallelizes the per-AIR work across 8 CUDA streams.
+- **Trace Commit** (-82 ms): step 4 replaces per-column scatter calls with a single batched kernel.
+- **LogUp GKR** (-37 ms): step 2 parallelizes GKR input evaluation across streams.
+
+As with the pairing benchmark, steps 6-8 contribute very little on this configuration — they target buffer reuse and deeper overlap that pay off most when there is heterogeneity in AIR sizes (which the synthetic benchmark, with 311 identical AIRs, does not have).
+
+Raw per-run measurements are in [`synthetic_results.csv`](./synthetic_results.csv).
