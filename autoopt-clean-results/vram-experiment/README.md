@@ -44,6 +44,39 @@ Round 0 / GKR input eval, batch MLE kernels, pre-allocate per-thread chip
 buffers, and overlap logup precompute, all without enlarging the GKR
 leaves buffer or any other allocation. The peak is stable to the byte.
 
+## `nvidia-smi` sanity check (device-wide)
+
+The `current_bytes` gauge above is the VPMM-tracked live allocation —
+i.e. the bytes the stark-backend CUDA allocator hands out. It does **not**
+include CUDA driver context, kernel constants, cuBLAS/cuFFT scratch, or
+VPMM reserved pages that aren't currently in use. To check that nothing
+material lives outside VPMM, we re-ran pairing APC=100 with
+`nvidia-smi --query-gpu=timestamp,memory.used --format=csv -lms 50` polling
+the device every 50 ms (script: [`run_with_nvsmi.sh`](./run_with_nvsmi.sh),
+analysis: [`analyze_nvsmi.py`](./analyze_nvsmi.py)):
+
+| run     | nvidia-smi peak | VPMM `current` peak | VPMM `reserved` peak | nvsmi − VPMM `current` |
+|---------|----------------:|--------------------:|---------------------:|----------------------:|
+| step-00 |        16075 MiB |          15203.7 MiB |           14688.0 MiB |              +871 MiB |
+| step-08 |        16877 MiB |          15203.7 MiB |           15328.0 MiB |             +1673 MiB |
+
+Reads:
+
+- VPMM `current_bytes` is the same to the byte on both runs (consistent
+  with the headline result above).
+- step-08 sits **+802 MiB** above step-00 in device-wide VRAM. Of that,
+  **+640 MiB** is the VPMM reserved-page footprint growing (the
+  pre-allocated per-thread Round 0 / GKR buffers from steps 6–7 keep more
+  pages mapped) and the remaining ~160 MiB is non-VPMM driver overhead.
+- Both peaks fit comfortably on the 24 GiB device (step-08 uses ~69%).
+- Either way, the GKR fractional-sumcheck phase **is** the cap on
+  VPMM-tracked allocations on both branches; the autoopt steps don't
+  introduce a new allocation that exceeds it.
+
+Raw traces: [`nvsmi-step-00-apc100.csv`](./nvsmi-step-00-apc100.csv),
+[`nvsmi-step-08-apc100.csv`](./nvsmi-step-08-apc100.csv);
+matching metrics: `metrics-step-{00,08}-apc100.json`.
+
 ---
 
 ## Appendix: how the metrics JSONs were generated
@@ -112,3 +145,28 @@ writing the metrics JSON consumed by `plot_vram.py`.
 
 NVIDIA GeForce RTX 4090 (24 GiB VRAM) — same machine as the timing numbers
 in `../report.md`.
+
+### Reproducing the `nvidia-smi` sanity check
+
+Same powdr / openvm wiring as above. For each branch, with the powdr/openvm
+patches active:
+
+```bash
+# step-08 (current branch tip)
+git -C /home/georg/stark-backend checkout 32074f9e
+autoopt-clean-results/vram-experiment/run_with_nvsmi.sh step-08-apc100 100
+
+# step-00 baseline
+git -C /home/georg/stark-backend checkout 1d719aa9
+autoopt-clean-results/vram-experiment/run_with_nvsmi.sh step-00-apc100 100
+
+# Compare:
+python3 autoopt-clean-results/vram-experiment/analyze_nvsmi.py \
+        step-00-apc100 step-08-apc100
+```
+
+`run_with_nvsmi.sh` waits for the device to drain, polls
+`nvidia-smi --query-gpu=timestamp,memory.used --format=csv -lms 50` while
+`powdr_openvm_riscv prove --artifact ...apc100.cbor --recursion --metrics
+metrics-<label>.json` runs, and writes the trace to
+`nvsmi-<label>.csv`.
