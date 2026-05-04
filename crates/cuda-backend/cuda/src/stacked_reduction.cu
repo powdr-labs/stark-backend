@@ -40,6 +40,23 @@ struct UnstackedPleFoldPacket {
     uint32_t width;
 };
 
+// Descriptor for batched degenerate MLE round kernel
+struct DegenMleDesc {
+    uint32_t col_offset;    // = window[0], indexes into unstacked_cols, eq_ub, lambda_pows
+    uint32_t window_len;    // = window[1] - window[0]
+    FpExt eq_r;             // from eq_stable[log_height]
+    FpExt k_rot_r;          // from k_rot_stable[log_height]
+};
+
+// Descriptor for batched non-degenerate MLE round kernel
+struct NonDegenMleDesc {
+    uint32_t col_offset;    // = window[0]
+    uint32_t window_len;    // = window[1] - window[0]
+    uint32_t num_y;         // = 1 << (log_height - l_skip - round)
+    uint32_t stride;        // auto-tuned grid.y from existing heuristic
+    uint32_t blocks_x;      // = ceil(num_y / 256)
+};
+
 __device__ __forceinline__ FpExt get_eq_cube(const FpExt *eq_r_ns, uint32_t cube_size, uint32_t x) {
     return eq_r_ns[cube_size + x];
 }
@@ -367,6 +384,177 @@ __global__ void stacked_reduction_sumcheck_mle_round_degenerate_kernel(
     }
 }
 
+// Batched degenerate MLE round kernel: one block per descriptor (one AIR each).
+// Grid: (num_descs, 1), Block: (256, 1)
+__global__ void batched_degenerate_mle_round_kernel(
+    const DegenMleDesc *__restrict__ descs,
+    const FpExt *__restrict__ const *__restrict__ q_evals,
+    const FpExt *__restrict__ eq_ub_base,
+    const UnstackedSlice *__restrict__ unstacked_cols_base,
+    const FpExt *__restrict__ lambda_pows_base,
+    uint64_t *__restrict__ output,
+    uint32_t q_height,
+    uint32_t shift_factor
+) {
+    extern __shared__ char smem[];
+    FpExt *shared = (FpExt *)smem;
+
+    const DegenMleDesc desc = descs[blockIdx.x];
+    const FpExt *eq_ub_ptr = eq_ub_base + desc.col_offset;
+    const UnstackedSlice *unstacked_cols = unstacked_cols_base + desc.col_offset;
+    const FpExt *lambda_pows = lambda_pows_base + 2 * desc.col_offset;
+    FpExt eq_r = desc.eq_r;
+    FpExt k_rot_r = desc.k_rot_r;
+    uint32_t window_len = desc.window_len;
+
+    FpExt local_sums[S_DEG];
+#pragma unroll
+    for (int i = 0; i < S_DEG; i++) {
+        local_sums[i] = FpExt(0);
+    }
+
+    for (uint32_t window_idx = threadIdx.x; window_idx < window_len; window_idx += blockDim.x) {
+        UnstackedSlice s = unstacked_cols[window_idx];
+        const FpExt *__restrict__ q = q_evals[s.commit_idx];
+
+        auto col_idx = s.stacked_col_idx;
+        auto row_idx = s.stacked_row_idx;
+        auto row_start = (row_idx >> shift_factor) << 1;
+        auto q_offset = col_idx * q_height + row_start;
+
+        auto q_0 = q[q_offset];
+        auto q_1 = q[q_offset + 1];
+        auto q_c1 = q_1 - q_0;
+
+        uint32_t b_bool = (row_idx >> (shift_factor - 1)) & 1;
+        Fp b = Fp(b_bool);
+
+        auto eq_ub = eq_ub_ptr[window_idx];
+
+#pragma unroll
+        for (int x_int = 1; x_int <= S_DEG; ++x_int) {
+            Fp x = Fp(x_int);
+            auto eq_ub_x = eq_ub * eq1(x, b);
+            auto eq = eq_r * eq_ub_x;
+            auto k_rot = k_rot_r * eq_ub_x;
+
+            auto q_x = q_0 + q_c1 * x;
+
+            local_sums[x_int - 1] +=
+                (lambda_pows[2 * window_idx] * eq + lambda_pows[2 * window_idx + 1] * k_rot) * q_x;
+        }
+    }
+
+#pragma unroll
+    for (int idx = 0; idx < S_DEG; idx++) {
+        FpExt reduced = sumcheck::block_reduce_sum(local_sums[idx], shared);
+        if (threadIdx.x == 0) {
+            sumcheck::atomic_add_fpext_to_u64(output + idx * 4, reduced);
+        }
+        __syncthreads();
+    }
+}
+
+// Batched non-degenerate MLE round kernel: blocks are mapped to AIRs via prefix sum.
+// Grid: (total_blocks, 1), Block: (256, 1)
+__global__ void batched_nondegen_mle_round_kernel(
+    const NonDegenMleDesc *__restrict__ descs,
+    const uint32_t *__restrict__ block_prefix_sums,
+    uint32_t num_descs,
+    const FpExt *__restrict__ const *__restrict__ q_evals,
+    const FpExt *__restrict__ eq_r_ns,
+    const FpExt *__restrict__ k_rot_ns,
+    const UnstackedSlice *__restrict__ unstacked_cols_base,
+    const FpExt *__restrict__ lambda_pows_base,
+    uint64_t *__restrict__ output,
+    uint32_t q_height
+) {
+    extern __shared__ char smem[];
+    FpExt *shared = (FpExt *)smem;
+
+    // Binary search to find which AIR this block belongs to
+    uint32_t global_block = blockIdx.x;
+    uint32_t lo = 0, hi = num_descs;
+    while (lo < hi) {
+        uint32_t mid = (lo + hi) / 2;
+        if (block_prefix_sums[mid] <= global_block) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    uint32_t air_idx = lo - 1;
+
+    const NonDegenMleDesc desc = descs[air_idx];
+    uint32_t local_block = global_block - block_prefix_sums[air_idx];
+
+    // Decompose into y-block and stride-block
+    uint32_t y_block = local_block % desc.blocks_x;
+    uint32_t stride_block = local_block / desc.blocks_x;
+
+    const UnstackedSlice *unstacked_cols = unstacked_cols_base + desc.col_offset;
+    const FpExt *lambda_pows = lambda_pows_base + 2 * desc.col_offset;
+    uint32_t num_y = desc.num_y;
+    uint32_t window_len = desc.window_len;
+
+    FpExt local_sums[S_DEG];
+#pragma unroll
+    for (int i = 0; i < S_DEG; i++) {
+        local_sums[i] = FpExt(0);
+    }
+
+    uint32_t y_int = y_block * blockDim.x + threadIdx.x;
+    bool const active_thread = (y_int < num_y);
+
+    if (active_thread) {
+        uint32_t num_evals = num_y * 2;
+
+        auto eq_0 = get_eq_cube(eq_r_ns, num_evals, y_int << 1);
+        auto eq_1 = get_eq_cube(eq_r_ns, num_evals, (y_int << 1) | 1);
+        auto eq_c1 = eq_1 - eq_0;
+        auto k_rot_0 = get_eq_cube(k_rot_ns, num_evals, y_int << 1);
+        auto k_rot_1 = get_eq_cube(k_rot_ns, num_evals, (y_int << 1) | 1);
+        auto k_rot_c1 = k_rot_1 - k_rot_0;
+
+        uint32_t window_idx_base = stride_block;
+        for (uint32_t window_idx = window_idx_base; window_idx < window_len;
+             window_idx += desc.stride) {
+            UnstackedSlice s = unstacked_cols[window_idx];
+            const FpExt *__restrict__ q = q_evals[s.commit_idx];
+
+            auto log_height = s.log_height;
+            auto col_idx = s.stacked_col_idx;
+            auto row_start = (s.stacked_row_idx >> log_height) * num_evals;
+            auto q_offset = col_idx * q_height + row_start;
+
+            auto q_0 = q[q_offset + (y_int << 1)];
+            auto q_1 = q[q_offset + (y_int << 1) + 1];
+            auto q_c1 = q_1 - q_0;
+
+#pragma unroll
+            for (int x_int = 1; x_int <= S_DEG; ++x_int) {
+                Fp x = Fp(x_int);
+                auto q_x = q_0 + q_c1 * x;
+                auto eq = eq_0 + eq_c1 * x;
+                auto k_rot = k_rot_0 + k_rot_c1 * x;
+
+                local_sums[x_int - 1] +=
+                    (lambda_pows[2 * window_idx] * eq + lambda_pows[2 * window_idx + 1] * k_rot) *
+                    q_x;
+            }
+        }
+    }
+
+#pragma unroll
+    for (int idx = 0; idx < S_DEG; idx++) {
+        FpExt reduced = sumcheck::block_reduce_sum(local_sums[idx], shared);
+        if (threadIdx.x == 0) {
+            sumcheck::atomic_add_fpext_to_u64(output + idx * 4, reduced);
+        }
+        __syncthreads();
+    }
+}
+
 // ============================================================================
 // LAUNCHERS
 // ============================================================================
@@ -564,6 +752,57 @@ extern "C" int _stacked_reduction_sumcheck_mle_round_degenerate(
         q_height,
         window_len,
         shift_factor
+    );
+
+    return CHECK_KERNEL();
+}
+
+extern "C" int _batched_stacked_reduction_sumcheck_mle_round_degenerate(
+    const DegenMleDesc *descs,
+    uint32_t num_descs,
+    const FpExt *const *q_evals,
+    const FpExt *eq_ub_base,
+    const UnstackedSlice *unstacked_cols_base,
+    const FpExt *lambda_pows_base,
+    uint64_t *output,
+    uint32_t q_height,
+    uint32_t shift_factor
+) {
+    if (num_descs == 0) return 0;
+    dim3 grid(num_descs);
+    dim3 block(256);
+    size_t shmem_bytes = div_ceil(block.x, WARP_SIZE) * sizeof(FpExt);
+
+    batched_degenerate_mle_round_kernel<<<grid, block, shmem_bytes>>>(
+        descs, q_evals, eq_ub_base, unstacked_cols_base, lambda_pows_base,
+        output, q_height, shift_factor
+    );
+
+    return CHECK_KERNEL();
+}
+
+extern "C" int _batched_stacked_reduction_sumcheck_mle_round(
+    const NonDegenMleDesc *descs,
+    const uint32_t *block_prefix_sums,
+    uint32_t num_descs,
+    uint32_t total_blocks,
+    const FpExt *const *q_evals,
+    const FpExt *eq_r_ns,
+    const FpExt *k_rot_ns,
+    const UnstackedSlice *unstacked_cols_base,
+    const FpExt *lambda_pows_base,
+    uint64_t *output,
+    uint32_t q_height
+) {
+    if (total_blocks == 0) return 0;
+    dim3 grid(total_blocks);
+    dim3 block(256);
+    size_t shmem_bytes = div_ceil(block.x, WARP_SIZE) * sizeof(FpExt);
+
+    batched_nondegen_mle_round_kernel<<<grid, block, shmem_bytes>>>(
+        descs, block_prefix_sums, num_descs,
+        q_evals, eq_r_ns, k_rot_ns, unstacked_cols_base, lambda_pows_base,
+        output, q_height
     );
 
     return CHECK_KERNEL();

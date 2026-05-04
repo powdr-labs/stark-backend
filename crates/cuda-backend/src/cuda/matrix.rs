@@ -4,6 +4,19 @@ use crate::prelude::{EF, F};
 
 const MAX_CUDA_GRID_Y: usize = u16::MAX as usize;
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct StackColDesc {
+    pub src: *const F,
+    pub dst: *mut F,
+    pub height: u32,
+    pub stride: u32,
+}
+
+// SAFETY: StackColDesc contains device pointers that are only dereferenced on GPU
+unsafe impl Send for StackColDesc {}
+unsafe impl Sync for StackColDesc {}
+
 extern "C" {
     fn _matrix_transpose_fp(
         output: *mut F,
@@ -75,6 +88,8 @@ extern "C" {
         padded_height: u32,
         height: u32,
     ) -> i32;
+
+    fn _stack_columns(descs: *const StackColDesc, num_descs: u32) -> i32;
 }
 
 /// Safety:
@@ -258,4 +273,15 @@ pub unsafe fn batch_expand_pad_wide(
         padded_height,
         height,
     ))
+}
+
+/// Launches a single batched scatter kernel that copies all column data described by `descs`
+/// into the stacked buffer. Each descriptor specifies a source pointer, destination pointer,
+/// number of elements, and stride.
+///
+/// # Safety
+/// - All `src` and `dst` pointers in the descriptors must be valid device memory.
+/// - Destination regions must not overlap.
+pub unsafe fn stack_columns(descs: &DeviceBuffer<StackColDesc>) -> Result<(), CudaError> {
+    CudaError::from_result(_stack_columns(descs.as_ptr() as *const StackColDesc, descs.len() as u32))
 }

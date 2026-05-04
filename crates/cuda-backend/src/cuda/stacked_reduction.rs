@@ -9,6 +9,27 @@ use crate::{
     stacked_reduction::{UnstackedSlice, STACKED_REDUCTION_S_DEG},
 };
 
+/// Descriptor for batched degenerate MLE round kernel. Layout must match CUDA `DegenMleDesc`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct DegenMleDesc {
+    pub col_offset: u32,
+    pub window_len: u32,
+    pub eq_r: EF,
+    pub k_rot_r: EF,
+}
+
+/// Descriptor for batched non-degenerate MLE round kernel. Layout must match CUDA `NonDegenMleDesc`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct NonDegenMleDesc {
+    pub col_offset: u32,
+    pub window_len: u32,
+    pub num_y: u32,
+    pub stride: u32,
+    pub blocks_x: u32,
+}
+
 /// Number of G outputs per z in round 0: G0, G1, G2
 pub const NUM_G: usize = 3;
 
@@ -75,6 +96,32 @@ extern "C" {
         window_len: u32,
         l_skip: u32,
         round: u32,
+    ) -> i32;
+
+    fn _batched_stacked_reduction_sumcheck_mle_round_degenerate(
+        descs: *const DegenMleDesc,
+        num_descs: u32,
+        q_evals: *const *const EF,
+        eq_ub_base: *const EF,
+        unstacked_cols_base: *const UnstackedSlice,
+        lambda_pows_base: *const EF,
+        output: *mut u64,
+        q_height: u32,
+        shift_factor: u32,
+    ) -> i32;
+
+    fn _batched_stacked_reduction_sumcheck_mle_round(
+        descs: *const NonDegenMleDesc,
+        block_prefix_sums: *const u32,
+        num_descs: u32,
+        total_blocks: u32,
+        q_evals: *const *const EF,
+        eq_r_ns: *const EF,
+        k_rot_ns: *const EF,
+        unstacked_cols_base: *const UnstackedSlice,
+        lambda_pows_base: *const EF,
+        output: *mut u64,
+        q_height: u32,
     ) -> i32;
 }
 
@@ -244,7 +291,7 @@ pub unsafe fn stacked_reduction_sumcheck_mle_round(
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn stacked_reduction_sumcheck_mle_round_degenerate(
     q_evals: &DeviceBuffer<*const EF>,
-    eq_ub_ptr: &DeviceBuffer<EF>,
+    eq_ub_ptr: *const EF,
     eq_r: EF,
     k_rot_r: EF,
     unstacked_cols: *const UnstackedSlice,
@@ -259,7 +306,7 @@ pub unsafe fn stacked_reduction_sumcheck_mle_round_degenerate(
 
     check(_stacked_reduction_sumcheck_mle_round_degenerate(
         q_evals.as_ptr(),
-        eq_ub_ptr.as_ptr(),
+        eq_ub_ptr,
         eq_r,
         k_rot_r,
         unstacked_cols,
@@ -270,4 +317,96 @@ pub unsafe fn stacked_reduction_sumcheck_mle_round_degenerate(
         l_skip as u32,
         round as u32,
     ))
+}
+
+/// Batched degenerate MLE round: launches one block per descriptor.
+///
+/// # Safety
+/// - `d_descs` must contain valid descriptors with col_offsets within bounds of the shared arrays.
+/// - `output` must have length at least `S_DEG * D_EF = 8` and be zero-initialized.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn batched_stacked_reduction_sumcheck_mle_round_degenerate(
+    d_descs: &DeviceBuffer<DegenMleDesc>,
+    q_evals: &DeviceBuffer<*const EF>,
+    eq_ub_base: *const EF,
+    unstacked_cols_base: *const UnstackedSlice,
+    lambda_pows_base: *const EF,
+    output: &mut DeviceBuffer<u64>,
+    q_height: usize,
+    shift_factor: u32,
+) -> Result<(), CudaError> {
+    debug_assert!(output.len() >= STACKED_REDUCTION_S_DEG * D_EF);
+
+    check(_batched_stacked_reduction_sumcheck_mle_round_degenerate(
+        d_descs.as_ptr(),
+        d_descs.len() as u32,
+        q_evals.as_ptr(),
+        eq_ub_base,
+        unstacked_cols_base,
+        lambda_pows_base,
+        output.as_mut_ptr(),
+        q_height as u32,
+        shift_factor,
+    ))
+}
+
+/// Batched non-degenerate MLE round: maps blocks to AIRs via prefix sums.
+///
+/// # Safety
+/// - `d_descs` and `d_block_offsets` must contain valid descriptor/prefix sum data.
+/// - `output` must have length at least `S_DEG * D_EF = 8` and be zero-initialized.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn batched_stacked_reduction_sumcheck_mle_round(
+    d_descs: &DeviceBuffer<NonDegenMleDesc>,
+    d_block_offsets: &DeviceBuffer<u32>,
+    total_blocks: u32,
+    q_evals: &DeviceBuffer<*const EF>,
+    eq_r_ns: &EqEvalSegments<EF>,
+    k_rot_ns: &EqEvalSegments<EF>,
+    unstacked_cols_base: *const UnstackedSlice,
+    lambda_pows_base: *const EF,
+    output: &mut DeviceBuffer<u64>,
+    q_height: usize,
+) -> Result<(), CudaError> {
+    debug_assert!(output.len() >= STACKED_REDUCTION_S_DEG * D_EF);
+
+    check(_batched_stacked_reduction_sumcheck_mle_round(
+        d_descs.as_ptr(),
+        d_block_offsets.as_ptr(),
+        d_descs.len() as u32,
+        total_blocks,
+        q_evals.as_ptr(),
+        eq_r_ns.buffer.as_ptr(),
+        k_rot_ns.buffer.as_ptr(),
+        unstacked_cols_base,
+        lambda_pows_base,
+        output.as_mut_ptr(),
+        q_height as u32,
+    ))
+}
+
+const MAX_GRID_DIM: u32 = 65535;
+const WAVES_TARGET: u32 = 4;
+const ITERS_MIN: u32 = 4;
+const ITERS_MAX: u32 = 16;
+
+/// Replicates the stride auto-tuning from `_stacked_reduction_sumcheck_mle_round`.
+/// Returns `(blocks_x, stride)` matching the CUDA-side grid dimensions.
+pub(crate) fn compute_mle_launch_params(num_y: u32, window_len: u32, sm_count: u32) -> (u32, u32) {
+    let blocks_x = num_y.div_ceil(256);
+
+    let stride_occ = (sm_count * WAVES_TARGET).div_ceil(blocks_x);
+    let stride_loop_lo = window_len.div_ceil(ITERS_MAX);
+    let stride_loop_hi = window_len.div_ceil(ITERS_MIN);
+
+    let lo = 1.max(stride_occ.max(stride_loop_lo));
+    let hi = window_len.min(MAX_GRID_DIM).min(stride_loop_hi);
+
+    let stride = if lo <= hi {
+        lo
+    } else {
+        lo.min(window_len.min(MAX_GRID_DIM))
+    };
+
+    (blocks_x, stride)
 }
