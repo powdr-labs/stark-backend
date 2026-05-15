@@ -270,6 +270,24 @@ impl<'a, F: Field> SymbolicRulesBuilder<'a, F> {
             }
         }
 
+        // For accumulate=true nodes (constraint outputs the downstream kernel
+        // must read from inter[]), pin `last_use` to the end of the range so
+        // the priority queue never reuses their slots. Without this the
+        // scheduler frees an output's slot the moment its rule fires (because
+        // no later rule references it), and a subsequent unrelated rule
+        // overwrites that slot — making outputs unreadable after the rule
+        // walk completes. Powdr's bus DAG kernel relies on outputs persisting
+        // until the histogram-dispatch phase.
+        for (dag_idx, info) in self.live_expr_info.iter_mut() {
+            if self.static_expr_info[*dag_idx].accumulate {
+                // Use `end_dag_idx` (one past max processed dag_idx). The scheduler
+                // pops when `peek().last_use > dag_idx`, so to ensure the slot is
+                // *never* popped at any dag_idx in [start, end), last_use must be
+                // strictly greater than `end - 1` — i.e. >= `end`.
+                info.last_use = info.last_use.max(end_dag_idx);
+            }
+        }
+
         // Collects all the expressions that need to be buffered. We then use a classic
         // priority-queue scheduling algorithm to minimally assign buffer indices to
         // each expression. Iterate by index to maintain topological order.

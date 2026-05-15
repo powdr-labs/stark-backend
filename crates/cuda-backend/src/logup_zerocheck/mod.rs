@@ -73,7 +73,7 @@ mod fractional;
 mod gkr_input;
 mod mle_round;
 mod round0;
-pub(crate) mod rules;
+pub mod rules;
 
 use batch_mle::{evaluate_logup_batched, TraceCtx};
 use batch_mle_monomial::{
